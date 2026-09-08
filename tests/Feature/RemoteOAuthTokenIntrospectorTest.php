@@ -2,9 +2,11 @@
 
 namespace BWH\Auth\Tests\Feature;
 
+use BWH\Auth\OAuth\Introspection\IntrospectedToken;
 use BWH\Auth\OAuth\Introspection\OAuthIntrospectionException;
 use BWH\Auth\OAuth\Introspection\RemoteOAuthTokenIntrospector;
 use BWH\Auth\Tests\TestCase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
@@ -130,9 +132,10 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             ), 200, ['Content-Type' => 'application/json']),
         ]);
 
-        $this->expectException(OAuthIntrospectionException::class);
-
-        app(RemoteOAuthTokenIntrospector::class)->introspect('not-yet-valid');
+        self::assertEquals(
+            IntrospectedToken::inactive(),
+            app(RemoteOAuthTokenIntrospector::class)->introspect('not-yet-valid'),
+        );
     }
 
     /**
@@ -174,9 +177,10 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             ),
         ]);
 
-        $this->expectException(OAuthIntrospectionException::class);
-
-        app(RemoteOAuthTokenIntrospector::class)->introspect('fractional-expired');
+        self::assertEquals(
+            IntrospectedToken::inactive(),
+            app(RemoteOAuthTokenIntrospector::class)->introspect('fractional-expired'),
+        );
     }
 
     #[DataProvider('invalidTimestampProvider')]
@@ -311,9 +315,92 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             'resource' => 'https://other.example.test/mcp',
         ])]);
 
+        self::assertEquals(
+            IntrospectedToken::inactive(),
+            app(RemoteOAuthTokenIntrospector::class)->introspect('wrong-resource'),
+        );
+    }
+
+    #[DataProvider('invalidContextProvider')]
+    public function test_invalid_active_contexts_return_no_authorization_claims(array $overrides, array $missing = []): void
+    {
+        $payload = json_decode($this->activeResponseJson((string) (time() + 300)), true, 512, JSON_THROW_ON_ERROR);
+        $payload = array_replace($payload, $overrides);
+        foreach ($missing as $key) {
+            unset($payload[$key]);
+        }
+        Http::fake([self::ENDPOINT => Http::response($payload)]);
+
+        self::assertEquals(
+            IntrospectedToken::inactive(),
+            app(RemoteOAuthTokenIntrospector::class)->introspect('invalid-context'),
+        );
+    }
+
+    public static function invalidContextProvider(): array
+    {
+        return [
+            'wrong issuer' => [['iss' => 'https://other.example.test']],
+            'wrong resource' => [['resource' => 'https://other.example.test/mcp']],
+            'wrong audience' => [['aud' => ['https://other.example.test/mcp']]],
+            'empty audience' => [['aud' => []]],
+            'expired' => [['exp' => 0]],
+            'not yet valid' => [['nbf' => PHP_INT_MAX]],
+            'missing resource' => [[], ['resource']],
+            'missing audience' => [[], ['aud']],
+            'no resource binding' => [[], ['resource', 'aud']],
+            'null binding' => [['resource' => null, 'aud' => null]],
+        ];
+    }
+
+    #[DataProvider('upstreamFailureProvider')]
+    public function test_upstream_http_failures_remain_unavailable(int $status): void
+    {
+        Http::fake([self::ENDPOINT => Http::response(['active' => false], $status)]);
         $this->expectException(OAuthIntrospectionException::class);
 
-        app(RemoteOAuthTokenIntrospector::class)->introspect('wrong-resource');
+        app(RemoteOAuthTokenIntrospector::class)->introspect('server-failure');
+    }
+
+    public static function upstreamFailureProvider(): array
+    {
+        return [[302], [401], [403], [429], [500], [503]];
+    }
+
+    public function test_connection_failures_remain_unavailable(): void
+    {
+        Http::fake(fn () => throw new ConnectionException('Synthetic outage'));
+        $this->expectException(OAuthIntrospectionException::class);
+
+        app(RemoteOAuthTokenIntrospector::class)->introspect('server-failure');
+    }
+
+    #[DataProvider('malformedClaimsProvider')]
+    public function test_malformed_claims_remain_unavailable_even_when_the_token_is_expired(array $overrides): void
+    {
+        $payload = json_decode($this->activeResponseJson('0'), true, 512, JSON_THROW_ON_ERROR);
+        Http::fake([self::ENDPOINT => Http::response(array_replace($payload, $overrides))]);
+        $this->expectException(OAuthIntrospectionException::class);
+
+        app(RemoteOAuthTokenIntrospector::class)->introspect('malformed-claims');
+    }
+
+    public static function malformedClaimsProvider(): array
+    {
+        return [
+            'resource type' => [['resource' => []]],
+            'resource URL' => [['resource' => 'not-a-url']],
+            'audience type' => [['aud' => 42]],
+            'audience item' => [['aud' => [null]]],
+            'audience object' => [['aud' => ['resource' => self::RESOURCE]]],
+            'issuer type' => [['iss' => []]],
+            'subject type' => [['sub' => 42]],
+            'client type' => [['client_id' => []]],
+            'scope type' => [['scope' => []]],
+            'expiry type' => [['exp' => '0']],
+            'issued-at type' => [['iat' => '0']],
+            'not-before type' => [['nbf' => '0']],
+        ];
     }
 
     public function test_it_canonicalizes_resource_identifiers_without_tls_restriction(): void

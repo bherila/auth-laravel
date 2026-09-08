@@ -92,7 +92,7 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
             || ! $this->audienceContainsResource($audiences, $resource)
             || $expiresAt <= $now
             || ($notBefore !== null && $notBefore > $now)) {
-            throw new OAuthIntrospectionException('The active OAuth token context does not match this resource server.');
+            return IntrospectedToken::inactive();
         }
 
         return new IntrospectedToken(
@@ -185,8 +185,12 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
         return $preserveWhitespace ? $value : trim($value);
     }
 
-    private function canonicalResource(mixed $value): string
+    private function canonicalResource(mixed $value): ?string
     {
+        if ($value === null) {
+            return null;
+        }
+
         $canonical = OAuthResourceIndicator::canonicalize($value);
         if ($canonical === null) {
             throw new OAuthIntrospectionException('The active OAuth introspection response is incomplete.');
@@ -272,6 +276,10 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
     /** @return list<string> */
     private function stringList(mixed $value): array
     {
+        if ($value === null) {
+            return [];
+        }
+
         if (is_string($value)) {
             $value = [$value];
         }
