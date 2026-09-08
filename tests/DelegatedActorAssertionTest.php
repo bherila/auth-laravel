@@ -198,7 +198,14 @@ class DelegatedActorAssertionTest extends TestCase
         $store = new DatabaseNonceStore(DB::connection('nonces'));
         $key = str_repeat('a', 64);
         $this->assertTrue($store->consume($key, 60));
-        (require __DIR__.'/../database/delegated-access-migrations/2026_09_07_000000_create_delegated_access_nonces.php')->down();
+        config(['database.default' => 'nonces']);
+        try {
+            $migration = require __DIR__.'/../database/delegated-access-migrations/2026_09_07_000000_create_delegated_access_nonces.php';
+            $migration->down();
+            $migration->up();
+        } finally {
+            config(['database.default' => 'testing']);
+        }
         $this->assertFalse($store->consume($key, 60));
     }
 
