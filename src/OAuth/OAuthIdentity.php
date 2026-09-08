@@ -16,5 +16,6 @@ final readonly class OAuthIdentity
         public string $name,
         public string $email,
         public array $apps = [],
+        public ?int $credentialVersion = null,
     ) {}
 }
