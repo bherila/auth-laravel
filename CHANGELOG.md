@@ -4,6 +4,45 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.13.0 - 2026-09-08
+
+### Verify provider browser sessions against credential generation
+
+- Opt-in `ProviderSession` and `ProviderIdentityStatusClient` under `BWH\Auth\OAuth\Session`
+  implement the consumer side of the Auth Manager identity-status contract (version 1).
+  `OAuthIdentity` gains an optional `credentialVersion` preserved from the login identity
+  response; `ProviderSession::remember()` binds it once per login and
+  `ProviderSession::assertActive()` re-verifies liveness and generation against the
+  provider's `POST /api/reconciliation/identity-status` with a strict five-minute freshness
+  bound, always fresh for privileged writes. Inactive status, a changed generation, a changed
+  binding or a changed provider/client context throws `ProviderSessionExpired`; transport,
+  protocol and size/deadline failures throw `ProviderStatusUnavailable` and never authorize.
+- The status endpoint is authenticated by the application's client credential, not by the
+  person, so it carries no profile data. `status()` returns a `ProviderIdentityStatus`
+  (subject and generation only) and `assertActive()` returns the login-time identity; a
+  status response's `name`/`email` are never read. Refresh projections from the
+  bearer-authenticated login response at sign-in.
+  See `docs/provider-session-verification.md`.
+
+### Extract delegated application access verification for consumers
+
+- `BWH\Auth\OAuth\DelegatedAccess` adds the shared `DelegatedActorAssertionVerifier`,
+  `DelegatedContract` validator, `DatabaseNonceStore` with its opt-in migration, and
+  `DelegatedAccessException`, so consuming applications can host provider-driven access
+  management without copying provider code. Verification pins RS256 keys, canonical issuer,
+  exact endpoint audience, application, method, body digest and a short lifetime; nonces are
+  consumed by atomic unique insert and expiry is re-checked after consumption. There is no
+  cache-backed nonce store. The returned actor subject still requires consumer-owned
+  authorization.
+
+### Return inactive results for invalid introspected token contexts
+
+- Remote introspection now returns an inactive result, rather than reporting the
+  authorization server unavailable, for a well-formed active response whose issuer,
+  resource or audience does not match, whose token is expired, or whose not-before lies in
+  the future. Malformed responses, configuration, network and client-authentication failures
+  still throw.
+
 ## v0.12.2 - 2026-09-05
 
 ### Accept fractional NumericDate timestamps during introspection
