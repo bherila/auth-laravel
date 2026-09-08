@@ -801,3 +801,78 @@ The throttle counts recent `login_failed` rows matching the auth method and the 
 Pick the key strategy to match your threat model: `email` mitigates per-account credential stuffing but lets an attacker lock a victim out by spamming failures for their address; `ip` bounds a single noisy source but can affect users behind a shared NAT/CGNAT egress; `email_ip` (default) is the most conservative and only locks a specific account+source pair.
 
 Because throttling is audit-log-backed, apps must enable the database audit driver, run the package audit migration, record failed/successful primary login events, and configure Laravel trusted proxies correctly.
+
+## Delegated application access verification
+
+`BWH\Auth\OAuth\DelegatedAccess` provides consumer primitives for the
+[delegated application access contract](https://github.com/bherila/auth-manager/issues/33).
+It does not install a signing service, expose routes, or grant application access.
+`lcobucci/jwt` is an explicit runtime dependency; Passport
+remains optional for consumers that do not run an authorization server.
+
+Construct `ActorAssertionVerifier` from trusted local configuration: the exact
+HTTPS issuer, the exact HTTPS adapter endpoint, the application registry key,
+a `kid => RSA public key PEM` map, and a `NonceStore`. Issuers may not contain a
+path other than `/`; a trailing issuer slash is removed before exact claim matching.
+URLs may not contain credentials, query strings, or fragments.
+Keys and endpoint URLs are never discovered from assertion headers.
+
+```php
+use BWH\Auth\OAuth\DelegatedAccess\ActorAssertionVerifier;
+use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
+
+$verifier = new ActorAssertionVerifier(
+    issuer: 'https://identity.example.test',
+    endpoint: 'https://application.example.test/application-access',
+    application: 'example-app',
+    publicKeys: ['integration-v1' => $pinnedPublicKeyPem],
+    nonces: new DatabaseNonceStore($dedicatedNonceDatabaseConnection),
+);
+$actorSubject = $verifier->verify($assertion, $request->method(), $request->getContent());
+```
+
+Verification requires RS256, the `application-access+jwt` type, an exact audience,
+issuer, application and POST method, and the SHA-256 of the **original request
+bytes**. Assertions last at most 60 seconds with five seconds of clock tolerance.
+Successful verification atomically consumes the nonce through expiry plus that
+tolerance. `DatabaseNonceStore` writes a dedicated `bherila_auth_delegated_nonces`
+table, independently of application cache. Cache flushes and Redis evictions
+cannot erase these records. Provision the table before enabling the adapter:
+
+```sh
+php artisan vendor:publish --tag=bherila-auth-delegated-access-migrations
+```
+
+Apply the published migration through the application's normal reviewed deployment
+process, on the same connection passed to the store. It is not published with the
+ordinary package migrations, and its rollback deliberately retains nonce records.
+The store's database connection must be shared and durable across every adapter
+worker and deployment, and must be outside any business transaction so a later
+rollback cannot undo consumption. In-memory SQLite and active transactions are
+rejected. Use the primary writable database connection; do not place this table in
+an ephemeral database or restore it to an earlier snapshot while assertions remain
+valid. Only a unique-key conflict is treated as replay; other database failures
+become a 503 refusal. `pruneExpired()` may be scheduled for maintenance and deletes
+only expired entries. There is no ordinary cache adapter or fallback.
+
+Custom `NonceStore` implementations must provide equivalent durable atomic
+first-use semantics through expiry, including restarts, maintenance, and failure
+handling. Never catch a replay-storage failure and continue authentication.
+
+The returned subject identifies the actor only. Resolve that actor using the
+configured issuer and exact subject, then enforce current local eligibility and
+access-administration authority **before** target discovery or mutation. Resolve
+targets separately; verification does not authorize them, provision users, or
+replace application-owned tenant, last-administrator, revision, or audit rules.
+No ordinary OAuth-token fallback is permitted on the adapter endpoint.
+
+`DelegatedContract::request()` validates operation input and builds its versioned
+envelope. `response()` validates an envelope; pass the expected target subject as
+its fourth argument for `read` and `update` to enforce exact subject echo.
+Consumers must separately enforce `MAX_REQUEST_BYTES`/`MAX_RESPONSE_BYTES`, JSON
+parsing, transport authentication, and operation authorization. The contract
+bounds subjects to 191 bytes, revisions to 128 bytes, cursors to 512 bytes,
+pages to 50 entries, and access updates to 100 unique workspace memberships.
+An unprovisioned response carries null revision/access and no allowed edits.
+`DelegatedAccessException` exposes a generic `outcome` and HTTP `status`; do not
+log assertions or private key material when handling it.
