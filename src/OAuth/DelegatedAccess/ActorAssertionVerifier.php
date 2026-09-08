@@ -96,6 +96,12 @@ final readonly class ActorAssertionVerifier
             throw new DelegatedAccessException('replayed_actor_assertion', 401);
         }
 
+        // Storage may block past the validity boundary or prune an expired nonce.
+        // A newly inserted row must never revive an assertion that expired in flight.
+        if ($claims['exp'] <= time() - 5) {
+            throw new DelegatedAccessException('invalid_actor_assertion', 401);
+        }
+
         return $claims['sub'];
     }
 }

@@ -209,6 +209,21 @@ class DelegatedActorAssertionTest extends TestCase
         $this->assertFalse($store->consume($key, 60));
     }
 
+    public function test_assertion_expiring_during_nonce_consumption_cannot_be_revived(): void
+    {
+        $store = new class implements NonceStore
+        {
+            public function consume(string $key, int $seconds): bool
+            {
+                sleep(3);
+                return true;
+            }
+        };
+        $now = time();
+        $token = $this->signed(['iat' => $now - 60, 'exp' => $now - 3]);
+        $this->refused(fn () => $this->verifier($store)->verify($token, 'POST', '{}'), 'invalid_actor_assertion', 401);
+    }
+
     private function verifier(?NonceStore $nonces = null): ActorAssertionVerifier
     {
         return new ActorAssertionVerifier('https://identity.example.test', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], $nonces ?? new DatabaseNonceStore(DB::connection('nonces')));
