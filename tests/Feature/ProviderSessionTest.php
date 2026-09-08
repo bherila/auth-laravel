@@ -22,6 +22,7 @@ class ProviderSessionTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        config(['app.env' => 'testing']);
         config(['bherila-auth.oauth_client' => [
             'provider' => 'example-provider',
             'base_url' => 'https://identity.example.test',
@@ -57,7 +58,7 @@ class ProviderSessionTest extends TestCase
 
     public function test_freshness_is_bounded_and_privileged_checks_bypass_it(): void
     {
-        Http::fake(['identity.example.test/*' => Http::response($this->payload())]);
+        Http::fake(fn () => Http::response($this->payload()));
         app(ProviderSession::class)->remember($this->request, $this->identity());
         $this->assertSame('Example User', $this->verify()->name);
         $this->travel(299)->seconds();
@@ -214,6 +215,58 @@ class ProviderSessionTest extends TestCase
             $this->assertStringNotContainsString('example-secret', $exception->getMessage());
             $this->assertNull($exception->getPrevious());
         }
+    }
+
+    public function test_response_limit_stops_reading_before_materializing_a_large_body(): void
+    {
+        $stream = new class(\GuzzleHttp\Psr7\Utils::streamFor(str_repeat('x', 100_000))) implements \Psr\Http\Message\StreamInterface {
+            use \GuzzleHttp\Psr7\StreamDecoratorTrait;
+
+            public int $bytesRead = 0;
+            public bool $closed = false;
+
+            public function read(int $length): string
+            {
+                $bytes = $this->stream->read($length);
+                $this->bytesRead += strlen($bytes);
+                return $bytes;
+            }
+
+            public function getContents(): string
+            {
+                throw new \LogicException('The entire body must not be materialized.');
+            }
+
+            public function close(): void
+            {
+                $this->closed = true;
+                $this->stream->close();
+            }
+        };
+        Http::fake(function ($request, $options) use ($stream) {
+            $this->assertTrue($options['stream']);
+            return Http::response($stream);
+        });
+        try {
+            app(ProviderIdentityStatusClient::class)->status('subject-example');
+            $this->fail('Oversized responses must fail closed.');
+        } catch (ProviderStatusUnavailable) {
+            $this->assertSame(16_385, $stream->bytesRead);
+            $this->assertTrue($stream->closed);
+        }
+    }
+
+    #[DataProvider('caseVariantProviders')]
+    public function test_url_scheme_case_does_not_break_valid_provider_configuration(string $url): void
+    {
+        config(['bherila-auth.oauth_client.base_url' => $url]);
+        Http::fake(['*' => Http::response($this->payload())]);
+        $this->assertSame('subject-example', app(ProviderIdentityStatusClient::class)->status('subject-example')->subject);
+    }
+
+    public static function caseVariantProviders(): array
+    {
+        return [['HTTPS://identity.example.test'], ['HTTP://LOCALHOST']];
     }
 
     #[DataProvider('callbackGenerations')]
