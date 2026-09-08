@@ -2,14 +2,17 @@
 
 namespace BWH\Auth\Tests;
 
+use BWH\Auth\AuthServiceProvider;
 use BWH\Auth\OAuth\DelegatedAccess\ActorAssertionVerifier;
-use BWH\Auth\OAuth\DelegatedAccess\CacheNonceStore;
+use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessException;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\ServiceProvider;
 use Lcobucci\JWT\Encoding\JoseEncoder;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
@@ -22,6 +25,8 @@ class DelegatedActorAssertionTest extends TestCase
 
     private string $publicKey;
 
+    private string $nonceDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -31,9 +36,26 @@ class DelegatedActorAssertionTest extends TestCase
             $table->integer('expiration');
         });
         config(['cache.stores.database' => ['driver' => 'database', 'connection' => 'testing', 'table' => 'cache']]);
+        $this->nonceDatabase = tempnam(sys_get_temp_dir(), 'delegated-nonces-');
+        config(['database.connections.nonces' => ['driver' => 'sqlite', 'database' => $this->nonceDatabase, 'prefix' => '']]);
+        config(['database.default' => 'nonces']);
+        try {
+            (require __DIR__.'/../database/delegated-access-migrations/2026_09_07_000000_create_delegated_access_nonces.php')->up();
+        } finally {
+            config(['database.default' => 'testing']);
+        }
         $key = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
         openssl_pkey_export($key, $this->privateKey);
         $this->publicKey = openssl_pkey_get_details($key)['key'];
+    }
+
+    protected function tearDown(): void
+    {
+        DB::purge('nonces');
+        if (isset($this->nonceDatabase)) {
+            unlink($this->nonceDatabase);
+        }
+        parent::tearDown();
     }
 
     public function test_valid_assertion_is_bound_to_request_and_atomically_consumed(): void
@@ -62,7 +84,7 @@ class DelegatedActorAssertionTest extends TestCase
         foreach ([['alg' => 'HS256'], ['typ' => 'JWT'], ['kid' => 'unknown'], ['jku' => 'https://keys.example.test/jwks']] as $header) {
             $this->refused(fn () => $this->verifier()->verify($this->signed([], $header), 'POST', '{}'), 'invalid_actor_assertion', 401);
         }
-        $this->assertDatabaseCount('cache', 0);
+        $this->assertSame(0, DB::connection('nonces')->table(DatabaseNonceStore::TABLE)->count());
     }
 
     public function test_modified_signature_body_and_method_fail_without_an_oauth_fallback(): void
@@ -87,16 +109,16 @@ class DelegatedActorAssertionTest extends TestCase
             }
         };
         $this->refused(fn () => $this->verifier($broken)->verify($this->signed(), 'POST', '{}'), 'replay_storage_unavailable', 503);
-        $this->refused(fn () => $this->verifier(new CacheNonceStore(Cache::store('array')))->verify($this->signed(), 'POST', '{}'), 'replay_storage_unavailable', 503);
+        $this->refused(fn () => $this->verifier(new DatabaseNonceStore(DB::connection('testing')))->verify($this->signed(), 'POST', '{}'), 'replay_storage_unavailable', 503);
     }
 
     public function test_trust_configuration_requires_local_https_urls_without_credentials_or_redirect_components(): void
     {
         foreach (['http://identity.example.test', 'https://identity.example.test/path', 'https://user@identity.example.test', 'https://identity.example.test?key=other', 'https://identity.example.test#fragment', 'https://invalid_host.test', 'https://identity.example.test:0'] as $issuer) {
-            $this->refused(fn () => new ActorAssertionVerifier($issuer, 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new CacheNonceStore(Cache::store('database'))), 'invalid_verifier_configuration', 503);
+            $this->refused(fn () => new ActorAssertionVerifier($issuer, 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new DatabaseNonceStore(DB::connection('nonces'))), 'invalid_verifier_configuration', 503);
         }
         foreach (['http://app.example.test/access', 'https://app.example.test/access?alternate=1', 'https://user:password@app.example.test/access'] as $endpoint) {
-            $this->refused(fn () => new ActorAssertionVerifier('https://identity.example.test', $endpoint, 'example-app', ['integration-v1' => $this->publicKey], new CacheNonceStore(Cache::store('database'))), 'invalid_verifier_configuration', 503);
+            $this->refused(fn () => new ActorAssertionVerifier('https://identity.example.test', $endpoint, 'example-app', ['integration-v1' => $this->publicKey], new DatabaseNonceStore(DB::connection('nonces'))), 'invalid_verifier_configuration', 503);
         }
     }
 
@@ -126,14 +148,63 @@ class DelegatedActorAssertionTest extends TestCase
 
     public function test_pinned_root_issuer_is_canonicalized_before_claim_and_nonce_validation(): void
     {
-        $verifier = new ActorAssertionVerifier('https://identity.example.test/', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new CacheNonceStore(Cache::store('database')));
+        $verifier = new ActorAssertionVerifier('https://identity.example.test/', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new DatabaseNonceStore(DB::connection('nonces')));
         $this->assertSame('actor-example', $verifier->verify($this->signed(), 'POST', '{}'));
         $this->refused(fn () => $verifier->verify($this->signed(['iss' => 'https://identity.example.test/']), 'POST', '{}'), 'invalid_actor_assertion', 401);
     }
 
+    public function test_cache_flush_and_new_connection_do_not_erase_consumed_assertions(): void
+    {
+        $token = $this->signed();
+        $this->assertSame('actor-example', $this->verifier()->verify($token, 'POST', '{}'));
+        Cache::store('database')->flush();
+        DB::purge('nonces');
+        $this->refused(fn () => $this->verifier()->verify($token, 'POST', '{}'), 'replayed_actor_assertion', 401);
+    }
+
+    public function test_nonce_cleanup_preserves_live_entries_and_expired_entries_can_be_replaced(): void
+    {
+        $store = new DatabaseNonceStore(DB::connection('nonces'));
+        $live = str_repeat('a', 64);
+        $expired = str_repeat('b', 64);
+        $this->assertTrue($store->consume($live, 60));
+        DB::connection('nonces')->table(DatabaseNonceStore::TABLE)->insert(['key' => $expired, 'expires_at' => time() - 1]);
+        $this->assertTrue($store->consume($expired, 60));
+        $this->assertFalse($store->consume($expired, 60));
+        DB::connection('nonces')->table(DatabaseNonceStore::TABLE)->insert(['key' => str_repeat('c', 64), 'expires_at' => time() - 1]);
+        $this->assertSame(1, $store->pruneExpired());
+        $this->assertFalse($store->consume($live, 60));
+    }
+
+    public function test_missing_table_and_transactional_nonce_writes_fail_closed(): void
+    {
+        $connection = DB::connection('nonces');
+        $connection->beginTransaction();
+        try {
+            $this->refused(fn () => $this->verifier()->verify($this->signed(), 'POST', '{}'), 'replay_storage_unavailable', 503);
+        } finally {
+            $connection->rollBack();
+        }
+        Schema::connection('nonces')->drop(DatabaseNonceStore::TABLE);
+        $this->refused(fn () => $this->verifier()->verify($this->signed(), 'POST', '{}'), 'replay_storage_unavailable', 503);
+    }
+
+    public function test_nonce_migration_is_opt_in_and_rollback_retains_consumed_entries(): void
+    {
+        $optional = ServiceProvider::pathsToPublish(AuthServiceProvider::class, 'bherila-auth-delegated-access-migrations');
+        $ordinary = ServiceProvider::pathsToPublish(AuthServiceProvider::class, 'bherila-auth-migrations');
+        $this->assertCount(1, $optional);
+        $this->assertSame([], array_intersect_key($optional, $ordinary));
+        $store = new DatabaseNonceStore(DB::connection('nonces'));
+        $key = str_repeat('a', 64);
+        $this->assertTrue($store->consume($key, 60));
+        (require __DIR__.'/../database/delegated-access-migrations/2026_09_07_000000_create_delegated_access_nonces.php')->down();
+        $this->assertFalse($store->consume($key, 60));
+    }
+
     private function verifier(?NonceStore $nonces = null): ActorAssertionVerifier
     {
-        return new ActorAssertionVerifier('https://identity.example.test', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], $nonces ?? new CacheNonceStore(Cache::store('database')));
+        return new ActorAssertionVerifier('https://identity.example.test', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], $nonces ?? new DatabaseNonceStore(DB::connection('nonces')));
     }
 
     private function signed(array $overrides = [], array $headers = []): string

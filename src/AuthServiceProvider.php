@@ -60,6 +60,10 @@ class AuthServiceProvider extends ServiceProvider
         ], 'bherila-auth-migrations');
 
         $this->publishes([
+            __DIR__.'/../database/delegated-access-migrations' => database_path('migrations'),
+        ], 'bherila-auth-delegated-access-migrations');
+
+        $this->publishes([
             __DIR__.'/../resources/views' => resource_path('views/vendor/bherila-auth'),
         ], 'bherila-auth-views');
 

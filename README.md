@@ -802,7 +802,7 @@ Because throttling is audit-log-backed, apps must enable the database audit driv
 `BWH\Auth\OAuth\DelegatedAccess` provides consumer primitives for the
 [delegated application access contract](https://github.com/bherila/auth-manager/issues/33).
 It does not install a signing service, expose routes, or grant application access.
-`lcobucci/jwt` and `illuminate/cache` are explicit runtime dependencies; Passport
+`lcobucci/jwt` is an explicit runtime dependency; Passport
 remains optional for consumers that do not run an authorization server.
 
 Construct `ActorAssertionVerifier` from trusted local configuration: the exact
@@ -814,14 +814,14 @@ Keys and endpoint URLs are never discovered from assertion headers.
 
 ```php
 use BWH\Auth\OAuth\DelegatedAccess\ActorAssertionVerifier;
-use BWH\Auth\OAuth\DelegatedAccess\CacheNonceStore;
+use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
 
 $verifier = new ActorAssertionVerifier(
     issuer: 'https://identity.example.test',
     endpoint: 'https://application.example.test/application-access',
     application: 'example-app',
     publicKeys: ['integration-v1' => $pinnedPublicKeyPem],
-    nonces: new CacheNonceStore($sharedDatabaseCacheRepository),
+    nonces: new DatabaseNonceStore($dedicatedNonceDatabaseConnection),
 );
 $actorSubject = $verifier->verify($assertion, $request->method(), $request->getContent());
 ```
@@ -830,11 +830,29 @@ Verification requires RS256, the `application-access+jwt` type, an exact audienc
 issuer, application and POST method, and the SHA-256 of the **original request
 bytes**. Assertions last at most 60 seconds with five seconds of clock tolerance.
 Successful verification atomically consumes the nonce through expiry plus that
-tolerance. Replay storage must be a directly selected shared database or Redis
-store covering every adapter worker and deployment. Array, file, and fallback
-wrappers are rejected; storage errors fail closed with a 503 outcome. Custom
-`NonceStore` implementations must provide the same durable atomic first-use
-semantics. Never catch a replay-storage failure and continue authentication.
+tolerance. `DatabaseNonceStore` writes a dedicated `bherila_auth_delegated_nonces`
+table, independently of application cache. Cache flushes and Redis evictions
+cannot erase these records. Provision the table before enabling the adapter:
+
+```sh
+php artisan vendor:publish --tag=bherila-auth-delegated-access-migrations
+```
+
+Apply the published migration through the application's normal reviewed deployment
+process, on the same connection passed to the store. It is not published with the
+ordinary package migrations, and its rollback deliberately retains nonce records.
+The store's database connection must be shared and durable across every adapter
+worker and deployment, and must be outside any business transaction so a later
+rollback cannot undo consumption. In-memory SQLite and active transactions are
+rejected. Use the primary writable database connection; do not place this table in
+an ephemeral database or restore it to an earlier snapshot while assertions remain
+valid. Only a unique-key conflict is treated as replay; other database failures
+become a 503 refusal. `pruneExpired()` may be scheduled for maintenance and deletes
+only expired entries. There is no ordinary cache adapter or fallback.
+
+Custom `NonceStore` implementations must provide equivalent durable atomic
+first-use semantics through expiry, including restarts, maintenance, and failure
+handling. Never catch a replay-storage failure and continue authentication.
 
 The returned subject identifies the actor only. Resolve that actor using the
 configured issuer and exact subject, then enforce current local eligibility and
