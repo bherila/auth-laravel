@@ -43,6 +43,8 @@ class DelegatedContractTest extends TestCase
         $contract = new DelegatedContract;
         $response = ['contract_version' => 1, 'application' => 'example-app', 'operation' => 'read', 'subject' => 'Subject-Example', 'provisioned' => false, 'revision' => null, 'access' => null, 'allowed_edits' => ['application_admin' => false, 'workspaces' => false]];
         $this->assertSame($response, $contract->response($response, 'example-app', 'read', 'Subject-Example'));
+        $reordered = [...$response, 'allowed_edits' => ['workspaces' => false, 'application_admin' => false]];
+        $this->assertSame($reordered, $contract->response($reordered, 'example-app', 'read', 'Subject-Example'));
         $this->refused(fn () => $contract->response($response, 'example-app', 'read', 'subject-example'), 503);
         $this->refused(fn () => $contract->response($response, 'example-app', 'read'), 503);
         $this->refused(fn () => $contract->response([...$response, 'allowed_edits' => ['application_admin' => true, 'workspaces' => false]], 'example-app', 'read', 'Subject-Example'), 503);
