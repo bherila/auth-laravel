@@ -21,12 +21,13 @@ final readonly class ProviderIdentityStatusClient
         $client = $this->setting('client_id');
         $secret = $this->setting('client_secret');
         $provider = $this->setting('provider');
+        $deadline = hrtime(true) + 5_000_000_000;
 
         try {
             $response = $this->http->acceptJson()->asJson()
                 ->withBasicAuth($client, $secret)
                 ->withoutRedirecting()->connectTimeout(3)->timeout(5)
-                ->withOptions(['stream' => true, 'read_timeout' => 5])
+                ->withOptions(['stream' => true, 'read_timeout' => 1])
                 ->post($base.'/api/reconciliation/identity-status', ['subject' => $subject]);
         } catch (\Throwable) {
             // Transport exceptions may contain credentials or response bodies.
@@ -42,13 +43,16 @@ final readonly class ProviderIdentityStatusClient
         try {
             $bytes = '';
             while (! $stream->eof() && strlen($bytes) <= 16_384) {
+                if (hrtime(true) >= $deadline) {
+                    throw new ProviderStatusUnavailable('Provider status verification exceeded its deadline.');
+                }
                 $chunk = $stream->read(min(4096, 16_385 - strlen($bytes)));
                 if ($chunk === '' && ! $stream->eof()) {
                     throw new ProviderStatusUnavailable('The provider status response is incomplete.');
                 }
                 $bytes .= $chunk;
             }
-            if (strlen($bytes) > 16_384) {
+            if (hrtime(true) >= $deadline || strlen($bytes) > 16_384) {
                 throw new ProviderStatusUnavailable('The provider status response exceeds its size limit.');
             }
         } catch (\Throwable) {

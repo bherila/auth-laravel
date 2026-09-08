@@ -269,6 +269,38 @@ class ProviderSessionTest extends TestCase
         return [['HTTPS://identity.example.test'], ['HTTP://LOCALHOST']];
     }
 
+    public function test_slow_body_cannot_extend_the_total_deadline(): void
+    {
+        $stream = new class(\GuzzleHttp\Psr7\Utils::streamFor(json_encode($this->payload()))) implements \Psr\Http\Message\StreamInterface {
+            use \GuzzleHttp\Psr7\StreamDecoratorTrait;
+
+            public bool $closed = false;
+
+            public function read(int $length): string
+            {
+                // A valid payload arriving after the deadline must still be rejected.
+                usleep(5_100_000);
+                return $this->stream->read($length);
+            }
+
+            public function close(): void
+            {
+                $this->closed = true;
+                $this->stream->close();
+            }
+        };
+        Http::fake(function ($request, $options) use ($stream) {
+            $this->assertSame(1, $options['read_timeout']);
+            return Http::response($stream);
+        });
+        try {
+            app(ProviderIdentityStatusClient::class)->status('subject-example');
+            $this->fail('Late status must not authorize the request.');
+        } catch (ProviderStatusUnavailable) {
+            $this->assertTrue($stream->closed);
+        }
+    }
+
     #[DataProvider('callbackGenerations')]
     public function test_callback_preserves_only_a_valid_optional_generation(mixed $generation, int $status): void
     {
