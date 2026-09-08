@@ -51,7 +51,7 @@ class DelegatedActorAssertionTest extends TestCase
             ['iss' => 'https://other.example.test'], ['aud' => 'https://other.example.test/access'],
             ['aud' => ['https://app.example.test/access', 'https://other.example.test/access']],
             ['application' => 'another-app'], ['sub' => ''], ['sub' => str_repeat('x', 192)],
-            ['iat' => $now + 6], ['iat' => (string) $now], ['iat' => $now + 0.5],
+            ['iat' => $now + 600, 'exp' => $now + 660], ['iat' => (string) $now], ['iat' => $now + 0.5],
             ['iat' => $now - 80, 'exp' => $now - 10], ['exp' => $now + 61],
             ['exp' => $now], ['jti' => 'short'], ['method' => 'GET'],
             ['body_sha256' => str_repeat('0', 64)], ['nbf' => $now + 100],
