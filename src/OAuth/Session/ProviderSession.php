@@ -38,6 +38,11 @@ final readonly class ProviderSession
      * Pass binding values from the authenticated local user, never request input.
      * Consumers must catch Expired to end local auth and Unavailable to return 503.
      * Use fresh=true for privileged writes. Application policy still runs separately.
+     *
+     * The returned identity is the login-time projection remembered at sign-in. A
+     * status check confirms liveness and generation only; it never refreshes name or
+     * email, because the status endpoint is authenticated by the client credential
+     * rather than by the person. Refresh projections from the next login response.
      */
     public function assertActive(Request $request, string $provider, string $subject, bool $fresh = false): OAuthIdentity
     {
@@ -56,18 +61,17 @@ final readonly class ProviderSession
                 credentialVersion: $state['generation']);
         }
 
-        $identity = $this->client->status($subject);
-        if ($identity === null || $identity->credentialVersion !== $state['generation']) {
+        $status = $this->client->status($subject);
+        if ($status === null || $status->credentialVersion !== $state['generation']) {
             $this->expire($request);
         }
 
         // Keep the login generation immutable. A newer generation ends the old session.
         $state['checked_at'] = $now;
-        $state['name'] = $identity->name;
-        $state['email'] = $identity->email;
         $request->session()->put(self::KEY, $state);
 
-        return $identity;
+        return new OAuthIdentity($provider, $subject, $state['name'], $state['email'],
+            credentialVersion: $state['generation']);
     }
 
     private function expire(Request $request): never

@@ -24,7 +24,7 @@ returns the current identity projection or throws one of two distinct errors:
 
 | Result | Consumer behavior |
 | --- | --- |
-| Identity returned | Continue existing application authorization; apply explicit name/email projection rules |
+| Identity returned | Continue existing application authorization. This is the login-time identity; the status check never refreshes name/email |
 | `ProviderSessionExpired` | Log out the relevant local guard, invalidate the session and regenerate CSRF; require a new login |
 | `ProviderStatusUnavailable` | Return retryable 503 and refuse protected work; retain the session for retry |
 
@@ -40,6 +40,13 @@ status, missing login baseline, changed provider/client context, changed local
 binding or a credential-generation mismatch expires the session. A newer
 generation never replaces its login baseline. Failed checks never advance the
 last-success timestamp.
+
+An active status response carries the subject and credential generation only.
+Because the request is authenticated by this application's client credential
+rather than by the person, the provider does not release profile data through
+it, and the client never reads `name` or `email` from a status response even if
+one is present. Refresh name/email projections from the bearer-authenticated
+login identity response at sign-in, using explicit provider/subject binding.
 
 The client uses the configured OAuth provider base URL, static client ID and
 client secret to POST one subject to `/api/reconciliation/identity-status`.

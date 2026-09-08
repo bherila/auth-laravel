@@ -46,8 +46,7 @@ class ProviderSessionTest extends TestCase
 
     private function payload(): array
     {
-        return ['contract_version' => 1, 'active' => true, 'subject' => 'subject-example',
-            'credential_version' => 7, 'name' => 'Updated User', 'email' => 'updated@example.test'];
+        return ['contract_version' => 1, 'active' => true, 'subject' => 'subject-example', 'credential_version' => 7];
     }
 
     private function verify(bool $fresh = false): OAuthIdentity
@@ -65,7 +64,7 @@ class ProviderSessionTest extends TestCase
         $this->verify();
         Http::assertNothingSent();
         $this->travel(1)->seconds();
-        $this->assertSame('Updated User', $this->verify()->name);
+        $this->assertSame('Example User', $this->verify()->name);
         $this->verify(true);
         Http::assertSentCount(2);
         Http::assertSent(fn ($request) => $request->method() === 'POST'
@@ -123,8 +122,23 @@ class ProviderSessionTest extends TestCase
         } catch (ProviderStatusUnavailable) {
             $this->assertSame($baseline, $this->request->session()->get('bherila_auth.provider_session'));
         }
-        $this->assertSame('Updated User', $this->verify()->name);
+        $this->assertSame(7, $this->verify()->credentialVersion);
         Http::assertSentCount(2);
+    }
+
+    public function test_status_never_refreshes_profile_data_because_the_client_credential_does_not_prove_the_person(): void
+    {
+        Http::fake(fn () => Http::response([...$this->payload(), 'name' => 'Attacker Chosen', 'email' => 'attacker@example.test']));
+        app(ProviderSession::class)->remember($this->request, $this->identity());
+        $identity = $this->verify(true);
+        $this->assertSame('Example User', $identity->name);
+        $this->assertSame('user@example.test', $identity->email);
+        $this->assertSame(7, $identity->credentialVersion);
+        $state = $this->request->session()->get('bherila_auth.provider_session');
+        $this->assertSame(['Example User', 'user@example.test'], [$state['name'], $state['email']]);
+        $status = app(ProviderIdentityStatusClient::class)->status('subject-example');
+        $this->assertSame(['subject-example', 7], [$status->subject, $status->credentialVersion]);
+        $this->assertFalse(property_exists($status, 'name') || property_exists($status, 'email'));
     }
 
     #[DataProvider('malformedStatuses')]
@@ -141,7 +155,7 @@ class ProviderSessionTest extends TestCase
             [['contract_version' => '1']], [['active' => 'true']],
             [['subject' => 'other-subject']], [['credential_version' => '7']],
             [['credential_version' => 7.5]], [['credential_version' => -1]],
-            [['credential_version' => null]], [['name' => '']], [['email' => 'invalid']],
+            [['credential_version' => null]],
         ];
     }
 

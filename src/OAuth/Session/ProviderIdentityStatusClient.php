@@ -2,16 +2,19 @@
 
 namespace BWH\Auth\OAuth\Session;
 
-use BWH\Auth\OAuth\OAuthIdentity;
 use Illuminate\Http\Client\Factory;
-use Illuminate\Support\Str;
 
 final readonly class ProviderIdentityStatusClient
 {
     public function __construct(private Factory $http) {}
 
-    /** Null means definitively inactive; failures never become an active result. */
-    public function status(string $subject): ?OAuthIdentity
+    /**
+     * Null means definitively inactive; failures never become an active result.
+     * An active result carries liveness and generation only. The request is
+     * authenticated by this application's client credential, not by the person,
+     * so profile fields are never read from it, even if a provider sends them.
+     */
+    public function status(string $subject): ?ProviderIdentityStatus
     {
         if ($subject === '' || strlen($subject) > 191) {
             throw new ProviderSessionExpired('The provider session binding is invalid.');
@@ -20,7 +23,7 @@ final readonly class ProviderIdentityStatusClient
         $base = $this->baseUrl();
         $client = $this->setting('client_id');
         $secret = $this->setting('client_secret');
-        $provider = $this->setting('provider');
+        $this->setting('provider');
         $deadline = hrtime(true) + 5_000_000_000;
 
         try {
@@ -74,16 +77,11 @@ final readonly class ProviderIdentityStatusClient
             return null;
         }
         if (($data['subject'] ?? null) !== $subject
-            || ! is_int($data['credential_version'] ?? null) || $data['credential_version'] < 0
-            || ! is_string($data['name'] ?? null) || trim($data['name']) === ''
-            || Str::length($data['name']) > 255
-            || ! is_string($data['email'] ?? null) || strlen($data['email']) > 254
-            || filter_var($data['email'], FILTER_VALIDATE_EMAIL) === false) {
+            || ! is_int($data['credential_version'] ?? null) || $data['credential_version'] < 0) {
             throw new ProviderStatusUnavailable('The provider status response is invalid.');
         }
 
-        return new OAuthIdentity($provider, $subject, trim($data['name']),
-            Str::lower($data['email']), credentialVersion: $data['credential_version']);
+        return new ProviderIdentityStatus($subject, $data['credential_version']);
     }
 
     /** Pin cached session verification to this configured provider and client. */
