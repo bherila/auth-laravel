@@ -8,6 +8,7 @@ The companion React component package is
 Includes:
 
 - OAuth 2.0 authorization-code client mechanics with PKCE and validated identity responses
+- Opt-in [provider browser-session generation verification](docs/provider-session-verification.md)
 - opt-in Passport authorization-server helpers for metadata, dynamic public-client registration,
   S256 PKCE, RFC 8707 resource binding, RFC 7662 backchannel introspection, and a shared consent experience
 - WebAuthn/passkey registration and login

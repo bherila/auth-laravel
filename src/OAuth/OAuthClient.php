@@ -128,12 +128,17 @@ final class OAuthClient
             'The identity provider returned an invalid account.',
         );
 
+        $generation = $identity['credential_version'] ?? null;
+        abort_unless($generation === null || (is_int($generation) && $generation >= 0),
+            502, 'The identity provider returned an invalid credential generation.');
+
         return new OAuthIdentity(
             provider: $this->providerName(),
             subject: $identity['sub'],
             name: trim($identity['name']),
             email: Str::lower($identity['email']),
             apps: $this->applications($identity['apps'] ?? null),
+            credentialVersion: $generation,
         );
     }
 
