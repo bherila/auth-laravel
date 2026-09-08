@@ -5,7 +5,9 @@ namespace BWH\Auth\OAuth\Introspection;
 interface OAuthTokenIntrospector
 {
     /**
-     * @throws OAuthIntrospectionException when the authorization server is unavailable or misconfigured
+     * Returns an inactive result without claims when the token is invalid for this resource server.
+     *
+     * @throws OAuthIntrospectionException when configuration, transport, client authentication, or response schema fails
      */
     public function introspect(string $token): IntrospectedToken;
 }

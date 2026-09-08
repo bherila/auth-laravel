@@ -62,9 +62,13 @@ $token = app(OAuthTokenIntrospector::class)->introspect($request->bearerToken() 
 
 Set `OAUTH_INTROSPECTION_ENDPOINT`, `OAUTH_INTROSPECTION_CLIENT_ID`,
 `OAUTH_INTROSPECTION_CLIENT_SECRET`, `OAUTH_RESOURCE_ISSUER`, and
-`OAUTH_RESOURCE_URI`. An inactive token is returned as `active=false`; connection,
-authentication, schema, or active-claim mismatches throw `OAuthIntrospectionException`
-so the application can distinguish an invalid credential from an unavailable authority.
+`OAUTH_RESOURCE_URI`. Inactive tokens and well-formed active tokens that fail issuer,
+resource, audience, expiry, or not-before validation return `active=false` without claims.
+Missing or null resource/audience binding also returns an inactive result. Configuration,
+connection, HTTP/client-authentication failures, and malformed responses or claim types
+still throw `OAuthIntrospectionException`. Applications can map an inactive result to
+an invalid-token response (401) and an exception to an unavailable-authority response
+(503), so clients can reauthorize when a token is invalid instead of retrying an outage.
 The endpoint must use HTTPS (except loopback development) and the issuer's exact origin;
 redirects are never followed, so neither the bearer token nor confidential-client
 credential can be forwarded to another host.
