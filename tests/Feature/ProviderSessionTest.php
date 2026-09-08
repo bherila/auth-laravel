@@ -92,6 +92,25 @@ class ProviderSessionTest extends TestCase
         return [[['active' => false]], [['credential_version' => 8]], [['credential_version' => 6]]];
     }
 
+    public function test_minimal_inactive_contract_does_not_require_identity_metadata(): void
+    {
+        Http::fake(['*' => Http::response(['contract_version' => 1, 'active' => false])]);
+        $this->assertNull(app(ProviderIdentityStatusClient::class)->status('subject-example'));
+    }
+
+    public function test_contradictory_inactive_subject_is_unavailable_and_preserves_session(): void
+    {
+        Http::fake(['*' => Http::response(['contract_version' => 1, 'active' => false, 'subject' => 'other-subject'])]);
+        app(ProviderSession::class)->remember($this->request, $this->identity());
+        $baseline = $this->request->session()->get('bherila_auth.provider_session');
+        try {
+            $this->verify(true);
+            $this->fail('Contradictory responses must not expire this session.');
+        } catch (ProviderStatusUnavailable) {
+            $this->assertSame($baseline, $this->request->session()->get('bherila_auth.provider_session'));
+        }
+    }
+
     public function test_outage_preserves_session_but_does_not_extend_its_freshness(): void
     {
         Http::fake(['*' => Http::sequence()->pushStatus(503)->push($this->payload())]);

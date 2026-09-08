@@ -65,6 +65,11 @@ final readonly class ProviderIdentityStatusClient
             || ! is_bool($data['active'] ?? null)) {
             throw new ProviderStatusUnavailable('The provider status response is invalid.');
         }
+        // Inactive v1 responses intentionally omit identity fields. If a provider
+        // nevertheless names a subject, it must not contradict this single-subject request.
+        if (array_key_exists('subject', $data) && $data['subject'] !== $subject) {
+            throw new ProviderStatusUnavailable('The provider status response is invalid.');
+        }
         if (! $data['active']) {
             return null;
         }
