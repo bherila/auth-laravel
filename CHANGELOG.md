@@ -4,6 +4,17 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Delegated access contract version 2
+
+- `DelegatedContract::request()` and `response()` take the agreed contract version as an optional
+  last argument; the default is version 1, validated exactly as before. Version 2 carries
+  application-defined workspace roles (`capabilities.controls.workspace_roles`), per-membership
+  `editable` flags, a `provision` allowed edit, and provisioning through an `update` whose
+  `expected_revision` is `null`, optionally with a `display_name`. `advertisedRoleIds()` and
+  `rolesAreAdvertised()` let a provider check an access value against the roles an application
+  advertised. An unsupported version is refused as a configuration error. See the README (#42).
 ## v0.13.0 - 2026-09-08
 
 ### Verify provider browser sessions against credential generation
