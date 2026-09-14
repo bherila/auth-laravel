@@ -876,3 +876,29 @@ pages to 50 entries, and access updates to 100 unique workspace memberships.
 An unprovisioned response carries null revision/access and no allowed edits.
 `DelegatedAccessException` exposes a generic `outcome` and HTTP `status`; do not
 log assertions or private key material when handling it.
+
+### Contract version 2
+
+Version 2 lets an application describe its own workspace roles, and lets a provider provision an
+account for a subject the application has not seen yet
+([#42](https://github.com/bherila/auth-laravel/issues/42)). Version 1 is unchanged and stays the
+default: pass the version both sides agreed on as the last argument to `request()` and
+`response()`.
+
+- `capabilities.controls` is exactly `{application_admin, workspace_roles, provisioning}`.
+  `workspace_roles` lists 1–16 `{id, label}` entries, ids up to 64 bytes and labels up to 255,
+  most senior first.
+- `access.workspaces[]` is `{id, role}` in an update and `{id, role, editable}` in a read or
+  update response. A membership reported `editable: false` must be sent back unchanged, and the
+  application refuses an update that changes it. `rolesAreAdvertised($capabilities, $access)`
+  checks an access value against the roles a capabilities response advertised;
+  `advertisedRoleIds()` lists them.
+- `allowed_edits` is exactly `{application_admin, workspaces, provision}`. An unprovisioned response
+  still carries null revision and access and no administrator or workspace edits, but may set
+  `provision: true`. A provisioned response always sets it false.
+- An `update` whose `expected_revision` is `null` provisions an unprovisioned subject, and only
+  that update may carry `display_name` (up to 255 bytes): contact data for the new account, never
+  an identity key. The application still binds the account to the verified issuer and the exact
+  subject, and answers 409 when the subject is already provisioned.
+- A version this package does not implement is a configuration error
+  (`unsupported_contract_version`, status 500), not a refusal of any request.
