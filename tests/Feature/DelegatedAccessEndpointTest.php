@@ -228,11 +228,51 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->send(['operation' => 'capabilities'])->assertStatus(500)->assertJsonPath('error', 'internal_error');
     }
 
-    public function test_the_route_is_throttled_by_its_own_limiter(): void
+    public function test_the_rate_limit_applies_only_once_enabled_so_a_disabled_endpoint_never_answers_429(): void
     {
-        $this->assertNotNull(RateLimiter::limiter('bherila-auth-delegated-access'));
-        $this->assertContains('throttle:bherila-auth-delegated-access', app('router')->getRoutes()->getByName('bherila-auth.delegated-access')->middleware());
+        RateLimiter::clear('bherila-auth-delegated-access:127.0.0.1');
+        config(['bherila-auth.delegated_access.per_minute' => 1, 'bherila-auth.delegated_access.enabled' => false]);
+
+        $this->send(['operation' => 'capabilities'])->assertNotFound();
+        $this->send(['operation' => 'capabilities'])->assertNotFound();
+
+        config(['bherila-auth.delegated_access.enabled' => true]);
+
+        $this->send(['operation' => 'capabilities'])->assertOk();
+        $this->send(['operation' => 'capabilities'])->assertStatus(429)->assertJsonPath('error', 'rate_limited')->assertHeaderContains('Cache-Control', 'no-store');
+        $this->assertCount(1, $this->calls);
     }
+
+    public function test_the_bearer_scheme_is_case_insensitive_and_must_carry_exactly_one_credential(): void
+    {
+        $body = $this->body(['operation' => 'capabilities']);
+
+        foreach (['bearer', 'BEARER'] as $scheme) {
+            $this->call('POST', '/application-access', [], [], [], [
+                'CONTENT_TYPE' => 'application/json',
+                'HTTP_AUTHORIZATION' => $scheme.' '.$this->assertion('actor-subject', $body),
+            ], $body)->assertOk();
+        }
+
+        foreach (['Bearer', 'Bearer ', 'Basic abc', 'Bearer a b'] as $header) {
+            $this->call('POST', '/application-access', [], [], [], ['CONTENT_TYPE' => 'application/json', 'HTTP_AUTHORIZATION' => $header], $body)
+                ->assertStatus(401)->assertJsonPath('error', 'invalid_actor_assertion');
+        }
+    }
+
+    public function test_an_answer_with_a_field_the_contract_does_not_define_or_missing_one_is_never_sent(): void
+    {
+        Exceptions::fake();
+
+        $this->answer = static fn (): array => self::capabilities() + ['internal_note' => 'not for the provider'];
+        $this->send(['operation' => 'capabilities'])->assertStatus(500)->assertExactJson(['error' => 'internal_error']);
+
+        $this->answer = static fn (string $actor, array $payload): array => array_diff_key(self::unprovisioned((string) $payload['subject']), ['allowed_edits' => true]);
+        $this->send(['operation' => 'read', 'subject' => 'target-subject'])->assertStatus(500);
+
+        Exceptions::assertReported(DelegatedAccessException::class);
+    }
+
 
     public function test_the_default_nonce_store_is_the_database_store(): void
     {

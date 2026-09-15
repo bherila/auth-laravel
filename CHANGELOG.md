@@ -15,7 +15,10 @@ the first entry here is in the git history.
   the package's; the adapter decides authorization and returns the operation's fields.
 - `DelegatedAccessSettings` reads `bherila-auth.delegated_access` (`DELEGATED_ACCESS_*` and an
   explicit `OAUTH_PROVIDER`). `NonceStore` defaults to `DatabaseNonceStore` on the configured
-  connection. The route is throttled by `bherila-auth-delegated-access` (120/min per IP).
+  connection. Requests are limited to 120/min per IP once enabled (429 `rate_limited`); a
+  disabled endpoint answers 404 without counting. Answers must carry exactly the operation's
+  top-level fields and encode within `MAX_RESPONSE_BYTES`, or they are reported and never sent.
+  The `Bearer` scheme is matched case-insensitively.
 - `DelegatedCursor` (encrypted keyset cursors within the 512-byte bound), `PendingAccount`
   (placeholder contact details for provisioned accounts), and the
   `bherila-auth:prune-delegated-nonces` command.

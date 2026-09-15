@@ -14,10 +14,7 @@ use BWH\Auth\Services\AuthAuditLogLoginThrottle;
 use BWH\Auth\Services\DatabaseAuthAuditLogger;
 use BWH\Auth\Services\DefaultAuthUserPolicy;
 use BWH\Auth\Services\NullAuthAuditLogger;
-use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Foundation\CachesConfiguration;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Passport\Passport;
@@ -97,10 +94,6 @@ class AuthServiceProvider extends ServiceProvider
 
         // Binding an adapter is the opt-in: an application without one has nothing to answer with.
         if ($this->app->bound(ApplicationAccessAdapter::class)) {
-            RateLimiter::for('bherila-auth-delegated-access', static fn (Request $request): Limit => Limit::perMinute(
-                max(1, (int) config('bherila-auth.delegated_access.per_minute', 120)),
-            )->by('bherila-auth-delegated-access:'.$request->ip()));
-
             Route::group([], __DIR__.'/../routes/delegated-access.php');
         }
 

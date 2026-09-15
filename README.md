@@ -930,7 +930,8 @@ only what is its own: an adapter deciding who may manage access and what they ma
    | `DELEGATED_ACCESS_NONCE_CONNECTION` | optional; the nonce table's connection, default connection otherwise |
 
    `bherila-auth.delegated_access.path` (default `/application-access`) and `per_minute` (default
-   120 per client IP, limiter `bherila-auth-delegated-access`) are config-only. If any listed key
+   120 per client IP) are config-only. The limit is applied inside the controller after the enabled
+   check, so a disabled endpoint answers 404 and never 429. If any listed key
    file is unreadable, or `OAUTH_PROVIDER` is unset or disagrees with `oauth_client.provider`,
    every request is refused with `invalid_verifier_configuration`. To rotate, list both public
    keys, switch the provider to the new key id, then remove the old one.
