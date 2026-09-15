@@ -63,13 +63,30 @@ $token = app(OAuthTokenIntrospector::class)->introspect($request->bearerToken() 
 
 Set `OAUTH_INTROSPECTION_ENDPOINT`, `OAUTH_INTROSPECTION_CLIENT_ID`,
 `OAUTH_INTROSPECTION_CLIENT_SECRET`, `OAUTH_RESOURCE_ISSUER`, and
-`OAUTH_RESOURCE_URI`. Inactive tokens and well-formed active tokens that fail issuer,
-resource, audience, expiry, or not-before validation return `active=false` without claims.
-Missing or null resource/audience binding also returns an inactive result. Configuration,
-connection, HTTP/client-authentication failures, and malformed responses or claim types
-still throw `OAuthIntrospectionException`. Applications can map an inactive result to
-an invalid-token response (401) and an exception to an unavailable-authority response
-(503), so clients can reauthorize when a token is invalid instead of retrying an outage.
+`OAUTH_RESOURCE_URI`. A token the authorization server reports as inactive returns
+`active=false` without claims. An `active: true` token with malformed claims, missing
+binding, the wrong issuer/resource/audience, an expired `exp`, or a future `nbf` throws
+`OAuthTokenValidationException`. Map either outcome to a 401 `invalid_token` response
+with the appropriate `WWW-Authenticate` challenge so the client can reauthorize.
+Configuration, connection, HTTP/client-authentication, and malformed response-envelope
+failures throw `OAuthIntrospectionException`; map those to 503 because retrying may
+succeed. Catch the validation subtype before its parent:
+
+```php
+use BWH\Auth\OAuth\Introspection\OAuthIntrospectionException;
+use BWH\Auth\OAuth\Introspection\OAuthTokenValidationException;
+
+try {
+    $token = app(OAuthTokenIntrospector::class)->introspect($request->bearerToken() ?? '');
+} catch (OAuthTokenValidationException) {
+    // 401 invalid_token
+} catch (OAuthIntrospectionException) {
+    // 503 authorization server unavailable
+}
+```
+
+`OAuthTokenValidationException` extends `OAuthIntrospectionException`, so existing broad
+catches remain source-compatible while consumers adopt the more precise mapping.
 The endpoint must use HTTPS (except loopback development) and the issuer's exact origin;
 redirects are never followed, so neither the bearer token nor confidential-client
 credential can be forwarded to another host.

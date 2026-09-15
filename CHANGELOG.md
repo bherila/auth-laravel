@@ -4,6 +4,19 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Distinguish rejected tokens from introspection outages
+
+- Active token contexts that are malformed, expired, not yet valid, or do not match the
+  configured issuer/resource/audience now throw `OAuthTokenValidationException`. Resource
+  servers can map that exception to 401 `invalid_token`, while mapping the parent
+  `OAuthIntrospectionException` to a retryable 503 for configuration, transport, provider,
+  and response-envelope failures.
+- `OAuthTokenValidationException` extends `OAuthIntrospectionException`, preserving existing
+  broad exception catches. Tokens reported `active: false` continue to return an inactive
+  result without claims.
+
 ## v0.15.0 - 2026-09-14
 
 ### Serve the delegated access endpoint from the package
