@@ -92,7 +92,9 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
             || ! $this->audienceContainsResource($audiences, $resource)
             || $expiresAt <= $now
             || ($notBefore !== null && $notBefore > $now)) {
-            return IntrospectedToken::inactive();
+            throw new OAuthTokenValidationException(
+                'The active OAuth token context is invalid for this resource server.',
+            );
         }
 
         return new IntrospectedToken(
@@ -179,7 +181,7 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
     private function nonEmptyString(mixed $value, bool $preserveWhitespace = false): string
     {
         if (! is_string($value) || trim($value) === '') {
-            throw new OAuthIntrospectionException('The active OAuth introspection response is incomplete.');
+            throw new OAuthTokenValidationException('The active OAuth introspection response is incomplete.');
         }
 
         return $preserveWhitespace ? $value : trim($value);
@@ -193,7 +195,7 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
 
         $canonical = OAuthResourceIndicator::canonicalize($value);
         if ($canonical === null) {
-            throw new OAuthIntrospectionException('The active OAuth introspection response is incomplete.');
+            throw new OAuthTokenValidationException('The active OAuth introspection response is incomplete.');
         }
 
         return $canonical;
@@ -242,7 +244,7 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
         if (! is_float($value)
             || ! is_finite($value)
             || ! $this->withinIntegerRange($value)) {
-            throw new OAuthIntrospectionException('The active OAuth introspection response has an invalid timestamp.');
+            throw new OAuthTokenValidationException('The active OAuth introspection response has an invalid timestamp.');
         }
 
         return (int) ($roundTowardFuture ? ceil($value) : floor($value));
@@ -284,13 +286,13 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
             $value = [$value];
         }
         if (! is_array($value) || ! array_is_list($value)) {
-            throw new OAuthIntrospectionException('The active OAuth introspection response has an invalid audience.');
+            throw new OAuthTokenValidationException('The active OAuth introspection response has an invalid audience.');
         }
 
         $values = [];
         foreach ($value as $item) {
             if (! is_string($item) || trim($item) === '') {
-                throw new OAuthIntrospectionException('The active OAuth introspection response has an invalid audience.');
+                throw new OAuthTokenValidationException('The active OAuth introspection response has an invalid audience.');
             }
             $values[] = $item;
         }
@@ -302,7 +304,7 @@ final readonly class RemoteOAuthTokenIntrospector implements OAuthTokenIntrospec
     private function scopes(mixed $value): array
     {
         if (! is_string($value)) {
-            throw new OAuthIntrospectionException('The active OAuth introspection response has an invalid scope.');
+            throw new OAuthTokenValidationException('The active OAuth introspection response has an invalid scope.');
         }
 
         return array_values(array_unique(array_filter(

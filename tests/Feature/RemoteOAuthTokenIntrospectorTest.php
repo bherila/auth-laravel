@@ -2,8 +2,8 @@
 
 namespace BWH\Auth\Tests\Feature;
 
-use BWH\Auth\OAuth\Introspection\IntrospectedToken;
 use BWH\Auth\OAuth\Introspection\OAuthIntrospectionException;
+use BWH\Auth\OAuth\Introspection\OAuthTokenValidationException;
 use BWH\Auth\OAuth\Introspection\RemoteOAuthTokenIntrospector;
 use BWH\Auth\Tests\TestCase;
 use Illuminate\Http\Client\ConnectionException;
@@ -132,10 +132,9 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             ), 200, ['Content-Type' => 'application/json']),
         ]);
 
-        self::assertEquals(
-            IntrospectedToken::inactive(),
-            app(RemoteOAuthTokenIntrospector::class)->introspect('not-yet-valid'),
-        );
+        $this->expectException(OAuthTokenValidationException::class);
+
+        app(RemoteOAuthTokenIntrospector::class)->introspect('not-yet-valid');
     }
 
     /**
@@ -177,10 +176,9 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             ),
         ]);
 
-        self::assertEquals(
-            IntrospectedToken::inactive(),
-            app(RemoteOAuthTokenIntrospector::class)->introspect('fractional-expired'),
-        );
+        $this->expectException(OAuthTokenValidationException::class);
+
+        app(RemoteOAuthTokenIntrospector::class)->introspect('fractional-expired');
     }
 
     #[DataProvider('invalidTimestampProvider')]
@@ -194,7 +192,7 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             ),
         ]);
 
-        $this->expectException(OAuthIntrospectionException::class);
+        $this->expectException(OAuthTokenValidationException::class);
 
         app(RemoteOAuthTokenIntrospector::class)->introspect('invalid-timestamp');
     }
@@ -204,8 +202,6 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
     {
         return [
             'string' => ['"1770000000"'],
-            'nan' => ['NaN'],
-            'infinity' => ['Infinity'],
             'overflow' => ['9223372036854775808'],
             'underflow' => ['-9223372036854775809'],
             // A double cannot represent these literals, so json_decode rounds
@@ -228,7 +224,7 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             ),
         ]);
 
-        $this->expectException(OAuthIntrospectionException::class);
+        $this->expectException(OAuthTokenValidationException::class);
 
         app(RemoteOAuthTokenIntrospector::class)->introspect('out-of-range-iat');
     }
@@ -315,14 +311,13 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             'resource' => 'https://other.example.test/mcp',
         ])]);
 
-        self::assertEquals(
-            IntrospectedToken::inactive(),
-            app(RemoteOAuthTokenIntrospector::class)->introspect('wrong-resource'),
-        );
+        $this->expectException(OAuthTokenValidationException::class);
+
+        app(RemoteOAuthTokenIntrospector::class)->introspect('wrong-resource');
     }
 
     #[DataProvider('invalidContextProvider')]
-    public function test_invalid_active_contexts_return_no_authorization_claims(array $overrides, array $missing = []): void
+    public function test_invalid_active_contexts_throw_a_token_validation_exception(array $overrides, array $missing = []): void
     {
         $payload = json_decode($this->activeResponseJson((string) (time() + 300)), true, 512, JSON_THROW_ON_ERROR);
         $payload = array_replace($payload, $overrides);
@@ -331,10 +326,9 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
         }
         Http::fake([self::ENDPOINT => Http::response($payload)]);
 
-        self::assertEquals(
-            IntrospectedToken::inactive(),
-            app(RemoteOAuthTokenIntrospector::class)->introspect('invalid-context'),
-        );
+        $this->expectException(OAuthTokenValidationException::class);
+
+        app(RemoteOAuthTokenIntrospector::class)->introspect('invalid-context');
     }
 
     public static function invalidContextProvider(): array
@@ -357,9 +351,8 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
     public function test_upstream_http_failures_remain_unavailable(int $status): void
     {
         Http::fake([self::ENDPOINT => Http::response(['active' => false], $status)]);
-        $this->expectException(OAuthIntrospectionException::class);
 
-        app(RemoteOAuthTokenIntrospector::class)->introspect('server-failure');
+        $this->assertUnavailable(fn () => app(RemoteOAuthTokenIntrospector::class)->introspect('server-failure'));
     }
 
     public static function upstreamFailureProvider(): array
@@ -370,17 +363,16 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
     public function test_connection_failures_remain_unavailable(): void
     {
         Http::fake(fn () => throw new ConnectionException('Synthetic outage'));
-        $this->expectException(OAuthIntrospectionException::class);
 
-        app(RemoteOAuthTokenIntrospector::class)->introspect('server-failure');
+        $this->assertUnavailable(fn () => app(RemoteOAuthTokenIntrospector::class)->introspect('server-failure'));
     }
 
     #[DataProvider('malformedClaimsProvider')]
-    public function test_malformed_claims_remain_unavailable_even_when_the_token_is_expired(array $overrides): void
+    public function test_malformed_active_token_claims_are_rejected_even_when_the_token_is_expired(array $overrides): void
     {
         $payload = json_decode($this->activeResponseJson('0'), true, 512, JSON_THROW_ON_ERROR);
         Http::fake([self::ENDPOINT => Http::response(array_replace($payload, $overrides))]);
-        $this->expectException(OAuthIntrospectionException::class);
+        $this->expectException(OAuthTokenValidationException::class);
 
         app(RemoteOAuthTokenIntrospector::class)->introspect('malformed-claims');
     }
@@ -438,13 +430,50 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
         self::assertFalse(app(RemoteOAuthTokenIntrospector::class)->introspect('token')->active);
     }
 
-    public function test_http_and_schema_failures_are_reported_as_unavailable(): void
+    #[DataProvider('malformedResponseProvider')]
+    public function test_malformed_response_envelopes_are_reported_as_unavailable(string $body): void
     {
-        Http::fake([self::ENDPOINT => Http::response(['active' => 'yes'], 200)]);
+        Http::fake([self::ENDPOINT => Http::response($body, 200, ['Content-Type' => 'application/json'])]);
 
-        $this->expectException(OAuthIntrospectionException::class);
+        $this->assertUnavailable(fn () => app(RemoteOAuthTokenIntrospector::class)->introspect('malformed-response'));
+    }
 
-        app(RemoteOAuthTokenIntrospector::class)->introspect('malformed-response');
+    /** @return array<string, array{string}> */
+    public static function malformedResponseProvider(): array
+    {
+        return [
+            'invalid json' => ['{'],
+            'scalar' => ['"active"'],
+            'missing active' => ['{}'],
+            'non-boolean active' => ['{"active":"yes"}'],
+            'non-json NaN claim' => ['{"active":true,"exp":NaN}'],
+            'non-json Infinity claim' => ['{"active":true,"exp":Infinity}'],
+        ];
+    }
+
+    #[DataProvider('invalidConfigurationProvider')]
+    public function test_invalid_configuration_is_reported_as_unavailable(string $key, mixed $value): void
+    {
+        config(["bherila-auth.oauth_resource_server.{$key}" => $value]);
+        Http::fake();
+
+        $this->assertUnavailable(fn () => app(RemoteOAuthTokenIntrospector::class)->introspect('must-not-leave'));
+        Http::assertNothingSent();
+    }
+
+    /** @return array<string, array{string, mixed}> */
+    public static function invalidConfigurationProvider(): array
+    {
+        return [
+            'missing endpoint' => ['introspection_endpoint', null],
+            'relative endpoint' => ['introspection_endpoint', '/oauth/introspect'],
+            'missing client id' => ['client_id', null],
+            'missing client secret' => ['client_secret', null],
+            'missing issuer' => ['issuer', null],
+            'relative issuer' => ['issuer', '/'],
+            'missing resource' => ['resource', null],
+            'relative resource' => ['resource', '/mcp'],
+        ];
     }
 
     public function test_it_refuses_insecure_endpoints_before_sending_the_token(): void
@@ -513,6 +542,38 @@ final class RemoteOAuthTokenIntrospectorTest extends TestCase
             self::fail('Expected cross-origin endpoint configuration to be rejected.');
         } catch (OAuthIntrospectionException) {
             Http::assertNothingSent();
+        }
+    }
+
+    public function test_token_validation_exception_remains_compatible_with_the_base_exception(): void
+    {
+        Http::fake([self::ENDPOINT => Http::response([
+            'active' => true,
+            'iss' => 'https://other.example.test',
+            'sub' => '42',
+            'client_id' => 'public-client',
+            'scope' => 'mcp:use',
+            'exp' => time() + 300,
+            'aud' => ['public-client', self::RESOURCE],
+            'resource' => self::RESOURCE,
+        ])]);
+
+        try {
+            app(RemoteOAuthTokenIntrospector::class)->introspect('wrong-issuer');
+            self::fail('Expected the invalid token context to be rejected.');
+        } catch (OAuthIntrospectionException $exception) {
+            self::assertInstanceOf(OAuthTokenValidationException::class, $exception);
+        }
+    }
+
+    /** @param callable(): mixed $operation */
+    private function assertUnavailable(callable $operation): void
+    {
+        try {
+            $operation();
+            self::fail('Expected OAuth introspection to be unavailable.');
+        } catch (OAuthIntrospectionException $exception) {
+            self::assertNotInstanceOf(OAuthTokenValidationException::class, $exception);
         }
     }
 }
