@@ -134,7 +134,7 @@ final class DelegatedAccessController extends Controller
             return self::error('internal_error', 500);
         }
 
-        return (new JsonResponse($json, 200, [], true))->header('Cache-Control', 'no-store');
+        return JsonResponse::fromJsonString($json)->header('Cache-Control', 'no-store');
     }
 
     private static function error(string $outcome, int $status): JsonResponse
