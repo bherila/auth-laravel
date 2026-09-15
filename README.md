@@ -806,7 +806,8 @@ Because throttling is audit-log-backed, apps must enable the database audit driv
 
 `BWH\Auth\OAuth\DelegatedAccess` provides consumer primitives for the
 [delegated application access contract](https://github.com/bherila/auth-manager/issues/33).
-It does not install a signing service, expose routes, or grant application access.
+It does not install a signing service or grant application access, and it exposes a route only
+when an application binds an adapter ([Serving the endpoint](#serving-the-endpoint)).
 `lcobucci/jwt` is an explicit runtime dependency; Passport
 remains optional for consumers that do not run an authorization server.
 
@@ -902,3 +903,68 @@ default: pass the version both sides agreed on as the last argument to `request(
   subject, and answers 409 when the subject is already provisioned.
 - A version this package does not implement is a configuration error
   (`unsupported_contract_version`, status 500), not a refusal of any request.
+
+### Serving the endpoint
+
+The package serves `POST /application-access` for contract version 2. The application supplies
+only what is its own: an adapter deciding who may manage access and what they may see and change.
+
+1. Implement `BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter` and bind it in a service
+   provider's `register()`. Binding it is the opt-in: without a binding there is no route.
+
+   ```php
+   $this->app->bind(ApplicationAccessAdapter::class, MyApplicationAccessAdapter::class);
+   ```
+
+2. Publish and apply the nonce migration (`bherila-auth-delegated-access-migrations`, above).
+3. Configure the deployment:
+
+   | Variable | Meaning |
+   |---|---|
+   | `DELEGATED_ACCESS_ENABLED` | `true` to answer; the route answers 404 otherwise |
+   | `DELEGATED_ACCESS_ISSUER` | the provider's exact HTTPS issuer |
+   | `DELEGATED_ACCESS_ENDPOINT` | this endpoint's exact HTTPS URL, as the provider is configured to call it |
+   | `DELEGATED_ACCESS_APPLICATION` | this application's key in the provider's registry |
+   | `DELEGATED_ACCESS_PUBLIC_KEYS` | the provider's integration public keys, `key-id\|/path/to/public.pem`, comma-separated |
+   | `OAUTH_PROVIDER` | must be set explicitly; it names the issuer local identity bindings are stored under |
+   | `DELEGATED_ACCESS_NONCE_CONNECTION` | optional; the nonce table's connection, default connection otherwise |
+
+   `bherila-auth.delegated_access.path` (default `/application-access`) and `per_minute` (default
+   120 per client IP, limiter `bherila-auth-delegated-access`) are config-only. If any listed key
+   file is unreadable, or `OAUTH_PROVIDER` is unset or disagrees with `oauth_client.provider`,
+   every request is refused with `invalid_verifier_configuration`. To rotate, list both public
+   keys, switch the provider to the new key id, then remove the old one.
+
+4. Schedule `bherila-auth:prune-delegated-nonces` if the table should not grow without bound. It
+   deletes expired nonces only.
+
+The controller refuses an oversize body (`MAX_REQUEST_BYTES`) and a missing bearer before
+verification. It verifies the assertion and consumes its nonce before parsing the body, then
+requires version 2 and this application's key. The adapter's `handle($actorSubject, $payload)`
+receives `operation` plus that operation's fields, and returns that operation's response fields.
+The controller adds `contract_version`, `application` and `operation`, validates the whole answer
+(including the subject echo for `read` and `update`), and sends it with `Cache-Control: no-store`.
+A `DelegatedAccessException` thrown by the adapter is sent as its outcome and status. An answer
+outside the contract is reported and becomes `internal_error` (500), never sent.
+
+Laravel may read a JSON body in global middleware before any controller runs, so bound this
+route's body to the same 64 KiB at the web server where you can. Nothing in front may rewrite the
+body or strip `Authorization`: the assertion is bound to the exact bytes.
+
+Helpers for adapters:
+
+- `DelegatedAccessSettings::bindingIssuer()` is the provider name to resolve actors and targets
+  under, the same one sign-in binds.
+- `DelegatedCursor` encodes an encrypted keyset cursor bound to the actor and the operation:
+  `encode($actor, $operation, $lastKeyShown)`, and `after($actor, $operation, $payload)` returns
+  0 for a first page and refuses a foreign or tampered cursor with `invalid_cursor`. It stays within
+  the contract's 512-byte bound for any subject length.
+- `BWH\Auth\OAuth\PendingAccount::email($provider, $subject)` and `name($label, $subject)` give a
+  provisioned account's placeholder contact details until first sign-in. The address is under
+  `.invalid` and is never a linking key.
+
+What remains the adapter's: match the verified actor to a local account through its binding and
+refuse (`not_authorized`, 403) unless it is active and may manage access. Show only what that actor
+may manage. Compare revisions under the same locks the changes take (`revision_conflict`, 409).
+Provision only an unbound subject, bound to `bindingIssuer()` and the exact subject, never by
+adopting a row found by address. Keep the application's own last-administrator and audit rules.

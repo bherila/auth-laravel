@@ -111,6 +111,27 @@ return [
         'timeout_seconds' => (int) env('OAUTH_INTROSPECTION_TIMEOUT_SECONDS', 5),
     ],
 
+    'delegated_access' => [
+        // The endpoint an identity provider calls to manage people's access in this application
+        // (delegated access contract version 2). Its route exists only when the application binds
+        // BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter, and answers 404 until enabled.
+        'enabled' => env('DELEGATED_ACCESS_ENABLED', false),
+        // The provider's exact HTTPS issuer.
+        'issuer' => env('DELEGATED_ACCESS_ISSUER', ''),
+        // This endpoint's exact HTTPS URL, as the provider is configured to call it.
+        'endpoint' => env('DELEGATED_ACCESS_ENDPOINT', ''),
+        // This application's key in the provider's application registry.
+        'application' => env('DELEGATED_ACCESS_APPLICATION', ''),
+        // The provider's integration public keys: `key-id|/path/to/public.pem`, comma-separated.
+        'public_keys' => env('DELEGATED_ACCESS_PUBLIC_KEYS', ''),
+        // Must be set and equal oauth_client.provider: bindings are stored under that name.
+        'oauth_provider' => env('OAUTH_PROVIDER'),
+        // The nonce table's connection; null for the default. Must be durable and shared by every worker.
+        'nonce_connection' => env('DELEGATED_ACCESS_NONCE_CONNECTION'),
+        'path' => '/application-access',
+        'per_minute' => 120,
+    ],
+
     'migrations' => [
         'drop_tables_on_rollback' => false,
     ],
