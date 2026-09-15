@@ -4,6 +4,25 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Serve the delegated access endpoint from the package
+
+- `POST /application-access` (contract version 2) is served by `DelegatedAccessController` once an
+  application binds `BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter`. The route is absent
+  without a binding and answers 404 until `DELEGATED_ACCESS_ENABLED`. Body bound, bearer,
+  verification, nonce consumption, version and application checks, and response validation are
+  the package's; the adapter decides authorization and returns the operation's fields.
+- `DelegatedAccessSettings` reads `bherila-auth.delegated_access` (`DELEGATED_ACCESS_*` and an
+  explicit `OAUTH_PROVIDER`). `NonceStore` defaults to `DatabaseNonceStore` on the configured
+  connection. Requests are limited to 120/min per IP once enabled (429 `rate_limited`); a
+  disabled endpoint answers 404 without counting. Answers must carry exactly the operation's
+  top-level fields and encode within `MAX_RESPONSE_BYTES`, or they are reported and never sent.
+  The `Bearer` scheme is matched case-insensitively.
+- `DelegatedCursor` (encrypted keyset cursors within the 512-byte bound), `PendingAccount`
+  (placeholder contact details for provisioned accounts), and the
+  `bherila-auth:prune-delegated-nonces` command.
+
 ## v0.14.0 - 2026-09-14
 
 ### Delegated access contract version 2
