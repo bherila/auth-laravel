@@ -113,6 +113,21 @@ final class DelegatedAccessController extends Controller
                 throw new DelegatedAccessException('invalid_response');
             }
 
+            // Version 2 checks exact keys everywhere except page entries, whose validator is shared
+            // with version 1; an entry carrying anything besides its identifier and label is refused
+            // here so no adapter data reaches the provider by that route either.
+            if ($operation === 'subjects' || $operation === 'workspaces') {
+                $entryKeys = [$operation === 'subjects' ? 'subject' : 'id', 'label'];
+                sort($entryKeys);
+                foreach (is_array($fields[$operation]) ? $fields[$operation] : [] as $entry) {
+                    $present = is_array($entry) ? array_map('strval', array_keys($entry)) : [];
+                    sort($present);
+                    if ($present !== $entryKeys) {
+                        throw new DelegatedAccessException('invalid_response');
+                    }
+                }
+            }
+
             $response = ['contract_version' => DelegatedContract::VERSION_2, 'application' => $application, 'operation' => $operation] + $fields;
             $contract->response($response, $application, $operation, $payload['subject'] ?? null, DelegatedContract::VERSION_2);
 

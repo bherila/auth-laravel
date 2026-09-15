@@ -260,6 +260,22 @@ class DelegatedAccessEndpointTest extends TestCase
         }
     }
 
+    public function test_a_page_entry_with_a_field_the_contract_does_not_define_is_never_sent(): void
+    {
+        Exceptions::fake();
+
+        $this->answer = static fn (): array => ['subjects' => [['subject' => 'target-subject', 'label' => 'Target', 'email' => 'person@example.test']], 'next_cursor' => null];
+        $this->send(['operation' => 'subjects'])->assertStatus(500)->assertExactJson(['error' => 'internal_error']);
+
+        $this->answer = static fn (): array => ['workspaces' => [['id' => 'workspace-1', 'label' => 'One', 'internal_id' => 7]], 'next_cursor' => null];
+        $this->send(['operation' => 'workspaces'])->assertStatus(500)->assertExactJson(['error' => 'internal_error']);
+
+        $this->answer = static fn (): array => ['workspaces' => [['id' => 'workspace-1', 'label' => 'One']], 'next_cursor' => null];
+        $this->send(['operation' => 'workspaces'])->assertOk()->assertJsonPath('workspaces.0.id', 'workspace-1');
+
+        Exceptions::assertReported(DelegatedAccessException::class);
+    }
+
     public function test_an_answer_with_a_field_the_contract_does_not_define_or_missing_one_is_never_sent(): void
     {
         Exceptions::fake();
