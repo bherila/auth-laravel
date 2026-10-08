@@ -5,11 +5,8 @@ namespace BWH\Auth;
 use BWH\Auth\Console\CheckCloudflareRangesCommand;
 use BWH\Auth\Console\PruneAuthAuditLogCommand;
 use BWH\Auth\Console\PruneDelegatedAccessNoncesCommand;
-<<<<<<< HEAD
-use BWH\Auth\Http\TrustedProxies;
-=======
 use BWH\Auth\Console\PruneDynamicClientsCommand;
->>>>>>> c65b71f (Add operations tooling for the agent preset)
+use BWH\Auth\Http\TrustedProxies;
 use BWH\Auth\Contracts\AuthAuditLogger;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Contracts\LoginThrottle;
@@ -122,17 +119,13 @@ class AuthServiceProvider extends ServiceProvider
         }
 
         if ($this->app->runningInConsole()) {
-<<<<<<< HEAD
-            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class]);
+            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class, PruneDynamicClientsCommand::class]);
         }
 
         // Opt-in: an application that manages trusted proxies itself, or has no
         // proxy in front, leaves this off and nothing changes.
         if ((bool) config('bherila-auth.trusted_proxies.apply', false)) {
             TrustedProxies::apply();
-=======
-            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, PruneDynamicClientsCommand::class]);
->>>>>>> c65b71f (Add operations tooling for the agent preset)
         }
 
         // Testbench and applications with deferred configuration can apply the
