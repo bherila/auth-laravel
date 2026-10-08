@@ -151,19 +151,26 @@ final class EnforceOAuthResourceIndicator
         if ($client === null) {
             return true;
         }
-        $registeredAtColumn = config('bherila-auth.oauth_server.dynamic_clients.registered_at_column');
-        if (! is_string($registeredAtColumn) || $client->getAttribute($registeredAtColumn) === null) {
-            return true;
-        }
+        // The same defaults the credential service and registration controller
+        // write with: a missing key must not silently switch the ceiling off.
+        $registeredAtColumn = config('bherila-auth.oauth_server.dynamic_clients.registered_at_column', 'dynamically_registered_at');
+        $dynamic = is_string($registeredAtColumn) && $client->getAttribute($registeredAtColumn) !== null;
+        $scopesColumn = config('bherila-auth.oauth_server.dynamic_clients.scopes_column', 'scopes');
+        $hasScopesColumn = is_string($scopesColumn) && $scopesColumn !== '';
+        $registeredScopes = $hasScopesColumn ? $client->getAttribute($scopesColumn) : null;
 
-        $scopesColumn = config('bherila-auth.oauth_server.dynamic_clients.scopes_column');
-        if (! is_string($scopesColumn) || $scopesColumn === '') {
-            return false;
-        }
-        $registeredScopes = $client->getAttribute($scopesColumn);
-        if ($registeredScopes === null) {
-            // Registrations created before scope persistence was enabled are
-            // ambiguous; fail closed instead of treating them as unrestricted.
+        if (! $dynamic) {
+            // A client a person or the application registered. When it was
+            // given a scope ceiling, consent is held to it too: otherwise the
+            // person is asked to approve permissions the client was never
+            // registered for, even though Passport later drops them from the
+            // token. A client without stored scopes keeps the whole catalog.
+            if ($registeredScopes === null) {
+                return true;
+            }
+        } elseif (! $hasScopesColumn || $registeredScopes === null) {
+            // Self-registrations created before scope persistence was enabled
+            // are ambiguous; fail closed instead of treating them as unrestricted.
             return false;
         }
         if (is_string($registeredScopes)) {
