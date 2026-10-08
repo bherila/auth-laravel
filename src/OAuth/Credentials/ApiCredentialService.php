@@ -167,8 +167,14 @@ final class ApiCredentialService
             );
             // Read once, here: the stored secret is hashed.
             $secret = $confidential ? $client->plainSecret : null;
-            // The consent ceiling (EnforceOAuthResourceIndicator holds any client to its stored scopes).
-            $client->forceFill([$this->scopesColumn() => array_values(array_unique($scopes))])->save();
+            // The consent ceiling (EnforceOAuthResourceIndicator holds any client to
+            // its stored scopes). Encoded by hand where the model does not cast the
+            // column, as the registration controller does.
+            $column = $this->scopesColumn();
+            $ceiling = array_values(array_unique($scopes));
+            $client->forceFill([$column => $client->hasCast($column, ['array', 'json', 'collection'])
+                ? $ceiling
+                : json_encode($ceiling, JSON_THROW_ON_ERROR)])->save();
 
             return ['client' => $client, 'secret' => $secret];
         });
@@ -188,7 +194,7 @@ final class ApiCredentialService
                 'name' => (string) $client->name,
                 'confidential' => $client->confidential(),
                 'redirect_uris' => array_values(array_map('strval', (array) $client->getAttribute('redirect_uris'))),
-                'scopes' => array_values(array_map('strval', (array) $client->getAttribute($this->scopesColumn()))),
+                'scopes' => $this->storedScopes($client->getAttribute($this->scopesColumn())),
                 'created_at' => $client->created_at?->toIso8601String(),
             ])
             ->all());
@@ -258,6 +264,20 @@ final class ApiCredentialService
         $provider = config('bherila-auth.oauth_server.credentials.provider') ?? config('auth.guards.api.provider', 'users');
 
         return is_string($provider) && $provider !== '' ? $provider : 'users';
+    }
+
+    /** @return list<string> */
+    private function storedScopes(mixed $value): array
+    {
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            $value = is_array($decoded) ? $decoded : [];
+        }
+        if ($value instanceof \Illuminate\Support\Collection) {
+            $value = $value->all();
+        }
+
+        return array_values(array_map('strval', is_array($value) ? $value : []));
     }
 
     private function prefix(): string

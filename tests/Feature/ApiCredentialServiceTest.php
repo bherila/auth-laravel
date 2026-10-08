@@ -200,6 +200,22 @@ final class ApiCredentialServiceTest extends TestCase
         $this->assertTrue((bool) $row->fresh()->revoked);
     }
 
+    /** A custom scopes column without an array cast stores the ceiling as JSON and still enforces it. */
+    public function test_an_uncast_scopes_column_stores_and_enforces_the_ceiling(): void
+    {
+        \Illuminate\Support\Facades\Schema::table('oauth_clients', static function (\Illuminate\Database\Schema\Blueprint $table): void {
+            $table->text('registered_scopes')->nullable();
+        });
+        config(['bherila-auth.oauth_server.dynamic_clients.scopes_column' => 'registered_scopes']);
+
+        $app = $this->actingAs($this->user)->postJson(self::BASE.'/apps', [
+            'name' => 'Uncast', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['items:read'],
+        ])->assertCreated()->json('data');
+
+        $this->assertSame('["items:read"]', \Illuminate\Support\Facades\DB::table('oauth_clients')->where('id', $app['client_id'])->value('registered_scopes'));
+        $this->assertSame(['items:read'], $this->getJson(self::BASE)->json('data.apps.0.scopes'));
+    }
+
     public function test_redirect_uri_rules(): void
     {
         $this->assertTrue(ApiCredentialService::validRedirectUri('https://app.example.test/cb'));
