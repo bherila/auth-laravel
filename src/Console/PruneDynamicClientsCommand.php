@@ -62,27 +62,45 @@ class PruneDynamicClientsCommand extends Command
 
         $pruned = 0;
         foreach ($candidates as $client) {
-            if ($this->hasActiveCredential((string) $client->getKey())) {
+            if ($this->inUse((string) $client->getKey())) {
                 continue;
             }
-            $pruned++;
             if ($this->option('pretend')) {
+                $pruned++;
+
                 continue;
             }
-            $client->getConnection()->transaction(static function () use ($client): void {
+            // Re-checked under a lock on the client row, inside the deletion: a
+            // flow that started after the first check (a fresh code or token)
+            // keeps its client rather than losing it mid-exchange.
+            $deleted = $client->getConnection()->transaction(function () use ($client): bool {
+                $locked = Passport::client()->newQuery()->whereKey($client->getKey())->lockForUpdate()->first();
+                if ($locked === null || $this->inUse((string) $client->getKey())) {
+                    return false;
+                }
                 $tokenIds = Passport::token()->newQuery()->where('client_id', $client->getKey())->pluck('id');
                 if ($tokenIds->isNotEmpty()) {
                     Passport::refreshToken()->newQuery()->whereIn('access_token_id', $tokenIds)->delete();
                     Passport::token()->newQuery()->whereIn('id', $tokenIds)->delete();
                 }
                 Passport::authCode()->newQuery()->where('client_id', $client->getKey())->delete();
-                $client->delete();
+                $locked->delete();
+
+                return true;
             });
+            $pruned += $deleted ? 1 : 0;
         }
 
         $this->info(($this->option('pretend') ? 'Would prune ' : 'Pruned ').$pruned.' stale dynamic OAuth client(s).');
 
         return self::SUCCESS;
+    }
+
+    /** A live access or refresh token, or a live authorization code (a flow in progress). */
+    private function inUse(string $clientId): bool
+    {
+        return $this->hasActiveCredential($clientId)
+            || Passport::authCode()->newQuery()->where('client_id', $clientId)->where('revoked', false)->where('expires_at', '>', Date::now())->exists();
     }
 
     private function hasActiveCredential(string $clientId): bool

@@ -105,4 +105,17 @@ final class AgentOAuthOpsTest extends TestCase
         $this->artisan('bherila-auth:prune-dynamic-clients')->expectsOutputToContain('Pruned 1')->assertExitCode(0);
         $this->assertNull(Passport::client()->newQuery()->find($client->getKey()));
     }
+
+    /** A client whose authorization flow is in progress (a live code) is not pruned. */
+    public function test_prune_keeps_a_client_with_a_flow_in_progress(): void
+    {
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient('Mid-flow', ['https://c.example.test/cb'], confidential: false);
+        $client->forceFill(['dynamically_registered_at' => now()->subDays(40)])->save();
+        Passport::authCode()->newQuery()->forceCreate([
+            'id' => 'live-code', 'user_id' => 1, 'client_id' => $client->getKey(), 'scopes' => '[]', 'revoked' => false, 'expires_at' => now()->addMinutes(5),
+        ]);
+
+        $this->artisan('bherila-auth:prune-dynamic-clients')->expectsOutputToContain('Pruned 0')->assertExitCode(0);
+        $this->assertNotNull(Passport::client()->newQuery()->find($client->getKey()));
+    }
 }
