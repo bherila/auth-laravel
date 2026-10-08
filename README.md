@@ -762,6 +762,28 @@ Schedule::command('model:prune', ['--model' => [\BWH\Auth\Models\AuthAuditLog::c
 
 > **Since 0.2.0.** The audit-log table, default database logger, `BinaryIpAddressCast`, `ClientIp`, the `LogsAuthEvents` trait, read endpoints, retention, and the `loginSucceeded`/`loginFailed`/`loggedOut` contract methods were added in 0.2.0. The contract gained methods; implementations should extend `BWH\Auth\Services\AbstractAuthAuditLogger` (which provides no-op defaults) rather than implementing the interface directly.
 
+## Trusted proxies
+
+Every per-client limit, including login throttling, client registration, token exchange and your own API throttles, keys on `Request::ip()`. Behind a CDN that's the edge's address unless the edge is trusted, so every client behind one edge shares a budget. Trusting `*` is unsafe wherever the origin also answers direct connections, because anyone could forge their address.
+
+Opt in to let the package configure Laravel's `TrustProxies` for you:
+
+```dotenv
+BHERILA_AUTH_TRUSTED_PROXIES=true
+TRUSTED_PROXIES=cloudflare   # or a comma-separated list, or * behind a firewall, or empty
+```
+
+| `TRUSTED_PROXIES` | Trusts |
+|---|---|
+| `cloudflare` (default) | Cloudflare's published IPv4/IPv6 ranges, shipped with the package (`TrustedProxies::CLOUDFLARE`), or `bherila-auth.trusted_proxies.cloudflare` if you pin your own list |
+| `10.0.0.1, 192.0.2.0/24` | exactly those addresses and ranges; `cloudflare` can appear in the list too |
+| `*` | every peer; only safe when a firewall admits nothing but the proxy |
+| empty | nothing; right when no proxy is in front |
+
+- **Headers honoured:** only `X-Forwarded-For`, `-Proto` and `-Port`. Never `X-Forwarded-Host`.
+- **The client address** is the rightmost one that isn't a trusted proxy, i.e. the address the edge appended. Anything the client wrote further left is ignored.
+- **Drift check:** run `php artisan bherila-auth:check-cloudflare-ranges` from a scheduled CI job. It exits `1` with an add/remove list when Cloudflare revises its ranges, and `2` if they can't be fetched.
+
 ## Login throttling
 
 The package can also enforce a password-login lockout using the same append-only `auth_audit_log` table. It is **off by default** and has no effect until a consuming app enables it and calls the service from its own password-login controller:
