@@ -121,13 +121,17 @@ trait AssertsDelegatedAccessAdapter
 
     /**
      * Application administration changes only where both the capabilities and this read allow it.
+     *
+     * Where this actor may change it for this target there is nothing to refuse, and the assertion
+     * returns without checking. Seed an actor who may not to exercise it. It never skips: a skip
+     * would end the whole test method and silently drop the assertions after it.
      */
     protected function assertDelegatedApplicationAdminFollowsAllowedEdits(string $actor, string $target): void
     {
         $capabilities = $this->delegatedAccessCall($actor, ['operation' => 'capabilities']);
         $state = $this->delegatedAccessRead($actor, $target);
         if ($capabilities['controls']['application_admin'] && $state['allowed_edits']['application_admin']) {
-            $this->markTestSkipped('This actor may change application administration for this target; seed one who may not.');
+            return;
         }
 
         $before = $this->delegatedAccessRecord($target);

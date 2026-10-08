@@ -10,6 +10,7 @@ use BWH\Auth\Tests\Fixtures\InMemoryAccessAdapter;
 use BWH\Auth\Tests\TestCase;
 use PHPUnit\Framework\AssertionFailedError;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\SkippedTest;
 
 /**
  * The adapter conformance assertions pass a conformant adapter and catch each way to break one.
@@ -57,6 +58,19 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
     {
         $this->adapter->keepsAMember = ['w1'];
 
+        $this->assertDelegatedStaleRevisionRefused('manager', 'target');
+    }
+
+    /** Where the actor may change application administration, the rest of the method still runs. */
+    public function test_the_application_admin_check_never_skips_the_assertions_after_it(): void
+    {
+        $this->adapter->adminEditable = true;
+
+        try {
+            $this->assertDelegatedApplicationAdminFollowsAllowedEdits('manager', 'target');
+        } catch (SkippedTest) {
+            $this->fail('Skipping would drop every assertion after this one');
+        }
         $this->assertDelegatedStaleRevisionRefused('manager', 'target');
     }
 

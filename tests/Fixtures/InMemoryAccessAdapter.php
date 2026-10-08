@@ -32,6 +32,9 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
      */
     public array $keepsAMember = [];
 
+    /** Whether managers may make a target an application administrator. */
+    public bool $adminEditable = false;
+
     /** @var array<string, bool> */
     public array $broken = [
         'refuse_only_writes' => false,
@@ -51,7 +54,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
 
         return match ($payload['operation']) {
             'capabilities' => ['controls' => [
-                'application_admin' => false,
+                'application_admin' => $this->adminEditable,
                 'workspace_roles' => array_map(static fn (string $role): array => ['id' => $role, 'label' => ucfirst($role)], self::ROLES),
                 'provisioning' => false,
             ]],
@@ -92,7 +95,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
             'provisioned' => true,
             'revision' => $this->revision($subject),
             'access' => ['application_admin' => $this->admins[$subject] ?? false, 'workspaces' => $visible],
-            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false],
+            'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false],
         ];
     }
 
@@ -105,7 +108,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $subject = $payload['subject'];
         $current = $this->memberships[$subject] ?? throw DelegatedRefusal::of(DelegatedRefusal::INVALID_REQUEST);
 
-        if ($payload['access']['application_admin'] !== ($this->admins[$subject] ?? false) && ! $this->broken['grant_application_admin']) {
+        if ($payload['access']['application_admin'] !== ($this->admins[$subject] ?? false) && ! $this->adminEditable && ! $this->broken['grant_application_admin']) {
             throw DelegatedRefusal::of(DelegatedRefusal::NOT_AUTHORIZED);
         }
         $kept = array_column($payload['access']['workspaces'], 'role', 'id');
