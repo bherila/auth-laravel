@@ -11,6 +11,19 @@ return [
         'two_factor' => true,
     ],
 
+    // Which proxies may report the client's address (BWH\Auth\Http\TrustedProxies).
+    // Off by default. When applied, `trusted` is `cloudflare` (Cloudflare's
+    // published ranges), an explicit comma-separated list of addresses or CIDR
+    // ranges, `*` only where a firewall admits the proxy alone, or empty to
+    // trust nothing - right for a deployment with no proxy in front. Only
+    // X-Forwarded-For and -Proto are honoured, never the forwarded port or host.
+    'trusted_proxies' => [
+        'apply' => (bool) env('BHERILA_AUTH_TRUSTED_PROXIES', false),
+        'trusted' => env('TRUSTED_PROXIES', 'cloudflare'),
+        // Null uses the ranges shipped with the package; set a list to pin your own.
+        'cloudflare' => null,
+    ],
+
     'oauth_client' => [
         // Shared OAuth authorization-code + PKCE client mechanics. Applications still
         // own local user provisioning and authorization policy after identity resolution.

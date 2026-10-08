@@ -2,8 +2,10 @@
 
 namespace BWH\Auth;
 
+use BWH\Auth\Console\CheckCloudflareRangesCommand;
 use BWH\Auth\Console\PruneAuthAuditLogCommand;
 use BWH\Auth\Console\PruneDelegatedAccessNoncesCommand;
+use BWH\Auth\Http\TrustedProxies;
 use BWH\Auth\Contracts\AuthAuditLogger;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Contracts\LoginThrottle;
@@ -98,7 +100,13 @@ class AuthServiceProvider extends ServiceProvider
         }
 
         if ($this->app->runningInConsole()) {
-            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class]);
+            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class]);
+        }
+
+        // Opt-in: an application that manages trusted proxies itself, or has no
+        // proxy in front, leaves this off and nothing changes.
+        if ((bool) config('bherila-auth.trusted_proxies.apply', false)) {
+            TrustedProxies::apply();
         }
 
         // Testbench and applications with deferred configuration can apply the

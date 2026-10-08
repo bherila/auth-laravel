@@ -16,6 +16,22 @@ the first entry here is in the git history.
 - Clients without stored scopes are unchanged. Self-registered clients without stored scopes
   still fail closed.
 
+### Trusted proxies limited to Cloudflare's published ranges
+
+- `BWH\Auth\Http\TrustedProxies` and the opt-in `bherila-auth.trusted_proxies` config
+  (`BHERILA_AUTH_TRUSTED_PROXIES=true`, `TRUSTED_PROXIES`). When applied, X-Forwarded-For and its
+  scheme are honoured only from the configured proxies, never the forwarded port or host:
+  - `cloudflare` (the default), Cloudflare's published IPv4/IPv6 ranges;
+  - an explicit list;
+  - `*`, only where a firewall admits the proxy alone;
+  - empty, to trust nothing.
+
+  The client is the address the edge appended. A direct connection's forged headers are ignored.
+  Off by default, so upgrading changes nothing.
+- `bherila-auth:check-cloudflare-ranges` compares the trusted ranges with Cloudflare's published
+  list and exits non-zero on drift. Run it from a scheduled CI job: a stale list fails quietly back
+  into shared per-edge rate-limit budgets.
+
 ## v0.17.0 - 2026-10-08
 
 ### Opt in to binding credentials whose request omits `resource`
