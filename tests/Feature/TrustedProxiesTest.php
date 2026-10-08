@@ -130,6 +130,17 @@ class TrustedProxiesTest extends TestCase
             ->getJson('/whoami')->assertJsonPath('ip', '104.16.1.2');
     }
 
+    /** An explicitly empty Cloudflare list stays empty; only null falls back to the shipped ranges. */
+    public function test_an_explicitly_empty_cloudflare_list_is_not_replaced_by_the_shipped_one(): void
+    {
+        config(['bherila-auth.trusted_proxies.cloudflare' => [], 'bherila-auth.trusted_proxies.trusted' => '10.0.0.1,cloudflare']);
+        TrustProxies::flushState();
+        TrustedProxies::apply();
+
+        $this->withServerVariables(['REMOTE_ADDR' => '104.16.1.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'])
+            ->getJson('/whoami')->assertJsonPath('ip', '104.16.1.2');
+    }
+
     public function test_the_drift_check_passes_on_a_match_and_reports_additions_and_removals(): void
     {
         $v4 = array_values(array_filter(TrustedProxies::CLOUDFLARE, static fn (string $r): bool => ! str_contains($r, ':')));

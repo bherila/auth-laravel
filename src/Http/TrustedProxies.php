@@ -86,7 +86,9 @@ final class TrustedProxies
     {
         $configured = config('bherila-auth.trusted_proxies.cloudflare');
 
-        return is_array($configured) && $configured !== []
+        // Only null means "the shipped list": an explicitly empty list is a
+        // deployment saying Cloudflare's ranges must not be trusted.
+        return is_array($configured)
             ? array_values(array_map('strval', $configured))
             : self::CLOUDFLARE;
     }
