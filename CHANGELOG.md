@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.17.0 - 2026-10-08
 
 ### Opt in to binding credentials whose request omits `resource`
 
@@ -21,6 +21,8 @@ the first entry here is in the git history.
 - `OAuthResourceIndicator::assumesOmittedResource()` and `requestNamesResource()`;
   `requestResource()` returns the configured resource for an omitted parameter when the option is
   on.
+
+## v0.16.0 - 2026-09-15
 
 ### Distinguish rejected tokens from introspection outages
 
