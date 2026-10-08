@@ -32,6 +32,18 @@ the first entry here is in the git history.
   list and exits non-zero on drift. Run it from a scheduled CI job: a stale list fails quietly back
   into shared per-edge rate-limit budgets.
 
+### Agent API preset
+
+- `BWH\Auth\OAuth\Server\AgentOAuthServer` gives the agent-API authorization-server profile in one
+  call: `config()` for the `oauth_server` block, `passportMiddleware()`, and `routes()` for the
+  discovery documents and self-registration.
+- **What the profile sets:**
+  - RFC 8707 binding to `APP_URL/api/v1`, with an omitted `resource` taken as that resource;
+  - S256 PKCE for every client;
+  - public-only self-registration;
+  - `none`, `client_secret_basic` and `client_secret_post` advertised.
+- Every URL comes from the application URL, so forks need no host-specific settings.
+
 ## v0.17.0 - 2026-10-08
 
 ### Opt in to binding credentials whose request omits `resource`

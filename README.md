@@ -519,6 +519,37 @@ The shared consent view uses `oauth_server.consent` copy and labels so applicati
 retain domain-specific language without copying security-sensitive forms or styling.
 It warns when a client registered dynamically and shows the validated return URI.
 
+### Agent API preset
+
+An application that lets agents act for its users (MCP clients, and REST/OpenAPI connectors) runs its own authorization server through this package. The identity provider only signs people in. `AgentOAuthServer` applies the whole profile from one call, with every URL derived from `APP_URL`, so forks and self-hosted deployments need no host-specific settings:
+
+```php
+// config/bherila-auth.php
+use BWH\Auth\OAuth\Server\AgentOAuthServer;
+
+'oauth_server' => AgentOAuthServer::config(App\Support\Scopes::descriptions(), [
+    'resource_required_scopes' => ['mcp:use'],   // if an MCP connection scope must carry a resource
+]),
+
+// config/passport.php
+'middleware' => AgentOAuthServer::passportMiddleware(),
+
+// routes/web.php (outside the web group: machine endpoints)
+AgentOAuthServer::routes();
+```
+
+| Setting | Value |
+|---|---|
+| Resource | `APP_URL/api/v1` (RFC 8707). An omitted `resource` is taken as this one; a different explicit resource is refused. |
+| PKCE | S256 required for every client |
+| Self-registration | `POST /oauth/register`, public clients only, `throttle:10,60` |
+| Token endpoint auth methods advertised | `none`, `client_secret_basic`, `client_secret_post`. Confidential clients are only ones a person registers. |
+| Discovery routes | `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api/v1`. That's the only path whose `resource` matches, per RFC 9728. Point your MCP endpoint's `WWW-Authenticate resource_metadata` at it. A deployment mounted under a path must route the host-root well-known URL to the app. |
+| Kill switch | `OAUTH_SERVER_ENABLED` |
+| Passport side (applied by the package) | The scope catalog through `Passport::tokensCan()` (unless you register your own), the packaged consent view (unless you bind one), and the device-code grant off, because it would bypass the PKCE gate |
+
+Overrides merge recursively, and a list replaces the preset's list outright.
+
 ### OAuth client integration
 
 `BWH\Auth\OAuth\OAuthClient` owns state and PKCE generation, authorization redirects,

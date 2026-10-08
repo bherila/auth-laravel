@@ -39,6 +39,10 @@ class AuthServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigRecursivelyFrom(__DIR__.'/../config/bherila-auth.php', 'bherila-auth');
+        if ($this->oauthServerEnabled() && \BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
+            // Before any provider boots, so Passport never registers device routes.
+            \BWH\Auth\OAuth\Server\AgentOAuthServer::configurePassportEarly();
+        }
 
         $this->app->bind(AuthUserPolicy::class, DefaultAuthUserPolicy::class);
         $this->app->bind(AuthAuditLogger::class, function ($app) {
@@ -58,6 +62,12 @@ class AuthServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // Again at boot for deferred configuration; this provider boots before
+        // Passport's, which reads the flag when it loads its routes.
+        if ($this->oauthServerEnabled() && \BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
+            \BWH\Auth\OAuth\Server\AgentOAuthServer::configurePassportEarly();
+        }
+
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'bherila-auth');
 
         $this->publishes([
@@ -116,6 +126,9 @@ class AuthServiceProvider extends ServiceProvider
             Passport::useAccessTokenEntity(ResourceAccessToken::class);
             if (Passport::clientModel() === PassportClient::class) {
                 Passport::useClientModel(ResourceClient::class);
+            }
+            if (\BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
+                \BWH\Auth\OAuth\Server\AgentOAuthServer::configurePassport();
             }
         }
 
