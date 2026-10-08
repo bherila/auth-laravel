@@ -48,7 +48,6 @@ final class AgentOAuthServerPresetTest extends TestCase
             ['resource_required_scopes' => ['mcp:use']],
             self::APP,
         ));
-        Passport::$deviceCodeGrantEnabled = false;
     }
 
     protected function defineDatabaseMigrations(): void
@@ -60,9 +59,7 @@ final class AgentOAuthServerPresetTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Passport::tokensCan(config('bherila-auth.oauth_server.scopes'));
-        Passport::defaultScopes([]);
-        Passport::authorizationView('bherila-auth::oauth.authorize');
+        // No Passport setup here: the preset must complete it (scopes, consent view, no device grant).
         AgentOAuthServer::routes();
         Route::get('/api/v1/ping', fn () => response()->json(['ok' => true]))->middleware([ExpectOAuthResource::class, 'auth:api']);
     }
@@ -99,6 +96,28 @@ final class AgentOAuthServerPresetTest extends TestCase
         $this->getJson('/.well-known/oauth-protected-resource/api/v1')->assertOk()->assertJsonPath('resource', self::APP.'/api/v1');
         $this->getJson('/.well-known/oauth-protected-resource')->assertNotFound();
         $this->getJson('/.well-known/oauth-protected-resource/api/v1/mcp')->assertNotFound();
+    }
+
+    /** Everything a fresh application needs comes from the preset itself. */
+    public function test_the_preset_completes_the_passport_side_on_its_own(): void
+    {
+        $this->assertFalse(Passport::$deviceCodeGrantEnabled, 'The device grant bypasses the PKCE gate');
+        $this->assertNull(Route::getRoutes()->getByName('passport.device'));
+        $this->assertTrue(Passport::hasScope('items:read'));
+        $this->assertTrue(app()->bound(\Laravel\Passport\Contracts\AuthorizationViewResponse::class));
+    }
+
+    public function test_the_metadata_url_follows_an_overridden_resource_and_a_path_issuer(): void
+    {
+        $config = AgentOAuthServer::config(['a' => 'A'], ['resource' => 'https://app.example.test/agent'], self::APP);
+        $this->assertSame('https://app.example.test/.well-known/oauth-protected-resource/agent', $config['protected_resource_metadata_url']);
+
+        $pinned = AgentOAuthServer::config(['a' => 'A'], ['protected_resource_metadata_url' => 'https://x.example.test/meta'], self::APP);
+        $this->assertSame('https://x.example.test/meta', $pinned['protected_resource_metadata_url'], 'An explicit URL is kept');
+
+        config(['bherila-auth.oauth_server.issuer' => self::APP.'/tenant']);
+        AgentOAuthServer::routes();
+        $this->assertNotNull(Route::getRoutes()->match(\Illuminate\Http\Request::create('/.well-known/oauth-authorization-server/tenant')));
     }
 
     public function test_discovery_advertises_the_profile(): void

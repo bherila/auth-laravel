@@ -8,6 +8,8 @@ use BWH\Auth\Http\Middleware\EnforceOAuthPkce;
 use BWH\Auth\Http\Middleware\EnforceOAuthResourceIndicator;
 use BWH\Auth\Http\Middleware\EnsureOAuthServerEnabled;
 use Illuminate\Support\Facades\Route;
+use Laravel\Passport\Contracts\AuthorizationViewResponse;
+use Laravel\Passport\Passport;
 
 /**
  * The agent-API authorization-server profile, applied in one place.
@@ -47,7 +49,7 @@ final class AgentOAuthServer
     {
         $base = rtrim($appUrl ?? (string) env('APP_URL', 'http://localhost'), '/');
 
-        return self::merge([
+        $config = self::merge([
             'enabled' => (bool) env('OAUTH_SERVER_ENABLED', true),
             'issuer' => $base,
             'resource' => $base.'/api/v1',
@@ -59,7 +61,56 @@ final class AgentOAuthServer
             'token_endpoint_auth_methods' => ['none', 'client_secret_basic', 'client_secret_post'],
             'assume_omitted_resource' => true,
             'introspection' => ['enabled' => false, 'clients' => []],
+            // Marks the profile so the package's service provider completes the
+            // Passport side (scopes, consent view, no device grant).
+            'profile' => self::PROFILE,
         ], $overrides);
+
+        // Derived from the final resource, so overriding the resource cannot
+        // leave challenges pointing at a document nothing serves.
+        if (! array_key_exists('protected_resource_metadata_url', $overrides)) {
+            $config['protected_resource_metadata_url'] = self::wellKnown((string) $config['resource'], 'oauth-protected-resource');
+        }
+
+        return $config;
+    }
+
+    public const string PROFILE = 'agent';
+
+    public static function active(): bool
+    {
+        return config('bherila-auth.oauth_server.profile') === self::PROFILE;
+    }
+
+    /**
+     * Passport settings the profile needs before Passport registers its routes:
+     * the device-code grant is off, because PKCE is only enforced on the
+     * authorization endpoint and the profile advertises authorization code and
+     * refresh only. Called from the package's register phase.
+     */
+    public static function configurePassportEarly(): void
+    {
+        if (class_exists(Passport::class)) {
+            Passport::$deviceCodeGrantEnabled = false;
+        }
+    }
+
+    /**
+     * Passport settings applied at boot unless the application already set
+     * them: the scope catalog and the packaged consent view.
+     */
+    public static function configurePassport(): void
+    {
+        if (! class_exists(Passport::class)) {
+            return;
+        }
+        $scopes = config('bherila-auth.oauth_server.scopes', []);
+        if (is_array($scopes) && Passport::scopes()->isEmpty()) {
+            Passport::tokensCan($scopes);
+        }
+        if (! app()->bound(AuthorizationViewResponse::class)) {
+            Passport::authorizationView('bherila-auth::oauth.authorize');
+        }
     }
 
     /**
@@ -88,7 +139,11 @@ final class AgentOAuthServer
     public static function routes(array $protectedResourceMiddleware = [], string $registrationThrottle = 'throttle:10,60'): void
     {
         Route::withoutMiddleware(['web'])->middleware([EnsureOAuthServerEnabled::class])->group(static function () use ($protectedResourceMiddleware, $registrationThrottle): void {
-            Route::get('/.well-known/oauth-authorization-server', [OAuthMetadataController::class, 'authorizationServer']);
+            // RFC 8414: an issuer with a path is discovered under that path too.
+            $issuerPath = rtrim((string) (parse_url((string) config('bherila-auth.oauth_server.issuer', ''), PHP_URL_PATH) ?? ''), '/');
+            foreach (array_unique(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server'.$issuerPath]) as $path) {
+                Route::get($path, [OAuthMetadataController::class, 'authorizationServer']);
+            }
             // Only at the path derived from the one protected resource: RFC 9728
             // requires the document's `resource` to match the URL it was
             // discovered from, so no other suffix may serve it.
