@@ -38,7 +38,24 @@ final readonly class ActorAssertionVerifier
     }
 
     /** Returns the actor subject only; application authorization must still run. */
+    /**
+     * The verified actor subject. See {@see verifyClaims()}.
+     */
     public function verify(#[SensitiveParameter] string $assertion, string $method, string $body): string
+    {
+        return $this->verifyClaims($assertion, $method, $body)['sub'];
+    }
+
+    /** The verified request: issuer, subject, application and the consumed nonce. */
+    public function verifyContext(#[SensitiveParameter] string $assertion, string $method, string $body): DelegatedRequestContext
+    {
+        $claims = $this->verifyClaims($assertion, $method, $body);
+
+        return new DelegatedRequestContext($this->issuer, $claims['sub'], $this->application, $claims['jti'], null);
+    }
+
+    /** @return array{sub: string, jti: string} */
+    private function verifyClaims(#[SensitiveParameter] string $assertion, string $method, string $body): array
     {
         try {
             if (strlen($assertion) > 8192 || strlen($body) > 65536 || $method !== 'POST') {
@@ -102,6 +119,6 @@ final readonly class ActorAssertionVerifier
             throw new DelegatedAccessException('invalid_actor_assertion', 401);
         }
 
-        return $claims['sub'];
+        return ['sub' => $claims['sub'], 'jti' => $claims['jti']];
     }
 }

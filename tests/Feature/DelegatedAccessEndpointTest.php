@@ -7,6 +7,7 @@ use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessException;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessSettings;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
+use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedCursor;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use BWH\Auth\OAuth\PendingAccount;
@@ -73,8 +74,10 @@ class DelegatedAccessEndpointTest extends TestCase
 
         config([
             'bherila-auth.oauth_client.provider' => self::PROVIDER,
+            'bherila-auth.oauth_client.base_url' => self::ISSUER,
             'bherila-auth.delegated_access' => [
                 'enabled' => true,
+                'writes_enabled' => true,
                 'issuer' => self::ISSUER,
                 'endpoint' => self::ENDPOINT,
                 'application' => self::APPLICATION,
@@ -218,6 +221,46 @@ class DelegatedAccessEndpointTest extends TestCase
         }
 
         $this->assertSame([], $this->calls);
+    }
+
+    /** The assertion issuer must be the sign-in provider, or a subject resolves in the wrong namespace. */
+    public function test_the_assertion_issuer_must_be_the_sign_in_provider(): void
+    {
+        config(['bherila-auth.oauth_client.base_url' => 'https://other-identity.example.test']);
+        $this->send(['operation' => 'capabilities'])->assertStatus(503)->assertJsonPath('error', 'invalid_verifier_configuration');
+        $this->assertSame([], $this->calls);
+
+        config(['bherila-auth.oauth_client.base_url' => self::ISSUER.'/']);
+        $this->send(['operation' => 'capabilities'])->assertOk();
+    }
+
+    public function test_the_adapter_can_read_the_verified_request_context_during_its_call_only(): void
+    {
+        $seen = null;
+        $this->answer = function (string $actor, array $payload) use (&$seen): array {
+            $seen = app(DelegatedRequestContext::class);
+
+            return self::capabilities();
+        };
+
+        $this->send(['operation' => 'capabilities'])->assertOk();
+
+        $this->assertInstanceOf(DelegatedRequestContext::class, $seen);
+        $this->assertSame([self::ISSUER, 'actor-subject', self::APPLICATION, 'capabilities'], [$seen->issuer, $seen->subject, $seen->application, $seen->operation]);
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $seen->jti);
+        $this->assertFalse(app()->bound(DelegatedRequestContext::class), 'The context is unbound once the adapter returns.');
+    }
+
+    public function test_writes_are_refused_before_the_adapter_until_this_application_enables_them(): void
+    {
+        config(['bherila-auth.delegated_access.writes_enabled' => false]);
+        $update = ['operation' => 'update', 'subject' => 'target-subject', 'expected_revision' => 'r1',
+            'access' => ['application_admin' => false, 'workspaces' => []]];
+
+        $this->send($update)->assertStatus(403)->assertJsonPath('error', 'not_authorized');
+        $this->send(['operation' => 'capabilities'])->assertOk();
+
+        $this->assertSame([['actor-subject', ['operation' => 'capabilities']]], $this->calls);
     }
 
     public function test_an_unbound_adapter_is_a_server_error(): void

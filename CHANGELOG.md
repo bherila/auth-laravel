@@ -4,6 +4,25 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Delegated access: issuer binding, request context, a write switch and normative update semantics
+
+- The actor assertion's issuer must now be the sign-in provider (`oauth_client.base_url`, a
+  trailing slash aside), or every request is refused with `invalid_verifier_configuration`. A
+  subject is only meaningful in the namespace it was issued in. **Check `DELEGATED_ACCESS_ISSUER`
+  against `oauth_client.base_url` before upgrading.**
+- `DELEGATED_ACCESS_WRITES_ENABLED` (default `false`): until it is set, `update` is refused with
+  `not_authorized` before the adapter. **Deployments accepting writes today must set it.**
+- `DelegatedRequestContext` (issuer, subject, application, `jti`, operation) is bound in the
+  container for the adapter's call, so application audit can correlate with the provider's.
+- `DelegatedRefusal` names the refusal outcomes and their statuses, adding `protected_membership`
+  and `role_not_grantable` (both 403).
+- `DelegatedContract::adapterAnswer()` wraps and validates an adapter's version 2 answer exactly as
+  the endpoint does (exact top-level and page-entry keys, then `response()`).
+- The README states the update semantics every adapter owes, and
+  `BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks them against an application's adapter.
+
 ## v0.18.0 - 2026-10-08
 
 ### Person-registered clients are held to their stored scope ceiling
