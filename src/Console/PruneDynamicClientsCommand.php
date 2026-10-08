@@ -57,8 +57,8 @@ class PruneDynamicClientsCommand extends Command
             ->whereNotNull($registeredAt)
             ->where($registeredAt, '<', $cutoff)
             ->when($lastUsedAt !== null, fn ($query) => $query->where(fn ($query) => $query->whereNull($lastUsedAt)->orWhere($lastUsedAt, '<', $cutoff)))
-            ->orderBy($clientModel->getKeyName())
-            ->get();
+            // Streamed: registration is public, so the backlog is unbounded.
+            ->lazyById(200, $clientModel->getKeyName());
 
         $pruned = 0;
         foreach ($candidates as $client) {
