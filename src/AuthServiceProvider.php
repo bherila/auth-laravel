@@ -38,6 +38,8 @@ class AuthServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->bindIf(\BWH\Auth\OAuth\Credentials\CredentialOwnerResolver::class, \BWH\Auth\OAuth\Credentials\UserIsCredentialOwner::class);
+        $this->app->bindIf(\BWH\Auth\OAuth\Credentials\GrantableScopes::class, \BWH\Auth\OAuth\Credentials\ConfiguredGrantableScopes::class);
         $this->mergeConfigRecursivelyFrom(__DIR__.'/../config/bherila-auth.php', 'bherila-auth');
         if ($this->oauthServerEnabled() && \BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
             // Before any provider boots, so Passport never registers device routes.
@@ -102,6 +104,12 @@ class AuthServiceProvider extends ServiceProvider
             Route::prefix(config('bherila-auth.routes.prefix', 'api'))
                 ->middleware(config('bherila-auth.routes.middleware', ['web']))
                 ->group(__DIR__.'/../routes/audit.php');
+        }
+
+        if (config('bherila-auth.oauth_server.credentials.enabled', false)) {
+            Route::prefix((string) config('bherila-auth.oauth_server.credentials.prefix', 'account/api-credentials'))
+                ->middleware(config('bherila-auth.oauth_server.credentials.middleware', ['web', 'auth']))
+                ->group(__DIR__.'/../routes/credentials.php');
         }
 
         // Binding an adapter is the opt-in: an application without one has nothing to answer with.

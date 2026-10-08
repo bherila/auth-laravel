@@ -107,6 +107,25 @@ return [
             'approve_label' => 'Authorize',
             'deny_label' => 'Cancel',
         ],
+        // A person's own API tokens and OAuth apps (OAuth\Credentials). Opt-in;
+        // routes are session routes under `prefix` with `middleware`.
+        'credentials' => [
+            'enabled' => false,
+            'prefix' => 'account/api-credentials',
+            'middleware' => ['web', 'auth'],
+            // ISO-8601 durations offered for personal API tokens, e.g. PT4H for a
+            // short quick-setup token.
+            'token_lifetimes' => ['P30D', 'P90D', 'P365D'],
+            'token_name_prefix' => 'api-token: ',
+            'personal_client_name' => 'Personal access tokens',
+            // Null uses the api guard's provider.
+            'provider' => null,
+            // Null: the signed-in user owns credentials. Set a model class (over the
+            // same table, using HasApiTokens) when the API guard loads another model.
+            'owner_model' => null,
+            // Scopes never offered to a credential, beyond the MCP-connection scopes.
+            'excluded_scopes' => [],
+        ],
         'introspection' => [
             // RFC 7662 is application-routed and opt-in. Each confidential
             // resource-server credential is pinned to one exact resource so an

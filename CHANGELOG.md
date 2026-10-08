@@ -32,6 +32,26 @@ the first entry here is in the git history.
   list and exits non-zero on drift. Run it from a scheduled CI job: a stale list fails quietly back
   into shared per-edge rate-limit budgets.
 
+### Credential service: OAuth apps and personal API tokens
+
+- `BWH\Auth\OAuth\Credentials\ApiCredentialService` and opt-in session routes
+  (`oauth_server.credentials.enabled`, under `credentials.prefix`) for a person's own:
+  - **personal API tokens:** chosen scopes, a lifetime from `credentials.token_lifetimes` (ISO-8601
+    durations, so `PT4H` gives a short quick-setup token), and resource-bound;
+  - **OAuth apps:** exact HTTPS or loopback redirects, public or confidential, created with their
+    owner so they're never first-party, with a scope ceiling enforced at consent.
+- **Secrets** are returned once in a no-store JSON body. Nothing is flashed or stored readable.
+- **Issuance** answers to the OAuth server's kill switch; listing and revocation stay available.
+- **Deleting an app** revokes its access and refresh tokens, on Passport's own connection.
+- **Contracts the application can bind:**
+  - `CredentialOwnerResolver`, the model that owns credentials (default: the user, or
+    `credentials.owner_model`);
+  - `GrantableScopes`, the scopes on offer (default: the catalog minus MCP-connection scopes and
+    `credentials.excluded_scopes`). Bind your registry's REST scopes so no credential is offered a
+    scope nothing uses.
+- Personal tokens are told apart by owner and name, and a personal-access client is created only
+  when none exists, so it never displaces another caller's.
+
 ### Agent API preset
 
 - `BWH\Auth\OAuth\Server\AgentOAuthServer` gives the agent-API authorization-server profile in one
