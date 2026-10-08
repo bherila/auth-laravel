@@ -86,6 +86,8 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'application administration granted regardless' => ['grant_application_admin', 'assertDelegatedApplicationAdminFollowsAllowedEdits', ['manager', 'target']],
             'revisions not compared' => ['ignore_revision', 'assertDelegatedStaleRevisionRefused', ['manager', 'target']],
             'any role accepted' => ['accept_any_role', 'assertDelegatedUnadvertisedRoleRefused', ['manager', 'target']],
+            'a refusal sent as a server error' => ['refuse_removal_with_a_server_error', 'assertDelegatedUpdateKeepsUnseenMemberships', ['manager', 'target']],
+            'an answer with a field the endpoint refuses' => ['answer_an_extra_field', 'assertDelegatedStaleRevisionRefused', ['manager', 'target']],
         ];
     }
 

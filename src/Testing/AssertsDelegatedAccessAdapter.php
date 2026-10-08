@@ -79,7 +79,6 @@ trait AssertsDelegatedAccessAdapter
         } catch (DelegatedAccessException $refusal) {
             // Removing the editable memberships may be refused for the application's own reasons, such as a
             // last administrator. Then it must change nothing.
-            $this->assertNotSame(503, $refusal->status, 'A refusal is a 4xx, never an unknown result');
             $this->assertSame($before, $this->delegatedAccessRecord($target), 'A refused removal changes nothing');
 
             return;
@@ -191,14 +190,20 @@ trait AssertsDelegatedAccessAdapter
         ));
         try {
             $fields = $container->make(ApplicationAccessAdapter::class)->handle($actor, $payload);
+        } catch (DelegatedAccessException $refusal) {
+            // The endpoint sends a refusal as it is, so it has to be one a provider can act on.
+            $this->assertSame(DelegatedRefusal::STATUSES[$refusal->outcome] ?? null, $refusal->status, "The adapter refused {$payload['operation']} with a named outcome and its status, not {$refusal->outcome} ({$refusal->status})");
+
+            throw $refusal;
         } finally {
             $container->forgetInstance(DelegatedRequestContext::class);
         }
 
-        return $contract->response(
-            ['contract_version' => DelegatedContract::VERSION_2, 'application' => $application, 'operation' => $payload['operation'], ...$fields],
-            $application, (string) $payload['operation'], $payload['subject'] ?? null, DelegatedContract::VERSION_2,
-        );
+        try {
+            return $contract->adapterAnswer($fields, $application, (string) $payload['operation'], $payload['subject'] ?? null);
+        } catch (DelegatedAccessException) {
+            $this->fail("The adapter's answer to {$payload['operation']} is outside the contract; the endpoint would send internal_error instead");
+        }
     }
 
     /**
@@ -251,7 +256,6 @@ trait AssertsDelegatedAccessAdapter
             $this->delegatedAccessCall($actor, $payload);
         } catch (DelegatedAccessException $refusal) {
             $this->assertContains($refusal->outcome, $outcomes, "Refused {$what} with an expected outcome");
-            $this->assertSame(DelegatedRefusal::STATUSES[$refusal->outcome] ?? null, $refusal->status, "Refused {$what} with the outcome's status");
 
             return;
         }

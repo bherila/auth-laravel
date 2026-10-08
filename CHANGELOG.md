@@ -18,6 +18,8 @@ the first entry here is in the git history.
   container for the adapter's call, so application audit can correlate with the provider's.
 - `DelegatedRefusal` names the refusal outcomes and their statuses, adding `protected_membership`
   and `role_not_grantable` (both 403).
+- `DelegatedContract::adapterAnswer()` wraps and validates an adapter's version 2 answer exactly as
+  the endpoint does (exact top-level and page-entry keys, then `response()`).
 - The README states the update semantics every adapter owes, and
   `BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks them against an application's adapter.
 

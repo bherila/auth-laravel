@@ -3,6 +3,7 @@
 namespace BWH\Auth\Tests\Fixtures;
 
 use BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter;
+use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessException;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedRefusal;
 
 /**
@@ -43,6 +44,8 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'grant_application_admin' => false,
         'ignore_revision' => false,
         'accept_any_role' => false,
+        'refuse_removal_with_a_server_error' => false,
+        'answer_an_extra_field' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -90,7 +93,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
             }
         }
 
-        return [
+        return ($this->broken['answer_an_extra_field'] ? ['internal_id' => 42] : []) + [
             'subject' => $subject,
             'provisioned' => true,
             'revision' => $this->revision($subject),
@@ -139,6 +142,10 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
                     throw DelegatedRefusal::of(DelegatedRefusal::PROTECTED_MEMBERSHIP);
                 }
             }
+        }
+
+        if ($this->broken['refuse_removal_with_a_server_error'] && count($requested) < count(array_intersect_key($current, array_flip($managed)))) {
+            throw new DelegatedAccessException('unavailable', 503);
         }
 
         $unseen = $this->broken['replace_wholesale'] ? [] : array_diff_key($current, array_flip($managed));

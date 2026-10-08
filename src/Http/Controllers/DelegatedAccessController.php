@@ -28,15 +28,6 @@ use JsonException;
  */
 final class DelegatedAccessController extends Controller
 {
-    /** The top-level fields each operation's answer carries besides the envelope, exactly. */
-    private const RESPONSE_FIELDS = [
-        'capabilities' => ['controls'],
-        'subjects' => ['subjects', 'next_cursor'],
-        'workspaces' => ['workspaces', 'next_cursor'],
-        'read' => ['subject', 'provisioned', 'revision', 'access', 'allowed_edits'],
-        'update' => ['subject', 'provisioned', 'revision', 'access', 'allowed_edits'],
-    ];
-
     public function __invoke(Request $request, DelegatedAccessSettings $settings, Container $container, Repository $config): JsonResponse
     {
         // Nothing before this reveals the route or counts against the limit, so a disabled endpoint
@@ -117,31 +108,7 @@ final class DelegatedAccessController extends Controller
         }
 
         try {
-            $keys = array_map('strval', array_keys($fields));
-            $expected = self::RESPONSE_FIELDS[$operation] ?? [];
-            sort($keys);
-            sort($expected);
-            if ($keys !== $expected) {
-                throw new DelegatedAccessException('invalid_response');
-            }
-
-            // Version 2 checks exact keys everywhere except page entries, whose validator is shared
-            // with version 1; an entry carrying anything besides its identifier and label is refused
-            // here so no adapter data reaches the provider by that route either.
-            if ($operation === 'subjects' || $operation === 'workspaces') {
-                $entryKeys = [$operation === 'subjects' ? 'subject' : 'id', 'label'];
-                sort($entryKeys);
-                foreach (is_array($fields[$operation]) ? $fields[$operation] : [] as $entry) {
-                    $present = is_array($entry) ? array_map('strval', array_keys($entry)) : [];
-                    sort($present);
-                    if ($present !== $entryKeys) {
-                        throw new DelegatedAccessException('invalid_response');
-                    }
-                }
-            }
-
-            $response = ['contract_version' => DelegatedContract::VERSION_2, 'application' => $application, 'operation' => $operation] + $fields;
-            $contract->response($response, $application, $operation, $payload['subject'] ?? null, DelegatedContract::VERSION_2);
+            $response = $contract->adapterAnswer($fields, $application, $operation, $payload['subject'] ?? null);
 
             try {
                 $json = json_encode($response, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);

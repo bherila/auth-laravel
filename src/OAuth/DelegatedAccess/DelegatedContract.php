@@ -25,6 +25,15 @@ final class DelegatedContract
 
     public const MAX_WORKSPACE_ROLES = 16;
 
+    /** The top-level fields each version 2 operation's answer carries besides the envelope, exactly. */
+    public const ADAPTER_FIELDS = [
+        'capabilities' => ['controls'],
+        'subjects' => ['subjects', 'next_cursor'],
+        'workspaces' => ['workspaces', 'next_cursor'],
+        'read' => ['subject', 'provisioned', 'revision', 'access', 'allowed_edits'],
+        'update' => ['subject', 'provisioned', 'revision', 'access', 'allowed_edits'],
+    ];
+
     public function request(string $application, array $input, int $version = self::VERSION_1): array
     {
         $this->assertSupported($version);
@@ -87,6 +96,38 @@ final class DelegatedContract
         }
 
         return $response;
+    }
+
+    /**
+     * Wrap an application adapter's answer in the version 2 envelope and validate all of it.
+     *
+     * Stricter than {@see response()} on its own: the answer carries exactly the operation's fields,
+     * and page entries exactly an identifier and a label, so no adapter data leaves by an extra key.
+     *
+     * @param  array<string, mixed>  $fields  the adapter's answer, without the envelope
+     * @return array<string, mixed> the whole response
+     *
+     * @throws DelegatedAccessException `invalid_response`
+     */
+    public function adapterAnswer(array $fields, string $application, string $operation, ?string $subject): array
+    {
+        if (! $this->hasExactKeys($fields, self::ADAPTER_FIELDS[$operation] ?? [])) {
+            throw new DelegatedAccessException('invalid_response');
+        }
+
+        // Page entries share version 1's validator, which allows extra keys.
+        if ($operation === 'subjects' || $operation === 'workspaces') {
+            $entryKeys = [$operation === 'subjects' ? 'subject' : 'id', 'label'];
+            foreach (is_array($fields[$operation]) ? $fields[$operation] : [] as $entry) {
+                if (! is_array($entry) || ! $this->hasExactKeys($entry, $entryKeys)) {
+                    throw new DelegatedAccessException('invalid_response');
+                }
+            }
+        }
+
+        $response = ['contract_version' => self::VERSION_2, 'application' => $application, 'operation' => $operation] + $fields;
+
+        return $this->response($response, $application, $operation, $subject, self::VERSION_2);
     }
 
     /**
