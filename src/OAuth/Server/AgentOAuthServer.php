@@ -89,10 +89,11 @@ final class AgentOAuthServer
     {
         Route::withoutMiddleware(['web'])->middleware([EnsureOAuthServerEnabled::class])->group(static function () use ($protectedResourceMiddleware, $registrationThrottle): void {
             Route::get('/.well-known/oauth-authorization-server', [OAuthMetadataController::class, 'authorizationServer']);
-            foreach (['', '/api/v1', '/api/v1/mcp'] as $suffix) {
-                Route::get('/.well-known/oauth-protected-resource'.$suffix, [OAuthMetadataController::class, 'protectedResource'])
-                    ->middleware($protectedResourceMiddleware);
-            }
+            // Only at the path derived from the one protected resource: RFC 9728
+            // requires the document's `resource` to match the URL it was
+            // discovered from, so no other suffix may serve it.
+            Route::get('/.well-known/oauth-protected-resource/api/v1', [OAuthMetadataController::class, 'protectedResource'])
+                ->middleware($protectedResourceMiddleware);
             Route::post('/oauth/register', OAuthDynamicClientRegistrationController::class)->middleware($registrationThrottle);
         });
     }

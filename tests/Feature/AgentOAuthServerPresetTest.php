@@ -83,6 +83,14 @@ final class AgentOAuthServerPresetTest extends TestCase
         $this->assertSame([EnsureOAuthServerEnabled::class, EnforceOAuthPkce::class, EnforceOAuthResourceIndicator::class, 'x'], AgentOAuthServer::passportMiddleware(['x']));
     }
 
+    /** RFC 9728: the document is served only where its `resource` matches the discovery URL. */
+    public function test_protected_resource_metadata_is_served_only_at_the_matching_path(): void
+    {
+        $this->getJson('/.well-known/oauth-protected-resource/api/v1')->assertOk()->assertJsonPath('resource', self::APP.'/api/v1');
+        $this->getJson('/.well-known/oauth-protected-resource')->assertNotFound();
+        $this->getJson('/.well-known/oauth-protected-resource/api/v1/mcp')->assertNotFound();
+    }
+
     public function test_discovery_advertises_the_profile(): void
     {
         $this->getJson('/.well-known/oauth-authorization-server')->assertOk()
