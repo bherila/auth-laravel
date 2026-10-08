@@ -780,7 +780,7 @@ TRUSTED_PROXIES=cloudflare   # or a comma-separated list, or * behind a firewall
 | `*` | every peer; only safe when a firewall admits nothing but the proxy |
 | empty | nothing; right when no proxy is in front |
 
-- **Headers honoured:** only `X-Forwarded-For`, `-Proto` and `-Port`. Never `X-Forwarded-Host`.
+- **Headers honoured:** only `X-Forwarded-For` and `-Proto`. Never `X-Forwarded-Port` (Cloudflare passes a client-supplied one through) or `X-Forwarded-Host`.
 - **The client address** is the rightmost one that isn't a trusted proxy, i.e. the address the edge appended. Anything the client wrote further left is ignored.
 - **Drift check:** run `php artisan bherila-auth:check-cloudflare-ranges` from a scheduled CI job. It exits `1` with an add/remove list when Cloudflare revises its ranges, and `2` if they can't be fetched.
 

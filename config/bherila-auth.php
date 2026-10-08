@@ -16,7 +16,7 @@ return [
     // published ranges), an explicit comma-separated list of addresses or CIDR
     // ranges, `*` only where a firewall admits the proxy alone, or empty to
     // trust nothing - right for a deployment with no proxy in front. Only
-    // X-Forwarded-For, -Proto and -Port are honoured, never the forwarded host.
+    // X-Forwarded-For and -Proto are honoured, never the forwarded port or host.
     'trusted_proxies' => [
         'apply' => (bool) env('BHERILA_AUTH_TRUSTED_PROXIES', false),
         'trusted' => env('TRUSTED_PROXIES', 'cloudflare'),

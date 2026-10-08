@@ -15,7 +15,7 @@ use Illuminate\Http\Request;
  * direct connections would let anyone forge their address with a header.
  *
  * So only the CDN's published ranges are trusted, and only X-Forwarded-For
- * and its scheme and port - never the forwarded host. Symfony then takes the
+ * and its scheme - never the forwarded port or host. Symfony then takes the
  * rightmost address that is not a trusted proxy, which is the one the edge
  * appended; anything a client wrote further left is ignored.
  *
@@ -42,9 +42,14 @@ final class TrustedProxies
         '2405:8100::/32', '2a06:98c0::/29', '2c0f:f248::/32',
     ];
 
+    /**
+     * The client address and scheme only. Cloudflare overwrites
+     * X-Forwarded-For (appending) and X-Forwarded-Proto, but passes a
+     * client-supplied X-Forwarded-Port through, so trusting the port would let
+     * a visitor choose the port in generated absolute URLs.
+     */
     public const int HEADERS = Request::HEADER_X_FORWARDED_FOR
-        | Request::HEADER_X_FORWARDED_PROTO
-        | Request::HEADER_X_FORWARDED_PORT;
+        | Request::HEADER_X_FORWARDED_PROTO;
 
     /**
      * Resolve a TRUSTED_PROXIES setting into what TrustProxies::at() accepts.

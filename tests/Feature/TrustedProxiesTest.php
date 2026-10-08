@@ -33,6 +33,7 @@ class TrustedProxiesTest extends TestCase
             'ip' => $request->ip(),
             'secure' => $request->isSecure(),
             'host' => $request->getHost(),
+            'port' => $request->getPort(),
         ]));
         Route::post('/limited', fn () => response()->json(['ok' => true]))->middleware('throttle:2,1');
     }
@@ -83,6 +84,13 @@ class TrustedProxiesTest extends TestCase
     {
         $this->withServerVariables(['REMOTE_ADDR' => '104.16.1.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'HTTP_X_FORWARDED_HOST' => 'evil.example.test'])
             ->getJson('/whoami')->assertOk()->assertJsonPath('host', 'localhost');
+    }
+
+    /** Cloudflare passes a client-supplied X-Forwarded-Port through, so it is never trusted. */
+    public function test_the_forwarded_port_is_never_trusted(): void
+    {
+        $this->withServerVariables(['REMOTE_ADDR' => '104.16.1.2', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7', 'HTTP_X_FORWARDED_PROTO' => 'https', 'HTTP_X_FORWARDED_PORT' => '8443', 'SERVER_PORT' => '443'])
+            ->getJson('/whoami')->assertJsonPath('port', 443);
     }
 
     public function test_throttles_key_on_the_client_behind_the_edge_and_on_the_peer_otherwise(): void

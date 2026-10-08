@@ -20,7 +20,7 @@ the first entry here is in the git history.
 
 - `BWH\Auth\Http\TrustedProxies` and the opt-in `bherila-auth.trusted_proxies` config
   (`BHERILA_AUTH_TRUSTED_PROXIES=true`, `TRUSTED_PROXIES`). When applied, X-Forwarded-For and its
-  scheme and port are honoured only from the configured proxies, never the forwarded host:
+  scheme are honoured only from the configured proxies, never the forwarded port or host:
   - `cloudflare` (the default), Cloudflare's published IPv4/IPv6 ranges;
   - an explicit list;
   - `*`, only where a firewall admits the proxy alone;
