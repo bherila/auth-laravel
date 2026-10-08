@@ -151,9 +151,11 @@ final class EnforceOAuthResourceIndicator
         if ($client === null) {
             return true;
         }
-        $registeredAtColumn = config('bherila-auth.oauth_server.dynamic_clients.registered_at_column');
+        // The same defaults the credential service and registration controller
+        // write with: a missing key must not silently switch the ceiling off.
+        $registeredAtColumn = config('bherila-auth.oauth_server.dynamic_clients.registered_at_column', 'dynamically_registered_at');
         $dynamic = is_string($registeredAtColumn) && $client->getAttribute($registeredAtColumn) !== null;
-        $scopesColumn = config('bherila-auth.oauth_server.dynamic_clients.scopes_column');
+        $scopesColumn = config('bherila-auth.oauth_server.dynamic_clients.scopes_column', 'scopes');
         $hasScopesColumn = is_string($scopesColumn) && $scopesColumn !== '';
         $registeredScopes = $hasScopesColumn ? $client->getAttribute($scopesColumn) : null;
 

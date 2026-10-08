@@ -480,6 +480,27 @@ final class OAuthResourceTokenBindingTest extends TestCase
         $this->actingAs($user)->get('/oauth/authorize?'.http_build_query($query + ['scope' => 'identity:read']))->assertOk();
     }
 
+    /** A config without the registration-column keys must not switch the ceiling off. */
+    public function test_the_ceiling_holds_when_the_column_settings_are_missing(): void
+    {
+        config(['bherila-auth.oauth_server.dynamic_clients' => ['enabled' => true]]);
+        $user = User::query()->create(['name' => 'Default User', 'email' => 'default@example.test', 'password' => 'not-used']);
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient('Registered App', ['http://127.0.0.1:1455/callback'], confidential: false);
+        $client->forceFill(['scopes' => ['identity:read']])->save();
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', str_repeat('e', 43), true)), '+/', '-_'), '=');
+
+        $refused = $this->actingAs($user)->get('/oauth/authorize?'.http_build_query([
+            'response_type' => 'code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'scope' => 'identity:read mcp:use',
+            'code_challenge' => $challenge,
+            'code_challenge_method' => 'S256',
+            'resource' => self::RESOURCE,
+        ]));
+        $this->assertStringContainsString('error=invalid_scope', (string) $refused->headers->get('Location'));
+    }
+
     public function test_a_person_registered_client_without_stored_scopes_keeps_the_catalog(): void
     {
         $user = User::query()->create(['name' => 'Catalog User', 'email' => 'catalog@example.test', 'password' => 'not-used']);
