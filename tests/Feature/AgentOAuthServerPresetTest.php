@@ -56,6 +56,13 @@ final class AgentOAuthServerPresetTest extends TestCase
         parent::defineDatabaseMigrations();
     }
 
+    protected function tearDown(): void
+    {
+        // Passport's scope registry is process-wide; never leak this catalog.
+        Passport::tokensCan([]);
+        parent::tearDown();
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

@@ -39,7 +39,13 @@ final class AgentOAuthOpsTest extends TestCase
         $app['config']->set('bherila-auth.oauth_server', AgentOAuthServer::config(['items:read' => 'Read items'], [
             'dynamic_clients' => ['last_used_at_column' => 'last_used_at', 'retention_days' => 30],
         ], self::APP));
-        Passport::$deviceCodeGrantEnabled = false;
+    }
+
+    protected function tearDown(): void
+    {
+        // Passport's scope registry is process-wide; never leak this catalog.
+        Passport::tokensCan([]);
+        parent::tearDown();
     }
 
     protected function defineDatabaseMigrations(): void
@@ -51,9 +57,7 @@ final class AgentOAuthOpsTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Passport::tokensCan(config('bherila-auth.oauth_server.scopes'));
-        Passport::defaultScopes([]);
-        Passport::authorizationView('bherila-auth::oauth.authorize');
+        // The preset completes the Passport side itself.
         AgentOAuthServer::routes();
         Route::get('/api/v1/items', fn () => response()->json(['ok' => true]))->middleware([ExpectOAuthResource::class, 'auth:api']);
     }
