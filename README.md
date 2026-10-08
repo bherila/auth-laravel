@@ -550,6 +550,33 @@ AgentOAuthServer::routes();
 
 Overrides merge recursively, and a list replaces the preset's list outright.
 
+### API credentials (OAuth apps and personal API tokens)
+
+Some agent connectors run the OAuth authorization-code flow; others ask for an API key. Enable the credential service to let a signed-in person create either kind for themselves:
+
+```php
+'oauth_server' => AgentOAuthServer::config($scopes, [
+    'credentials' => [
+        'enabled' => true,
+        'token_lifetimes' => ['PT4H', 'P30D', 'P90D', 'P365D'],
+    ],
+]),
+```
+
+**Routes** (under `credentials.prefix`, session middleware `['web', 'auth']`):
+
+| Method and path | Does |
+|---|---|
+| `GET /` | Scopes on offer, lifetimes, and the person's tokens and apps, with finished URLs |
+| `POST /tokens` | Create an API token |
+| `DELETE /tokens/{id}` | Revoke a token |
+| `POST /apps` | Register an OAuth app |
+| `DELETE /apps/{id}` | Delete an app |
+
+All return JSON. Each new secret appears once, in a `201` no-store body. While the OAuth server is switched off, the two `POST` routes answer 404 and the index returns null issuance URLs.
+
+Bind `GrantableScopes` to offer only the scopes your REST operations use. Bind `CredentialOwnerResolver`, or set `credentials.owner_model`, when your API guard loads a different model from the web guard.
+
 ### OAuth client integration
 
 `BWH\Auth\OAuth\OAuthClient` owns state and PKCE generation, authorization redirects,
