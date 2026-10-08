@@ -453,6 +453,50 @@ final class OAuthResourceTokenBindingTest extends TestCase
         $this->assertNull(OAuthResourceIndicator::requestResource(Request::create('/oauth/token', 'POST', ['resource' => 'not a url'])));
     }
 
+    /**
+     * A client registered by a person (not self-registered) with a stored
+     * scope ceiling is held to it at consent, like a self-registered one.
+     */
+    public function test_a_person_registered_client_is_held_to_its_stored_scope_ceiling(): void
+    {
+        $user = User::query()->create(['name' => 'Ceiling User', 'email' => 'ceiling@example.test', 'password' => 'not-used']);
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient('Registered App', ['http://127.0.0.1:1455/callback'], confidential: false);
+        $client->forceFill(['scopes' => ['identity:read']])->save();
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', str_repeat('c', 43), true)), '+/', '-_'), '=');
+        $query = [
+            'response_type' => 'code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'code_challenge' => $challenge,
+            'code_challenge_method' => 'S256',
+            'resource' => self::RESOURCE,
+        ];
+
+        foreach (['identity:read mcp:use', 'mcp:use'] as $scope) {
+            $refused = $this->actingAs($user)->get('/oauth/authorize?'.http_build_query($query + ['scope' => $scope]));
+            $refused->assertRedirect();
+            $this->assertStringContainsString('error=invalid_scope', (string) $refused->headers->get('Location'), $scope);
+        }
+        $this->actingAs($user)->get('/oauth/authorize?'.http_build_query($query + ['scope' => 'identity:read']))->assertOk();
+    }
+
+    public function test_a_person_registered_client_without_stored_scopes_keeps_the_catalog(): void
+    {
+        $user = User::query()->create(['name' => 'Catalog User', 'email' => 'catalog@example.test', 'password' => 'not-used']);
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient('Unrestricted App', ['http://127.0.0.1:1455/callback'], confidential: false);
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', str_repeat('d', 43), true)), '+/', '-_'), '=');
+
+        $this->actingAs($user)->get('/oauth/authorize?'.http_build_query([
+            'response_type' => 'code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'scope' => 'identity:read mcp:use',
+            'code_challenge' => $challenge,
+            'code_challenge_method' => 'S256',
+            'resource' => self::RESOURCE,
+        ]))->assertOk();
+    }
+
     public function test_a_bound_token_is_rejected_for_a_different_resource_and_for_a_different_issuer(): void
     {
         [$user, $client] = $this->userAndPublicClient(['mcp:use']);

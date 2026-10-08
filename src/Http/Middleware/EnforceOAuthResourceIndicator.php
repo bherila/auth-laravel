@@ -152,18 +152,23 @@ final class EnforceOAuthResourceIndicator
             return true;
         }
         $registeredAtColumn = config('bherila-auth.oauth_server.dynamic_clients.registered_at_column');
-        if (! is_string($registeredAtColumn) || $client->getAttribute($registeredAtColumn) === null) {
-            return true;
-        }
-
+        $dynamic = is_string($registeredAtColumn) && $client->getAttribute($registeredAtColumn) !== null;
         $scopesColumn = config('bherila-auth.oauth_server.dynamic_clients.scopes_column');
-        if (! is_string($scopesColumn) || $scopesColumn === '') {
-            return false;
-        }
-        $registeredScopes = $client->getAttribute($scopesColumn);
-        if ($registeredScopes === null) {
-            // Registrations created before scope persistence was enabled are
-            // ambiguous; fail closed instead of treating them as unrestricted.
+        $hasScopesColumn = is_string($scopesColumn) && $scopesColumn !== '';
+        $registeredScopes = $hasScopesColumn ? $client->getAttribute($scopesColumn) : null;
+
+        if (! $dynamic) {
+            // A client a person or the application registered. When it was
+            // given a scope ceiling, consent is held to it too: otherwise the
+            // person is asked to approve permissions the client was never
+            // registered for, even though Passport later drops them from the
+            // token. A client without stored scopes keeps the whole catalog.
+            if ($registeredScopes === null) {
+                return true;
+            }
+        } elseif (! $hasScopesColumn || $registeredScopes === null) {
+            // Self-registrations created before scope persistence was enabled
+            // are ambiguous; fail closed instead of treating them as unrestricted.
             return false;
         }
         if (is_string($registeredScopes)) {

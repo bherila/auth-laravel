@@ -4,6 +4,18 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Person-registered clients are held to their stored scope ceiling
+
+- `EnforceOAuthResourceIndicator` now refuses an authorization request beyond a client's stored scopes
+  (`invalid_scope`, before consent) for **any** client with a stored ceiling, not only
+  self-registered ones. Apps that a person or the application registers with chosen permissions
+  can no longer ask for more at the consent screen. Passport already dropped those scopes from
+  the token, but the person was shown them and asked to approve them.
+- Clients without stored scopes are unchanged. Self-registered clients without stored scopes
+  still fail closed.
+
 ## v0.17.0 - 2026-10-08
 
 ### Opt in to binding credentials whose request omits `resource`
