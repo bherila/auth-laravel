@@ -259,6 +259,24 @@ final class ApiCredentialServiceTest extends TestCase
         $this->assertFalse((bool) Passport::token()->newQuery()->findOrFail('foreign')->revoked);
     }
 
+    /** Passport stores the auth identifier as the token owner, which need not be the primary key. */
+    public function test_an_owner_with_a_non_key_auth_identifier_can_issue_list_and_revoke(): void
+    {
+        $person = new class extends User
+        {
+            public function getAuthIdentifierName(): string
+            {
+                return 'email';
+            }
+        };
+        $person = $person->newQuery()->create(['name' => 'By email', 'email' => 'by-email@example.test', 'password' => 'not-used']);
+
+        $this->actingAs($person)->postJson(self::BASE.'/tokens', ['name' => 'Mine', 'scopes' => ['items:read'], 'lifetime' => 'P30D'])->assertCreated();
+        $listed = $this->getJson(self::BASE)->json('data.tokens');
+        $this->assertCount(1, $listed);
+        $this->deleteJson($listed[0]['revoke_href'])->assertOk();
+    }
+
     public function test_redirect_uri_rules(): void
     {
         $this->assertTrue(ApiCredentialService::validRedirectUri('https://app.example.test/cb'));

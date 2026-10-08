@@ -98,7 +98,7 @@ final class ApiCredentialService
         // to this owner and bound to this resource.
         Passport::token()->newQuery()
             ->whereKey($issued->accessTokenId)
-            ->where('user_id', $owner->getKey())
+            ->where('user_id', $owner->getAuthIdentifier())
             // The repository persists the canonical form of the configured resource.
             ->where($this->resourceColumn(), OAuthResourceIndicator::configuredCanonical())
             ->firstOrFail();
@@ -112,7 +112,7 @@ final class ApiCredentialService
         $owner = $this->owners->owner($user);
 
         return array_values(Passport::token()->newQuery()
-            ->where('user_id', $owner->getKey())
+            ->where('user_id', $owner->getAuthIdentifier())
             ->where('revoked', false)
             ->where('expires_at', '>', Date::now())
             ->orderByDesc('created_at')
@@ -135,7 +135,7 @@ final class ApiCredentialService
         $owner = $this->owners->owner($user);
         $token = Passport::token()->newQuery()
             ->whereKey($tokenId)
-            ->where('user_id', $owner->getKey())
+            ->where('user_id', $owner->getAuthIdentifier())
             ->where('revoked', false)
             ->first();
         abort_unless($token instanceof Token && str_starts_with((string) $token->name, $this->prefix()), 404);
