@@ -94,4 +94,15 @@ final class AgentOAuthOpsTest extends TestCase
         }
         $this->artisan('bherila-auth:prune-dynamic-clients', ['--days' => '0'])->assertExitCode(2);
     }
+
+    /** With last-use tracking off, registration age decides; live credentials still protect a client. */
+    public function test_prune_without_last_use_tracking_judges_by_registration_age(): void
+    {
+        config(['bherila-auth.oauth_server.dynamic_clients.last_used_at_column' => null]);
+        $client = app(ClientRepository::class)->createAuthorizationCodeGrantClient('Old', ['https://c.example.test/cb'], confidential: false);
+        $client->forceFill(['dynamically_registered_at' => now()->subDays(40), 'last_used_at' => now()->subDay()])->save();
+
+        $this->artisan('bherila-auth:prune-dynamic-clients')->expectsOutputToContain('Pruned 1')->assertExitCode(0);
+        $this->assertNull(Passport::client()->newQuery()->find($client->getKey()));
+    }
 }

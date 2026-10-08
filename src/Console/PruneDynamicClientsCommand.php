@@ -24,9 +24,12 @@ class PruneDynamicClientsCommand extends Command
     public function handle(): int
     {
         $registeredAt = (string) config('bherila-auth.oauth_server.dynamic_clients.registered_at_column', 'dynamically_registered_at');
-        $lastUsedAt = config('bherila-auth.oauth_server.dynamic_clients.last_used_at_column') ?: 'last_used_at';
+        // Null disables last-use tracking: candidates are then judged by
+        // registration age alone (live credentials still protect a client).
+        $lastUsedAt = config('bherila-auth.oauth_server.dynamic_clients.last_used_at_column');
+        $lastUsedAt = is_string($lastUsedAt) && $lastUsedAt !== '' ? $lastUsedAt : null;
         $clientModel = Passport::client();
-        if (! $clientModel->getConnection()->getSchemaBuilder()->hasColumns($clientModel->getTable(), [$registeredAt, $lastUsedAt])) {
+        if (! $clientModel->getConnection()->getSchemaBuilder()->hasColumns($clientModel->getTable(), array_values(array_filter([$registeredAt, $lastUsedAt])))) {
             $this->warn('Dynamic client registration columns are not migrated; nothing was pruned.');
 
             return self::SUCCESS;
@@ -53,7 +56,7 @@ class PruneDynamicClientsCommand extends Command
         $candidates = Passport::client()->newQuery()
             ->whereNotNull($registeredAt)
             ->where($registeredAt, '<', $cutoff)
-            ->where(fn ($query) => $query->whereNull($lastUsedAt)->orWhere($lastUsedAt, '<', $cutoff))
+            ->when($lastUsedAt !== null, fn ($query) => $query->where(fn ($query) => $query->whereNull($lastUsedAt)->orWhere($lastUsedAt, '<', $cutoff)))
             ->orderBy($clientModel->getKeyName())
             ->get();
 
