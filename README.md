@@ -550,6 +550,12 @@ AgentOAuthServer::routes();
 
 Overrides merge recursively, and a list replaces the preset's list outright.
 
+### Agent preset operations
+
+- **Prune stale self-registrations daily:** `Schedule::command('bherila-auth:prune-dynamic-clients')->daily();`. The retention window is `oauth_server.dynamic_clients.retention_days`, and `last_used_at_column` must be set for recent use to count.
+- **Test your app's contract:** `use BWH\Auth\Testing\AssertsAgentOAuthContract;` in a feature test, then call `assertAgentOAuthDiscovery()` and `assertAgentOAuthLifecycle($user, 'your:scope', '/api/v1/some-protected-route')`.
+- **Keys:** `php artisan passport:keys`, kept out of version control, with the path set by `passport.key_path` or `PASSPORT_*_KEY`.
+
 ### API credentials (OAuth apps and personal API tokens)
 
 Some agent connectors run the OAuth authorization-code flow; others ask for an API key. Enable the credential service to let a signed-in person create either kind for themselves:

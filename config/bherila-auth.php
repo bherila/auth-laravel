@@ -85,6 +85,8 @@ return [
             'required_columns' => ['dynamically_registered_at', 'scopes'],
             'registered_at_column' => 'dynamically_registered_at',
             'last_used_at_column' => null,
+            // bherila-auth:prune-dynamic-clients removes registrations unused this long.
+            'retention_days' => (int) env('OAUTH_DYNAMIC_CLIENT_RETENTION_DAYS', 30),
             'scopes_column' => 'scopes',
             // Retained for published-config compatibility; registered scopes are
             // always enforced for dynamic clients in the resource middleware.

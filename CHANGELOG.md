@@ -52,6 +52,24 @@ the first entry here is in the git history.
 - Personal tokens are told apart by owner and name, and a personal-access client is created only
   when none exists, so it never displaces another caller's.
 
+### Operations tooling for the agent preset
+
+- `bherila-auth:prune-dynamic-clients` (`--days`, `--pretend`) removes self-registered clients that
+  are unused past `dynamic_clients.retention_days` (default 30), with their tokens and codes.
+  - It keeps any client with a live access or refresh token.
+  - It never touches person-registered clients.
+  - It defers when a live refresh token can't be attributed to a client.
+  - Schedule it daily.
+- `BWH\Auth\Testing\AssertsAgentOAuthContract` lets an application check the agent-API OAuth
+  contract against its own routes:
+  - discovery;
+  - a self-registered client completing PKCE with no `resource`;
+  - tokens bound to the configured resource;
+  - a protected route;
+  - refresh.
+- Keys and migrations: use Passport's `passport:keys`, and publish `bherila-auth-migrations` for the
+  resource and registration columns.
+
 ### Agent API preset
 
 - `BWH\Auth\OAuth\Server\AgentOAuthServer` gives the agent-API authorization-server profile in one
