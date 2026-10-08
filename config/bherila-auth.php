@@ -61,6 +61,11 @@ return [
         // The application owns its scope policy. Keep the legacy scalar for
         // published-config compatibility, but do not assume a package scope.
         'resource_required_scope' => null,
+        // Opt-in. When this authorization server protects exactly one resource,
+        // bind a code or token whose request omits RFC 8707 `resource` to it,
+        // so generic OAuth clients that never send the parameter still get an
+        // audience-bound credential. A different explicit resource is refused.
+        'assume_omitted_resource' => (bool) env('OAUTH_ASSUME_OMITTED_RESOURCE', false),
         'resource_required_scopes' => [],
         'dynamic_clients' => [
             'enabled' => true,

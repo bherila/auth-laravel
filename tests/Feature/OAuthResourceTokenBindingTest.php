@@ -356,6 +356,103 @@ final class OAuthResourceTokenBindingTest extends TestCase
         $this->assertNotNull($auth);
     }
 
+    /**
+     * A generic OAuth client never sends RFC 8707 `resource`. With the opt-in,
+     * every grant boundary binds its credential to the one configured resource
+     * anyway, so the protected routes accept the token instead of refusing it as
+     * unbound.
+     */
+    public function test_an_opted_in_server_binds_every_grant_when_the_client_omits_resource(): void
+    {
+        config(['bherila-auth.oauth_server.assume_omitted_resource' => true]);
+        [$user, $client] = $this->userAndPublicClient(['mcp:use', 'identity:read']);
+        $verifier = str_repeat('o', 43);
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+
+        $this->actingAs($user)->get('/oauth/authorize?'.http_build_query([
+            'response_type' => 'code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'scope' => 'mcp:use identity:read',
+            'code_challenge' => $challenge,
+            'code_challenge_method' => 'S256',
+        ]))->assertOk();
+        $approval = $this->actingAs($user)->post('/oauth/authorize', ['auth_token' => (string) session('authToken')]);
+        $approval->assertRedirect();
+        parse_str((string) parse_url((string) $approval->headers->get('Location'), PHP_URL_QUERY), $redirectQuery);
+        $this->assertArrayHasKey('code', $redirectQuery);
+        $this->assertSame(self::RESOURCE, Passport::authCode()->newQuery()->whereKey(
+            Passport::authCode()->newQuery()->where('client_id', $client->getKey())->value('id'),
+        )->value('resource_uri'));
+
+        $token = $this->postJson('/oauth/token', [
+            'grant_type' => 'authorization_code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'code' => $redirectQuery['code'],
+            'code_verifier' => $verifier,
+        ])->assertOk();
+        $claims = OAuthResourceIndicator::tokenClaims((string) $token->json('access_token'));
+        $this->assertSame(self::RESOURCE, $claims['resource'] ?? null);
+        $this->assertSame(self::RESOURCE, Passport::token()->newQuery()->whereKey($claims['jti'])->value('resource_uri'));
+        $this->getJson('/mcp', ['Authorization' => 'Bearer '.$token->json('access_token')])->assertOk();
+
+        $refresh = $this->postJson('/oauth/token', [
+            'grant_type' => 'refresh_token',
+            'client_id' => $client->getKey(),
+            'refresh_token' => (string) $token->json('refresh_token'),
+        ])->assertOk();
+        $refreshed = OAuthResourceIndicator::tokenClaims((string) $refresh->json('access_token'));
+        $this->assertSame(self::RESOURCE, $refreshed['resource'] ?? null);
+        $this->getJson('/mcp', ['Authorization' => 'Bearer '.$refresh->json('access_token')])->assertOk();
+    }
+
+    /** The assumption fills an omission; it never overrides a different explicit resource. */
+    public function test_an_opted_in_server_still_refuses_a_different_explicit_resource(): void
+    {
+        config(['bherila-auth.oauth_server.assume_omitted_resource' => true]);
+        [$user, $client] = $this->userAndPublicClient(['mcp:use']);
+        $verifier = str_repeat('p', 43);
+        $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+        $query = [
+            'response_type' => 'code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'scope' => 'mcp:use',
+            'code_challenge' => $challenge,
+            'code_challenge_method' => 'S256',
+        ];
+
+        $wrong = $this->actingAs($user)
+            ->get('/oauth/authorize?'.http_build_query($query + ['resource' => 'https://other.example.test/mcp']))
+            ->assertRedirect();
+        $this->assertStringContainsString('error=invalid_target', (string) $wrong->headers->get('Location'));
+
+        $this->actingAs($user)->get('/oauth/authorize?'.http_build_query($query))->assertOk();
+        $approval = $this->actingAs($user)->post('/oauth/authorize', ['auth_token' => (string) session('authToken')]);
+        parse_str((string) parse_url((string) $approval->headers->get('Location'), PHP_URL_QUERY), $redirectQuery);
+
+        $this->postJson('/oauth/token', [
+            'grant_type' => 'authorization_code',
+            'client_id' => $client->getKey(),
+            'redirect_uri' => 'http://127.0.0.1:1455/callback',
+            'code' => $redirectQuery['code'],
+            'code_verifier' => $verifier,
+            'resource' => 'https://other.example.test/mcp',
+        ])->assertStatus(400);
+    }
+
+    /** Without the opt-in, an omitted resource is still refused where a scope requires one. */
+    public function test_the_assumption_is_off_by_default(): void
+    {
+        $this->assertFalse(OAuthResourceIndicator::assumesOmittedResource());
+        $this->assertNull(OAuthResourceIndicator::requestResource(Request::create('/oauth/token', 'POST')));
+
+        config(['bherila-auth.oauth_server.assume_omitted_resource' => true]);
+        $this->assertSame(self::RESOURCE, OAuthResourceIndicator::requestResource(Request::create('/oauth/token', 'POST')));
+        $this->assertNull(OAuthResourceIndicator::requestResource(Request::create('/oauth/token', 'POST', ['resource' => 'not a url'])));
+    }
+
     public function test_a_bound_token_is_rejected_for_a_different_resource_and_for_a_different_issuer(): void
     {
         [$user, $client] = $this->userAndPublicClient(['mcp:use']);

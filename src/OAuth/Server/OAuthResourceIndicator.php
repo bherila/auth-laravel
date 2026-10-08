@@ -112,12 +112,39 @@ final class OAuthResourceIndicator
     }
 
     /**
+     * Whether an omitted `resource` parameter means the configured resource.
+     *
+     * Opt-in (`oauth_server.assume_omitted_resource`). RFC 8707 makes the
+     * parameter optional, and many generic OAuth clients never send it. An
+     * application whose authorization server protects exactly one resource can
+     * bind such a client's codes and tokens to that resource instead of refusing
+     * them or issuing unbound credentials its resource routes then reject. An
+     * explicit resource that differs is still refused.
+     */
+    public static function assumesOmittedResource(): bool
+    {
+        return (bool) config('bherila-auth.oauth_server.assume_omitted_resource', false);
+    }
+
+    /** Whether a token/authorization request names a resource, explicitly or by that assumption. */
+    public static function requestNamesResource(Request $request): bool
+    {
+        return $request->exists('resource') || self::assumesOmittedResource();
+    }
+
+    /**
      * Return a normalized resource parameter from a token/authorization request.
      * A missing parameter and a malformed parameter both return null; callers that
-     * need to distinguish them should inspect Request::exists('resource').
+     * need to distinguish them should inspect Request::exists('resource'). With
+     * {@see self::assumesOmittedResource()}, a missing parameter returns the
+     * configured resource.
      */
     public static function requestResource(Request $request): ?string
     {
+        if (! $request->exists('resource')) {
+            return self::assumesOmittedResource() ? self::configuredCanonical() : null;
+        }
+
         return self::canonicalize($request->input('resource'));
     }
 

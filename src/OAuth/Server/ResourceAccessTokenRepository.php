@@ -228,7 +228,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
 
     private function requestResource(?Request $request): ?string
     {
-        if ($request === null || ! $request->exists('resource')) {
+        if ($request === null || ! OAuthResourceIndicator::requestNamesResource($request)) {
             return null;
         }
 

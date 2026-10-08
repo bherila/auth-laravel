@@ -6,6 +6,22 @@ the first entry here is in the git history.
 
 ## Unreleased
 
+### Opt in to binding credentials whose request omits `resource`
+
+- `oauth_server.assume_omitted_resource` (`OAUTH_ASSUME_OMITTED_RESOURCE`, default `false`). When
+  enabled, an authorization, token or refresh request that omits RFC 8707 `resource` is treated as
+  naming the one configured resource, so its code, access token and refresh token are
+  audience-bound to it. Generic OAuth clients that never send the parameter then receive
+  credentials the application's `ExpectOAuthResource` routes accept, instead of an `invalid_target`
+  refusal or an unbound token those routes reject. A different explicit resource is still
+  refused at every boundary.
+- With the option on, an unbound authorization code or refresh token issued before it was enabled
+  can no longer be exchanged, because the request now names a resource the credential lacks; those
+  clients authorize again.
+- `OAuthResourceIndicator::assumesOmittedResource()` and `requestNamesResource()`;
+  `requestResource()` returns the configured resource for an omitted parameter when the option is
+  on.
+
 ### Distinguish rejected tokens from introspection outages
 
 - Active token contexts that are malformed, expired, not yet valid, or do not match the
