@@ -138,14 +138,15 @@ trait AssertsDelegatedAccessAdapter
 
     /**
      * An update against anything but the current revision is refused as a conflict and changes nothing.
+     *
+     * It resends exactly what was read, so no other rule the adapter applies first can refuse it.
      */
     protected function assertDelegatedStaleRevisionRefused(string $actor, string $target): void
     {
         $state = $this->delegatedAccessRead($actor, $target);
         $before = $this->delegatedAccessRecord($target);
-        $memberships = array_values(array_filter($state['access']['workspaces'], static fn (array $m): bool => ! $m['editable']));
 
-        $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, 'stale-'.hash('sha256', $state['revision']), $memberships, $state['access']['application_admin']), 'an update against a stale revision');
+        $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, 'stale-'.hash('sha256', $state['revision']), $state['access']['workspaces'], $state['access']['application_admin']), 'an update against a stale revision');
         $this->assertSame($before, $this->delegatedAccessRecord($target), 'A conflict changes nothing');
     }
 

@@ -24,6 +24,14 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
     /** @var array<string, bool> */
     public array $admins = [];
 
+    /**
+     * Workspaces that must keep at least one member, checked before the revision as an application
+     * may check its own rules first. Following the semantics, not breaking them.
+     *
+     * @var list<string>
+     */
+    public array $keepsAMember = [];
+
     /** @var array<string, bool> */
     public array $broken = [
         'refuse_only_writes' => false,
@@ -99,6 +107,12 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
 
         if ($payload['access']['application_admin'] !== ($this->admins[$subject] ?? false) && ! $this->broken['grant_application_admin']) {
             throw DelegatedRefusal::of(DelegatedRefusal::NOT_AUTHORIZED);
+        }
+        $kept = array_column($payload['access']['workspaces'], 'role', 'id');
+        foreach ($this->keepsAMember as $workspace) {
+            if (($current[$workspace] ?? null) === 'member' && ($kept[$workspace] ?? null) !== 'member') {
+                throw DelegatedRefusal::of(DelegatedRefusal::INVALID_REQUEST);
+            }
         }
         if ($payload['expected_revision'] !== $this->revision($subject) && ! $this->broken['ignore_revision']) {
             throw DelegatedRefusal::of(DelegatedRefusal::REVISION_CONFLICT);

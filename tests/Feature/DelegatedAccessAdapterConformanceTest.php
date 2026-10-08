@@ -52,6 +52,14 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertEquals(['w2' => 'owner', 'w3' => 'member'], $this->adapter->memberships['target']);
     }
 
+    /** An adapter may apply its own rules before comparing revisions; the stale-revision check must not trip them. */
+    public function test_the_stale_revision_check_passes_an_adapter_that_checks_its_rules_first(): void
+    {
+        $this->adapter->keepsAMember = ['w1'];
+
+        $this->assertDelegatedStaleRevisionRefused('manager', 'target');
+    }
+
     /**
      * @return array<string, array{string, string, list<string>}>
      */
