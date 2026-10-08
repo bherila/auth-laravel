@@ -6,6 +6,7 @@ use BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessException;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessSettings;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
+use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Container\Container;
@@ -80,8 +81,8 @@ final class DelegatedAccessController extends Controller
         $application = $settings->application();
 
         try {
-            $actorSubject = $settings->verifier($container->make(NonceStore::class))
-                ->verify($credentials[1], $request->method(), $body);
+            $verified = $settings->verifier($container->make(NonceStore::class))
+                ->verifyContext($credentials[1], $request->method(), $body);
 
             try {
                 $input = json_decode($body, true, 32, JSON_THROW_ON_ERROR);
@@ -99,7 +100,18 @@ final class DelegatedAccessController extends Controller
             $operation = (string) $payload['operation'];
             unset($payload['contract_version'], $payload['application']);
 
-            $fields = $container->make(ApplicationAccessAdapter::class)->handle($actorSubject, $payload);
+            // An application that has not switched writes on refuses them here, before its adapter runs.
+            if ($operation === 'update' && ! $settings->writesEnabled()) {
+                throw new DelegatedAccessException('not_authorized', 403);
+            }
+
+            $context = $verified->withOperation($operation);
+            $container->instance(DelegatedRequestContext::class, $context);
+            try {
+                $fields = $container->make(ApplicationAccessAdapter::class)->handle($context->subject, $payload);
+            } finally {
+                $container->forgetInstance(DelegatedRequestContext::class);
+            }
         } catch (DelegatedAccessException $failure) {
             return self::error($failure->outcome, $failure->status);
         }

@@ -21,6 +21,16 @@ final readonly class DelegatedAccessSettings
         return filter_var($this->config->get('bherila-auth.delegated_access.enabled', false), FILTER_VALIDATE_BOOLEAN);
     }
 
+    /**
+     * Whether this application accepts delegated changes. Off by default and independent of
+     * the provider: an application can stop accepting writes without touching the provider, and
+     * enabling another application's writes there changes nothing here.
+     */
+    public function writesEnabled(): bool
+    {
+        return filter_var($this->config->get('bherila-auth.delegated_access.writes_enabled', false), FILTER_VALIDATE_BOOLEAN);
+    }
+
     public function application(): string
     {
         return (string) $this->config->get('bherila-auth.delegated_access.application', '');
@@ -49,8 +59,15 @@ final readonly class DelegatedAccessSettings
         // chose would stop matching sign-in once the operator sets the real name.
         $explicitProvider = $this->config->get('bherila-auth.delegated_access.oauth_provider');
 
+        // The trust chain is explicit: the assertion's issuer must be the identity provider people
+        // sign in through, whose subjects are what local bindings store under the provider name.
+        // Otherwise a subject asserted by one issuer would resolve in another's binding namespace.
+        $issuer = rtrim((string) $this->config->get('bherila-auth.delegated_access.issuer', ''), '/');
+        $signInIssuer = rtrim((string) $this->config->get('bherila-auth.oauth_client.base_url', ''), '/');
+
         if ($publicKeys === [] || ! is_string($explicitProvider) || trim($explicitProvider) === ''
-            || trim($explicitProvider) !== $this->bindingIssuer()) {
+            || trim($explicitProvider) !== $this->bindingIssuer()
+            || $issuer === '' || $issuer !== $signInIssuer) {
             throw new DelegatedAccessException('invalid_verifier_configuration');
         }
 
