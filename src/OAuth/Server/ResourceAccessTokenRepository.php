@@ -63,6 +63,9 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     {
         if (! $this->oauthServerEnabled()) {
             $this->persistUnboundAccessToken($accessTokenEntity);
+            // Recorded on this path too, so stale-client pruning never mistakes
+            // a client that just got a token for an unused one.
+            $this->recordDynamicClientUse($accessTokenEntity->getClient()->getIdentifier());
 
             return;
         }

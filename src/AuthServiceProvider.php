@@ -5,6 +5,7 @@ namespace BWH\Auth;
 use BWH\Auth\Console\CheckCloudflareRangesCommand;
 use BWH\Auth\Console\PruneAuthAuditLogCommand;
 use BWH\Auth\Console\PruneDelegatedAccessNoncesCommand;
+use BWH\Auth\Console\PruneDynamicClientsCommand;
 use BWH\Auth\Http\TrustedProxies;
 use BWH\Auth\Contracts\AuthAuditLogger;
 use BWH\Auth\Contracts\AuthUserPolicy;
@@ -118,7 +119,7 @@ class AuthServiceProvider extends ServiceProvider
         }
 
         if ($this->app->runningInConsole()) {
-            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class]);
+            $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class, PruneDynamicClientsCommand::class]);
         }
 
         // Opt-in: an application that manages trusted proxies itself, or has no
