@@ -97,7 +97,8 @@ final class ApiCredentialService
         Passport::token()->newQuery()
             ->whereKey($issued->accessTokenId)
             ->where('user_id', $owner->getKey())
-            ->where($this->resourceColumn(), OAuthResourceIndicator::resource())
+            // The repository persists the canonical form of the configured resource.
+            ->where($this->resourceColumn(), OAuthResourceIndicator::configuredCanonical())
             ->firstOrFail();
 
         return ['id' => (string) $issued->accessTokenId, 'token' => (string) $issued->accessToken, 'expires_at' => $expiresAt->toIso8601String()];

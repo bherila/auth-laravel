@@ -216,6 +216,16 @@ final class ApiCredentialServiceTest extends TestCase
         $this->assertSame(['items:read'], $this->getJson(self::BASE)->json('data.apps.0.scopes'));
     }
 
+    /** A valid but noncanonical resource setting still issues (no 500, no orphaned token). */
+    public function test_a_noncanonical_resource_setting_still_issues_a_token(): void
+    {
+        config(['bherila-auth.oauth_server.resource' => 'HTTPS://APP.EXAMPLE.TEST:443/api/v1']);
+
+        $this->actingAs($this->user)->postJson(self::BASE.'/tokens', ['name' => 'Canonical', 'scopes' => ['items:read'], 'lifetime' => 'P30D'])
+            ->assertCreated();
+        $this->assertSame(1, Passport::token()->newQuery()->where('user_id', $this->user->id)->count());
+    }
+
     public function test_redirect_uri_rules(): void
     {
         $this->assertTrue(ApiCredentialService::validRedirectUri('https://app.example.test/cb'));
