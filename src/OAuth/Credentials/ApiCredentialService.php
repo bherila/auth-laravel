@@ -115,9 +115,11 @@ final class ApiCredentialService
             ->where('user_id', $owner->getKey())
             ->where('revoked', false)
             ->where('expires_at', '>', Date::now())
-            ->where('name', 'like', $this->prefix().'%')
             ->orderByDesc('created_at')
             ->get()
+            // A literal prefix check, not SQL LIKE: `%` or `_` in a configured
+            // prefix must not sweep in tokens this service never issued.
+            ->filter(fn (Token $token): bool => str_starts_with((string) $token->name, $this->prefix()))
             ->map(fn (Token $token): array => [
                 'id' => (string) $token->getKey(),
                 'name' => substr((string) $token->name, strlen($this->prefix())),
@@ -131,13 +133,12 @@ final class ApiCredentialService
     public function revokeToken(Authenticatable $user, string $tokenId): void
     {
         $owner = $this->owners->owner($user);
-        $owned = Passport::token()->newQuery()
+        $token = Passport::token()->newQuery()
             ->whereKey($tokenId)
             ->where('user_id', $owner->getKey())
             ->where('revoked', false)
-            ->where('name', 'like', $this->prefix().'%')
-            ->exists();
-        abort_unless($owned, 404);
+            ->first();
+        abort_unless($token instanceof Token && str_starts_with((string) $token->name, $this->prefix()), 404);
 
         // Through Passport's repository, which dispatches AccessTokenRevoked for
         // listeners that invalidate caches or audit revocations.

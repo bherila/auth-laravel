@@ -245,6 +245,20 @@ final class ApiCredentialServiceTest extends TestCase
         $this->assertTrue((bool) Passport::token()->newQuery()->findOrFail('app-token')->revoked);
     }
 
+    /** SQL wildcards in the prefix must not make this service claim tokens it never issued. */
+    public function test_a_wildcard_in_the_prefix_does_not_claim_other_tokens(): void
+    {
+        config(['bherila-auth.oauth_server.credentials.token_name_prefix' => 'api_token_']);
+        $client = app(\Laravel\Passport\ClientRepository::class)->createPersonalAccessGrantClient('Other issuer', 'users');
+        Passport::token()->newQuery()->forceCreate([
+            'id' => 'foreign', 'user_id' => $this->user->id, 'client_id' => $client->getKey(), 'name' => 'apiXtokenYother', 'scopes' => '[]', 'revoked' => false, 'expires_at' => now()->addDay(),
+        ]);
+
+        $this->assertSame([], $this->actingAs($this->user)->getJson(self::BASE)->json('data.tokens'));
+        $this->deleteJson(self::BASE.'/tokens/foreign')->assertNotFound();
+        $this->assertFalse((bool) Passport::token()->newQuery()->findOrFail('foreign')->revoked);
+    }
+
     public function test_redirect_uri_rules(): void
     {
         $this->assertTrue(ApiCredentialService::validRedirectUri('https://app.example.test/cb'));
