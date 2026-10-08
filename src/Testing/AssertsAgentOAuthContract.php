@@ -26,7 +26,8 @@ trait AssertsAgentOAuthContract
         $this->getJson('/.well-known/oauth-authorization-server')->assertOk()
             ->assertJsonPath('issuer', $issuer)
             ->assertJsonPath('code_challenge_methods_supported', ['S256']);
-        $this->getJson('/.well-known/oauth-protected-resource'.(string) parse_url($resource, PHP_URL_PATH))->assertOk()
+        // The route the preset registers, relative to the (possibly path-mounted) application.
+        $this->getJson(\BWH\Auth\OAuth\Server\AgentOAuthServer::protectedResourceMetadataPath())->assertOk()
             ->assertJsonPath('resource', $resource);
     }
 

@@ -118,4 +118,11 @@ final class AgentOAuthOpsTest extends TestCase
         $this->artisan('bherila-auth:prune-dynamic-clients')->expectsOutputToContain('Pruned 0')->assertExitCode(0);
         $this->assertNotNull(Passport::client()->newQuery()->find($client->getKey()));
     }
+
+    /** The trait asks for the path the preset registers, also for a path-mounted application. */
+    public function test_the_contract_trait_targets_the_registered_discovery_path(): void
+    {
+        config(['app.url' => self::APP.'/tenant', 'bherila-auth.oauth_server.resource' => self::APP.'/tenant/api/v1']);
+        $this->assertSame('/.well-known/oauth-protected-resource/api/v1', \BWH\Auth\OAuth\Server\AgentOAuthServer::protectedResourceMetadataPath());
+    }
 }
