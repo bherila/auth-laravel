@@ -54,7 +54,7 @@ final class AgentOAuthServer
             'authorization_endpoint' => $base.'/oauth/authorize',
             'token_endpoint' => $base.'/oauth/token',
             'registration_endpoint' => $base.'/oauth/register',
-            'protected_resource_metadata_url' => $base.'/.well-known/oauth-protected-resource/api/v1',
+            'protected_resource_metadata_url' => self::wellKnown($base.'/api/v1', 'oauth-protected-resource'),
             'scopes' => $scopes,
             'token_endpoint_auth_methods' => ['none', 'client_secret_basic', 'client_secret_post'],
             'assume_omitted_resource' => true,
@@ -92,10 +92,41 @@ final class AgentOAuthServer
             // Only at the path derived from the one protected resource: RFC 9728
             // requires the document's `resource` to match the URL it was
             // discovered from, so no other suffix may serve it.
-            Route::get('/.well-known/oauth-protected-resource/api/v1', [OAuthMetadataController::class, 'protectedResource'])
+            Route::get(self::protectedResourceMetadataPath(), [OAuthMetadataController::class, 'protectedResource'])
                 ->middleware($protectedResourceMiddleware);
             Route::post('/oauth/register', OAuthDynamicClientRegistrationController::class)->middleware($registrationThrottle);
         });
+    }
+
+    /**
+     * RFC 9728 / RFC 8414 well-known URL: the well-known segment goes between
+     * the origin and the identifier's path, so `https://h/tenant/api/v1` gives
+     * `https://h/.well-known/oauth-protected-resource/tenant/api/v1`.
+     */
+    public static function wellKnown(string $identifier, string $suffix): string
+    {
+        $parts = parse_url($identifier);
+        $origin = ($parts['scheme'] ?? 'https').'://'.($parts['host'] ?? 'localhost').(isset($parts['port']) ? ':'.$parts['port'] : '');
+        $path = rtrim((string) ($parts['path'] ?? ''), '/');
+
+        return $origin.'/.well-known/'.$suffix.$path;
+    }
+
+    /**
+     * The route path for the protected-resource document, relative to the
+     * application. A deployment mounted under a path must also route the
+     * host-root well-known URL (see wellKnown()) to the application.
+     */
+    public static function protectedResourceMetadataPath(): string
+    {
+        $resource = (string) config('bherila-auth.oauth_server.resource', '');
+        $path = rtrim((string) (parse_url($resource, PHP_URL_PATH) ?? ''), '/');
+        $appPath = rtrim((string) (parse_url((string) config('app.url', ''), PHP_URL_PATH) ?? ''), '/');
+        if ($appPath !== '' && str_starts_with($path, $appPath)) {
+            $path = substr($path, strlen($appPath));
+        }
+
+        return '/.well-known/oauth-protected-resource'.($path === '' ? '/api/v1' : $path);
     }
 
     /**

@@ -83,6 +83,16 @@ final class AgentOAuthServerPresetTest extends TestCase
         $this->assertSame([EnsureOAuthServerEnabled::class, EnforceOAuthPkce::class, EnforceOAuthResourceIndicator::class, 'x'], AgentOAuthServer::passportMiddleware(['x']));
     }
 
+    /** RFC 9728: the well-known segment goes before the path of a path-mounted resource. */
+    public function test_a_path_mounted_deployment_gets_the_rfc_well_known_url(): void
+    {
+        $config = AgentOAuthServer::config(['a' => 'A'], [], 'https://fork.example.test/tenant');
+
+        $this->assertSame('https://fork.example.test/tenant/api/v1', $config['resource']);
+        $this->assertSame('https://fork.example.test/.well-known/oauth-protected-resource/tenant/api/v1', $config['protected_resource_metadata_url']);
+        $this->assertSame('https://h.example.test:8443/.well-known/oauth-authorization-server', AgentOAuthServer::wellKnown('https://h.example.test:8443', 'oauth-authorization-server'));
+    }
+
     /** RFC 9728: the document is served only where its `resource` matches the discovery URL. */
     public function test_protected_resource_metadata_is_served_only_at_the_matching_path(): void
     {
