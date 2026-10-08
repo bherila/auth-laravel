@@ -30,8 +30,8 @@ final class EnforceOAuthResourceIndicator
             return $this->consentSubmission($request, $next);
         }
 
-        if ($request->routeIs('passport.token') && $request->exists('resource')) {
-            if (! OAuthResourceIndicator::isConfiguredResource($request->input('resource'))) {
+        if ($request->routeIs('passport.token') && OAuthResourceIndicator::requestNamesResource($request)) {
+            if (! OAuthResourceIndicator::isConfiguredResource(OAuthResourceIndicator::requestResource($request))) {
                 return $this->invalidResource();
             }
             $request->attributes->set(
@@ -68,8 +68,12 @@ final class EnforceOAuthResourceIndicator
             return $this->invalidScope($request);
         }
 
-        $hasResource = $request->query->has('resource');
-        $resource = $hasResource ? $request->query('resource') : null;
+        // An omitted resource stands for the configured one only when the
+        // application opted in; otherwise it stays omitted.
+        $hasResource = $request->query->has('resource') || OAuthResourceIndicator::assumesOmittedResource();
+        $resource = $request->query->has('resource')
+            ? $request->query('resource')
+            : ($hasResource ? OAuthResourceIndicator::configuredCanonical() : null);
         if (($hasResource && ! OAuthResourceIndicator::isConfiguredResource($resource))
             || (! $hasResource && OAuthResourceIndicator::scopesRequireResource($scopes))) {
             return $this->invalidResource($request);

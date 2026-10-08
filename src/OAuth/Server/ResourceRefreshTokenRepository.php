@@ -85,7 +85,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         $storedResource = $storedValue === null ? null : OAuthResourceIndicator::canonicalize($storedValue);
         $bound = $storedValue !== null;
         $request = $this->request();
-        $hasRequestedResource = $request?->exists('resource') ?? false;
+        $hasRequestedResource = $request !== null && OAuthResourceIndicator::requestNamesResource($request);
         $requestedResource = $request === null ? null : OAuthResourceIndicator::requestResource($request);
 
         if (! $bound) {
