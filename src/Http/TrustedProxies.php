@@ -48,6 +48,9 @@ final class TrustedProxies
      * client-supplied X-Forwarded-Port through, so trusting the port would let
      * a visitor choose the port in generated absolute URLs.
      */
+    /** Matches no real peer: what "trust nothing" is pinned to. */
+    public const array NOTHING = ['0.0.0.0/32', '::/128'];
+
     public const int HEADERS = Request::HEADER_X_FORWARDED_FOR
         | Request::HEADER_X_FORWARDED_PROTO;
 
@@ -98,10 +101,13 @@ final class TrustedProxies
     {
         $proxies = self::resolve(config('bherila-auth.trusted_proxies.trusted'), self::cloudflareRanges());
         if ($proxies === null) {
-            // "Trust nothing" has to undo trust configured elsewhere - a `*`
-            // left over from bootstrap would otherwise stay in force. An empty
-            // list cannot say it (Laravel reads [] as "not set"), so clear it.
-            TrustProxies::flushState();
+            // "Trust nothing" must override trust configured elsewhere (a `*`
+            // left from bootstrap) and must not leave the setting unset, which
+            // Laravel turns into `*` on Laravel Cloud and for Forge/Vapor hosts.
+            // Neither [] nor null can say it, so pin the unspecified addresses,
+            // which are never a connecting peer.
+            TrustProxies::at(self::NOTHING);
+            TrustProxies::withHeaders(self::HEADERS);
 
             return;
         }

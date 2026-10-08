@@ -118,6 +118,17 @@ class TrustedProxiesTest extends TestCase
             ->getJson('/whoami')->assertJsonPath('ip', '203.0.113.5');
     }
 
+    /** Laravel trusts `*` for Forge, Vapor and Cloud hosts when nothing is set; empty must still mean nothing. */
+    public function test_an_empty_setting_holds_on_hosts_where_laravel_would_trust_everyone(): void
+    {
+        config(['bherila-auth.trusted_proxies.trusted' => '']);
+        TrustProxies::flushState();
+        TrustedProxies::apply();
+
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.5', 'HTTP_HOST' => 'app.on-forge.com', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'])
+            ->getJson('http://app.on-forge.com/whoami')->assertJsonPath('ip', '203.0.113.5');
+    }
+
     public function test_a_configured_list_replaces_the_shipped_ranges(): void
     {
         config(['bherila-auth.trusted_proxies.cloudflare' => ['10.9.0.0/16']]);
