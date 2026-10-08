@@ -1025,7 +1025,8 @@ only what is its own: an adapter deciding who may manage access and what they ma
    | Variable | Meaning |
    |---|---|
    | `DELEGATED_ACCESS_ENABLED` | `true` to answer; the route answers 404 otherwise |
-   | `DELEGATED_ACCESS_ISSUER` | the provider's exact HTTPS issuer |
+   | `DELEGATED_ACCESS_WRITES_ENABLED` | `true` to accept `update`; default `false`, so a new deployment is read-only |
+   | `DELEGATED_ACCESS_ISSUER` | the provider's exact HTTPS issuer; must be the sign-in provider (`oauth_client.base_url`) |
    | `DELEGATED_ACCESS_ENDPOINT` | this endpoint's exact HTTPS URL, as the provider is configured to call it |
    | `DELEGATED_ACCESS_APPLICATION` | this application's key in the provider's registry |
    | `DELEGATED_ACCESS_PUBLIC_KEYS` | the provider's integration public keys, `key-id\|/path/to/public.pem`, comma-separated |
@@ -1035,8 +1036,12 @@ only what is its own: an adapter deciding who may manage access and what they ma
    `bherila-auth.delegated_access.path` (default `/application-access`) and `per_minute` (default
    120 per client IP) are config-only. The limit is applied inside the controller after the enabled
    check, so a disabled endpoint answers 404 and never 429. If any listed key
-   file is unreadable, or `OAUTH_PROVIDER` is unset or disagrees with `oauth_client.provider`,
-   every request is refused with `invalid_verifier_configuration`. To rotate, list both public
+   file is unreadable, `OAUTH_PROVIDER` is unset or disagrees with `oauth_client.provider`, or
+   `DELEGATED_ACCESS_ISSUER` is not the sign-in provider's `oauth_client.base_url` (a trailing
+   slash aside), every request is refused with `invalid_verifier_configuration`. That last check
+   keeps a subject in the namespace it was issued in: the adapter resolves it under
+   `bindingIssuer()`, which is only right if the provider asserting it is the one people sign in
+   with. To rotate, list both public
    keys, switch the provider to the new key id, then remove the old one.
 
 4. Schedule `bherila-auth:prune-delegated-nonces` if the table should not grow without bound. It
@@ -1049,7 +1054,16 @@ receives `operation` plus that operation's fields, and returns that operation's 
 The controller adds `contract_version`, `application` and `operation`, validates the whole answer
 (including the subject echo for `read` and `update`), and sends it with `Cache-Control: no-store`.
 A `DelegatedAccessException` thrown by the adapter is sent as its outcome and status. An answer
-outside the contract is reported and becomes `internal_error` (500), never sent.
+outside the contract is reported and becomes `internal_error` (500), never sent. Until
+`DELEGATED_ACCESS_WRITES_ENABLED` is set, an `update` is refused with `not_authorized` (403) after
+verification and before the adapter, so an application can stop accepting changes without
+touching the provider.
+
+While the adapter runs, the container holds a `DelegatedRequestContext` with the verified
+`issuer`, `subject`, `application`, `jti` and `operation`. Resolve it (or inject it into an adapter
+bound with `bind()`) to record `jti` with the application's own audit, correlating the provider's
+attempt and result records. `jti` is a single-use nonce: never key a retry on it. The binding is
+removed when the call returns.
 
 Laravel may read a JSON body in global middleware before any controller runs, so bound this
 route's body to the same 64 KiB at the web server where you can. Nothing in front may rewrite the
@@ -1072,3 +1086,50 @@ refuse (`not_authorized`, 403) unless it is active and may manage access. Show o
 may manage. Compare revisions under the same locks the changes take (`revision_conflict`, 409).
 Provision only an unbound subject, bound to `bindingIssuer()` and the exact subject, never by
 adopting a row found by address. Keep the application's own last-administrator and audit rules.
+
+#### Update semantics (normative)
+
+The provider holds no authority of its own; whatever the adapter does not enforce is not enforced.
+
+1. **Authorize every operation**, `capabilities` and the listings included. An actor who may not
+   manage access learns nothing, not even the roles.
+2. **An update replaces the actor's projection, never the subject's whole access.** Memberships in
+   workspaces the actor cannot see are outside the request and survive it unchanged.
+3. **`editable` and `allowed_edits` describe rules; they do not delegate them.** A membership
+   reported as not editable is refused whether the update changes its role or omits it. A change to
+   `application_admin` is refused unless both the capabilities and this read allow it.
+4. **Roles are checked against what this actor may grant**, not only against what was advertised.
+   Never infer a hierarchy from the order roles are advertised in.
+5. **Change through the application's own domain service, under its locks, and compare the
+   revision under those locks.** Validation, revision and every rule above are decided on the
+   rows the change takes.
+6. **A refusal changes nothing** and uses one of these outcomes (`BWH\Auth\OAuth\DelegatedAccess\DelegatedRefusal`):
+
+   | Outcome | Status | When |
+   |---|---|---|
+   | `not_authorized` | 403 | the actor may not manage access, or may not see or change this target or workspace |
+   | `protected_membership` | 403 | the update changes or omits a membership reported as not editable |
+   | `role_not_grantable` | 403 | a role this actor may not grant, or one never advertised |
+   | `not_provisioned` | 404 | a read of an unknown subject, when not reported as unprovisioned |
+   | `revision_conflict` | 409 | a stale revision, or provisioning a subject already bound |
+   | `invalid_request` | 422 | well formed, but not something this application can apply |
+
+   A provider acts on the status when it does not know the outcome, so the newer outcomes reuse
+   statuses it already handles. Never refuse with a 5xx: for a write the provider must then assume
+   the change may have happened.
+
+`BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks rules 1 to 6 against an application's real
+adapter and tables. Implement `delegatedAccessTruth($subject)` by reading the tables directly and
+`delegatedAccessManager()`, seed a target with an editable membership, a protected one and one
+outside the manager's view, then call:
+
+```php
+$this->assertDelegatedActorRefusedEverywhere($stranger, $target, $workspaceId);
+$this->assertDelegatedProtectedMembershipsHold($manager, $target);
+$this->assertDelegatedApplicationAdminFollowsAllowedEdits($manager, $target);
+$this->assertDelegatedStaleRevisionRefused($manager, $target);
+$this->assertDelegatedUnadvertisedRoleRefused($manager, $target);
+$this->assertDelegatedUpdateKeepsUnseenMemberships($manager, $target);
+```
+
+Each refused attempt must leave `delegatedAccessTruth()` exactly as it was.
