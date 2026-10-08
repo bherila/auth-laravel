@@ -193,7 +193,7 @@ final class ApiCredentialService
     {
         $owner = $this->owners->owner($user);
 
-        return array_values($owner->oauthApps()
+        return array_values($this->ownedClients($owner)
             ->where('revoked', false)
             ->orderBy('name')
             ->get()
@@ -212,7 +212,7 @@ final class ApiCredentialService
     public function deleteApp(Authenticatable $user, string $clientId): void
     {
         $owner = $this->owners->owner($user);
-        $client = $owner->oauthApps()->where('revoked', false)->whereKey($clientId)->first();
+        $client = $this->ownedClients($owner)->where('revoked', false)->whereKey($clientId)->first();
         abort_unless($client instanceof Client, 404);
 
         Passport::token()->getConnection()->transaction(function () use ($client): void {
@@ -224,6 +224,23 @@ final class ApiCredentialService
             }
             $client->forceFill(['revoked' => true])->save();
         });
+    }
+
+    /**
+     * The owner's clients, on either Passport schema: the `owner` morph, or a
+     * retained legacy `user_id` column - which Passport's own repository also
+     * detects and writes through when it registers the app.
+     *
+     * @return \Illuminate\Database\Eloquent\Builder<Client>|\Illuminate\Database\Eloquent\Relations\MorphMany<Client, Model>
+     */
+    private function ownedClients(Model $owner): \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Eloquent\Relations\MorphMany
+    {
+        $client = Passport::client();
+        if ($client->getConnection()->getSchemaBuilder()->hasColumn($client->getTable(), 'user_id')) {
+            return $client->newQuery()->where('user_id', $owner->getAuthIdentifier());
+        }
+
+        return $owner->oauthApps();
     }
 
     public static function validRedirectUri(string $uri): bool

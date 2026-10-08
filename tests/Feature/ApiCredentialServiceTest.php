@@ -277,6 +277,23 @@ final class ApiCredentialServiceTest extends TestCase
         $this->deleteJson($listed[0]['revoke_href'])->assertOk();
     }
 
+    /** Installations that kept Passport's legacy user_id column list and delete their apps too. */
+    public function test_apps_work_on_the_legacy_user_id_client_schema(): void
+    {
+        \Illuminate\Support\Facades\Schema::table('oauth_clients', static function (\Illuminate\Database\Schema\Blueprint $table): void {
+            $table->unsignedBigInteger('user_id')->nullable();
+        });
+
+        $app = $this->actingAs($this->user)->postJson(self::BASE.'/apps', [
+            'name' => 'Legacy', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['items:read'],
+        ])->assertCreated()->json('data');
+        $this->assertSame((string) $this->user->id, (string) Passport::client()->newQuery()->findOrFail($app['client_id'])->user_id);
+
+        $listed = $this->getJson(self::BASE)->assertOk()->json('data.apps');
+        $this->assertSame($app['client_id'], $listed[0]['id']);
+        $this->deleteJson($listed[0]['delete_href'])->assertOk();
+    }
+
     public function test_redirect_uri_rules(): void
     {
         $this->assertTrue(ApiCredentialService::validRedirectUri('https://app.example.test/cb'));
