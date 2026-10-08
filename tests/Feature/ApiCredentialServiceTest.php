@@ -226,6 +226,25 @@ final class ApiCredentialServiceTest extends TestCase
         $this->assertSame(1, Passport::token()->newQuery()->where('user_id', $this->user->id)->count());
     }
 
+    /** Revocation goes through Passport so its AccessTokenRevoked listeners hear about it. */
+    public function test_revoking_and_deleting_dispatch_passport_revocation_events(): void
+    {
+        $this->actingAs($this->user)->postJson(self::BASE.'/tokens', ['name' => 'Evented', 'scopes' => ['items:read'], 'lifetime' => 'P30D'])->assertCreated();
+        $token = Passport::token()->newQuery()->where('user_id', $this->user->id)->sole();
+        $app = $this->postJson(self::BASE.'/apps', ['name' => 'Evented app', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['items:read']])->json('data');
+        Passport::token()->newQuery()->forceCreate([
+            'id' => 'app-token', 'user_id' => $this->user->id, 'client_id' => $app['client_id'], 'name' => null, 'scopes' => '[]', 'revoked' => false, 'expires_at' => now()->addDay(),
+        ]);
+        \Illuminate\Support\Facades\Event::fake([\Laravel\Passport\Events\AccessTokenRevoked::class]);
+
+        $this->deleteJson(self::BASE.'/tokens/'.$token->getKey())->assertOk();
+        $this->deleteJson(self::BASE.'/apps/'.$app['client_id'])->assertOk();
+
+        \Illuminate\Support\Facades\Event::assertDispatched(\Laravel\Passport\Events\AccessTokenRevoked::class, fn ($event) => $event->tokenId === (string) $token->getKey());
+        \Illuminate\Support\Facades\Event::assertDispatched(\Laravel\Passport\Events\AccessTokenRevoked::class, fn ($event) => $event->tokenId === 'app-token');
+        $this->assertTrue((bool) Passport::token()->newQuery()->findOrFail('app-token')->revoked);
+    }
+
     public function test_redirect_uri_rules(): void
     {
         $this->assertTrue(ApiCredentialService::validRedirectUri('https://app.example.test/cb'));

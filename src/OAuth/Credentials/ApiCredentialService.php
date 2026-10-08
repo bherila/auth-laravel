@@ -9,6 +9,7 @@ use DomainException;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Date;
+use Laravel\Passport\Bridge\AccessTokenRepository;
 use Laravel\Passport\Client;
 use Laravel\Passport\ClientRepository;
 use Laravel\Passport\Passport;
@@ -38,6 +39,7 @@ final class ApiCredentialService
         private readonly ClientRepository $clients,
         private readonly CredentialOwnerResolver $owners,
         private readonly GrantableScopes $grantable,
+        private readonly AccessTokenRepository $accessTokens,
     ) {}
 
     /** @return array<string, string> */
@@ -129,13 +131,17 @@ final class ApiCredentialService
     public function revokeToken(Authenticatable $user, string $tokenId): void
     {
         $owner = $this->owners->owner($user);
-        $revoked = Passport::token()->newQuery()
+        $owned = Passport::token()->newQuery()
             ->whereKey($tokenId)
             ->where('user_id', $owner->getKey())
             ->where('revoked', false)
             ->where('name', 'like', $this->prefix().'%')
-            ->update(['revoked' => true, 'updated_at' => Date::now()]);
-        abort_if($revoked === 0, 404);
+            ->exists();
+        abort_unless($owned, 404);
+
+        // Through Passport's repository, which dispatches AccessTokenRevoked for
+        // listeners that invalidate caches or audit revocations.
+        $this->accessTokens->revokeAccessToken($tokenId);
     }
 
     /**
@@ -208,10 +214,13 @@ final class ApiCredentialService
         $client = $owner->oauthApps()->where('revoked', false)->whereKey($clientId)->first();
         abort_unless($client instanceof Client, 404);
 
-        Passport::token()->getConnection()->transaction(static function () use ($client): void {
+        Passport::token()->getConnection()->transaction(function () use ($client): void {
             $tokenIds = Passport::token()->newQuery()->where('client_id', $client->getKey())->pluck('id');
             Passport::refreshToken()->newQuery()->whereIn('access_token_id', $tokenIds)->update(['revoked' => true]);
-            Passport::token()->newQuery()->where('client_id', $client->getKey())->update(['revoked' => true, 'updated_at' => Date::now()]);
+            foreach (Passport::token()->newQuery()->where('client_id', $client->getKey())->where('revoked', false)->pluck('id') as $tokenId) {
+                // One at a time through the repository so AccessTokenRevoked fires.
+                $this->accessTokens->revokeAccessToken((string) $tokenId);
+            }
             $client->forceFill(['revoked' => true])->save();
         });
     }
