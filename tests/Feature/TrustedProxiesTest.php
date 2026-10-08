@@ -99,6 +99,17 @@ class TrustedProxiesTest extends TestCase
         $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.5', 'HTTP_X_FORWARDED_FOR' => '192.0.2.12'])->postJson('/limited')->assertTooManyRequests();
     }
 
+    /** An empty setting trusts nothing, even over a `*` configured elsewhere. */
+    public function test_an_empty_setting_clears_trust_configured_elsewhere(): void
+    {
+        TrustProxies::at('*');
+        config(['bherila-auth.trusted_proxies.trusted' => '']);
+        TrustedProxies::apply();
+
+        $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.5', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7'])
+            ->getJson('/whoami')->assertJsonPath('ip', '203.0.113.5');
+    }
+
     public function test_a_configured_list_replaces_the_shipped_ranges(): void
     {
         config(['bherila-auth.trusted_proxies.cloudflare' => ['10.9.0.0/16']]);

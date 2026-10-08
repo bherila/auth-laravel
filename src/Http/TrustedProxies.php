@@ -91,6 +91,11 @@ final class TrustedProxies
     {
         $proxies = self::resolve(config('bherila-auth.trusted_proxies.trusted'), self::cloudflareRanges());
         if ($proxies === null) {
+            // "Trust nothing" has to undo trust configured elsewhere - a `*`
+            // left over from bootstrap would otherwise stay in force. An empty
+            // list cannot say it (Laravel reads [] as "not set"), so clear it.
+            TrustProxies::flushState();
+
             return;
         }
 
