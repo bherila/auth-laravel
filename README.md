@@ -990,8 +990,8 @@ default: pass the version both sides agreed on as the last argument to `request(
 `response()`.
 
 - `capabilities.controls` is exactly `{application_admin, workspace_roles, provisioning}`.
-  `workspace_roles` lists 1–16 `{id, label}` entries, ids up to 64 bytes and labels up to 255,
-  most senior first.
+  `workspace_roles` lists up to 16 `{id, label}` entries, ids up to 64 bytes and labels up to 255,
+  most senior first. An empty list makes the application account-only (below).
 - `access.workspaces[]` is `{id, role}` in an update and `{id, role, editable}` in a read or
   update response. A membership reported `editable: false` must be sent back unchanged, and the
   application refuses an update that changes it. `rolesAreAdvertised($capabilities, $access)`
@@ -1006,6 +1006,41 @@ default: pass the version both sides agreed on as the last argument to `request(
   subject, and answers 409 when the subject is already provisioned.
 - A version this package does not implement is a configuration error
   (`unsupported_contract_version`, status 500), not a refusal of any request.
+
+#### Account-only applications
+
+An application with accounts but no workspaces advertises `workspace_roles: []`. It is then
+account-only: what can be managed is whether a person has an account, through provisioning, and
+the application administrator flag.
+
+- Every access value carries `workspaces: []`: an `update` and a provisioning `update` send it, and
+  a `read` or `update` state reports it. A state never offers `allowed_edits.workspaces`. The
+  application answers `workspaces` with an empty page and refuses an update naming any membership
+  (`invalid_request` or `role_not_grantable`).
+- Provisioning sends `application_admin` as the actor chose it. A provider asks for that choice
+  explicitly rather than defaulting it, and the application still decides whether this actor may
+  create an administrator.
+- `accountOnly($capabilities)` says whether a capabilities response describes one.
+  `rolesAreAdvertised($capabilities, $access)` accepts only `workspaces: []` for it, as it accepts
+  only advertised roles otherwise, so a provider's existing check covers outgoing access.
+  `fitsCapabilities($capabilities, $response)` checks an answer the shape validators cannot: for an
+  account-only application, no memberships and no workspace edits in a state and an empty
+  `workspaces` page. It is always true for a workspace application.
+
+The empty role list is the signal, rather than a separate flag such as `controls.workspaces: false`:
+
+- **One spelling, no contradictions.** Roles are the only way a membership can be expressed, so an
+  application with none can hold no memberships whatever a flag said. A flag would add two states to
+  define and refuse (no workspaces with roles, workspaces without any) and say nothing new.
+- **Workspace applications are untouched.** Their capabilities, adapters and providers keep exactly
+  the shape they have; `controls` keeps its exact key set. A new key would be required of every
+  application, or optional with two spellings of the same answer.
+- **Older providers fail closed.** A provider on an earlier release refuses `workspace_roles: []` as
+  `invalid_response`, as it would refuse an unknown key, so it shows an error rather than a
+  workspace screen with no roles to choose.
+- **A misconfigured workspace application cannot leak through.** One that advertises no roles by
+  mistake is treated as account-only, and every state it reports with a membership fails
+  `fitsCapabilities()`, which a provider checks before rendering it.
 
 ### Serving the endpoint
 
@@ -1081,6 +1116,12 @@ Helpers for adapters:
   provisioned account's placeholder contact details until first sign-in. The address is under
   `.invalid` and is never a linking key.
 
+An account-only adapter answers `capabilities` with `workspace_roles: []`, `workspaces` with
+`{"workspaces": [], "next_cursor": null}`, and every state with `workspaces: []` in `access` and
+`workspaces: false` in `allowed_edits`. It authorizes each of those operations exactly as a
+workspace application does. The endpoint validates each answer on its own and cannot hold it to
+the capabilities; the conformance assertions below do.
+
 What remains the adapter's: match the verified actor to a local account through its binding and
 refuse (`not_authorized`, 403) unless it is active and may manage access. Show only what that actor
 may manage. Compare revisions under the same locks the changes take (`revision_conflict`, 409).
@@ -1117,8 +1158,12 @@ The provider holds no authority of its own; whatever the adapter does not enforc
    A provider acts on the status when it does not know the outcome, so the newer outcomes reuse
    statuses it already handles. Never refuse with a 5xx: for a write the provider must then assume
    the change may have happened.
+7. **An account-only application takes no memberships.** An update naming one is refused, and the
+   application administrator flag is the whole of what an ordinary update changes. Its own rules,
+   such as refusing self-demotion or demoting the last administrator, are reported as
+   `allowed_edits.application_admin: false` for that target and still enforced.
 
-`BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks rules 1 to 6 against an application's real
+`BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks rules 1 to 7 against an application's real
 adapter and tables. Implement `delegatedAccessTruth($subject)` by reading the tables directly and
 `delegatedAccessManager()`, seed a target with an editable membership, a protected one and one
 outside the manager's view, then call:
@@ -1133,3 +1178,18 @@ $this->assertDelegatedUpdateKeepsUnseenMemberships($manager, $target);
 ```
 
 Each refused attempt must leave `delegatedAccessTruth()` exactly as it was.
+
+For an account-only application, `delegatedAccessTruth()` returns `workspaces: []` and the same
+calls apply. Omit the workspace argument to `assertDelegatedActorRefusedEverywhere()`. The
+membership checks return without checking anything (they never skip, which would end the test
+method), `assertDelegatedUnadvertisedRoleRefused()` checks that any membership is refused, and every
+answer is checked with `fitsCapabilities()`. Exercise the administrator flag with a target the actor
+may not change: the actor themselves where self-demotion is refused, or the last administrator.
+
+```php
+$this->assertDelegatedActorRefusedEverywhere($ordinaryAccount, $target);
+$this->assertDelegatedApplicationAdminFollowsAllowedEdits($administrator, $administrator);
+$this->assertDelegatedStaleRevisionRefused($administrator, $target);
+$this->assertDelegatedUnadvertisedRoleRefused($administrator, $target);
+$this->assertDelegatedUpdateKeepsUnseenMemberships($administrator, $target);
+```

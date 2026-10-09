@@ -4,6 +4,24 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Delegated access: account-only applications
+
+- A version 2 `capabilities` response may advertise `workspace_roles: []`. The application is then
+  account-only: accounts, the application administrator flag and provisioning, no workspaces. Every
+  access value it sends or accepts carries `workspaces: []`. Workspace applications, their
+  capabilities and their adapters are unchanged; a provider on an earlier release refuses the empty
+  list as `invalid_response`. The README explains why the empty list, not a new flag, is the signal.
+- `DelegatedContract::accountOnly()` says whether a capabilities response describes one, and
+  `fitsCapabilities()` checks that an answer reports no memberships, offers no workspace edits and
+  lists no workspaces for it.
+- `DelegatedContract::rolesAreAdvertised()` now accepts an access value without memberships when no
+  roles are advertised, and still refuses one whose capabilities carry no `workspace_roles` list.
+- `AssertsDelegatedAccessAdapter` runs against an account-only adapter: the membership checks
+  return rather than skip, any membership must be refused, and every answer must fit the
+  capabilities. `assertDelegatedActorRefusedEverywhere()`'s workspace argument is optional for it.
+
 ## v0.19.0 - 2026-10-08
 
 ### Delegated access: issuer binding, request context, a write switch and normative update semantics

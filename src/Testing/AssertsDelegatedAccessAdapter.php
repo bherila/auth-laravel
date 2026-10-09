@@ -21,6 +21,10 @@ use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
  * Seed the scenario each assertion names, then implement {@see delegatedAccessTruth()} by reading
  * the application's tables directly. Every refused attempt must leave that record exactly as it was.
  *
+ * An account-only application (one advertising no workspace roles) runs the same assertions. The
+ * parts that need memberships return instead of checking them, never skip, and each answer is also
+ * checked to report no workspaces, since the endpoint cannot see that rule.
+ *
  * @mixin \PHPUnit\Framework\TestCase
  */
 trait AssertsDelegatedAccessAdapter
@@ -29,6 +33,8 @@ trait AssertsDelegatedAccessAdapter
      * The application's own record of a subject's access, read without going through the adapter.
      *
      * Include every membership, not only those any particular actor manages.
+     *
+     * An account-only application has no workspaces, so its `workspaces` is always empty.
      *
      * @return array{application_admin: bool, workspaces: array<string, string>} workspace id => role id
      */
@@ -39,17 +45,26 @@ trait AssertsDelegatedAccessAdapter
 
     /**
      * An actor who may not manage access is refused every operation, including the read-only ones.
+     *
+     * The update names `$workspace` with an advertised role. An account-only application has neither,
+     * so there the update carries no memberships and `$workspace` may be omitted.
      */
-    protected function assertDelegatedActorRefusedEverywhere(string $actor, string $target, string $workspace): void
+    protected function assertDelegatedActorRefusedEverywhere(string $actor, string $target, ?string $workspace = null): void
     {
         $before = $this->delegatedAccessRecord($target);
+        if ($this->delegatedAccessAccountOnly()) {
+            $memberships = [];
+        } else {
+            $this->assertNotNull($workspace, 'Name a workspace for the update');
+            $memberships = [['id' => $workspace, 'role' => $this->delegatedAccessRoles()[0]]];
+        }
         $payloads = [
             ['operation' => 'capabilities'],
             ['operation' => 'subjects', 'limit' => 50],
             ['operation' => 'workspaces', 'limit' => 50],
             ['operation' => 'read', 'subject' => $target],
             ['operation' => 'update', 'subject' => $target, 'expected_revision' => 'any-revision',
-                'access' => ['application_admin' => false, 'workspaces' => [['id' => $workspace, 'role' => $this->delegatedAccessRoles()[0]]]]],
+                'access' => ['application_admin' => false, 'workspaces' => $memberships]],
         ];
 
         foreach ($payloads as $payload) {
@@ -61,17 +76,26 @@ trait AssertsDelegatedAccessAdapter
     /**
      * An update replaces only what the actor was shown. Memberships outside the actor's view survive
      * a resubmitted read, and survive removing everything the actor may remove.
+     *
+     * For an account-only application only the first part applies: resubmitting a read changes nothing.
      */
     protected function assertDelegatedUpdateKeepsUnseenMemberships(string $actor, string $target): void
     {
+        $accountOnly = $this->delegatedAccessAccountOnly();
         $state = $this->delegatedAccessRead($actor, $target);
         $before = $this->delegatedAccessRecord($target);
         $shown = array_column($state['access']['workspaces'], 'id');
         $unseen = array_diff_key($before['workspaces'], array_flip($shown));
-        $this->assertNotSame([], $unseen, 'Seed the target with a membership in a workspace the actor does not manage');
+        if (! $accountOnly) {
+            $this->assertNotSame([], $unseen, 'Seed the target with a membership in a workspace the actor does not manage');
+        }
 
         $resubmitted = $this->delegatedAccessUpdate($actor, $target, $state['revision'], $state['access']['workspaces'], $state['access']['application_admin']);
         $this->assertSame($before, $this->delegatedAccessRecord($target), 'Resubmitting what was read changes nothing');
+        if ($accountOnly) {
+            // No memberships, seen or unseen, to keep or remove.
+            return;
+        }
 
         $protected = array_values(array_filter($resubmitted['access']['workspaces'], static fn (array $m): bool => ! $m['editable']));
         try {
@@ -99,6 +123,11 @@ trait AssertsDelegatedAccessAdapter
      */
     protected function assertDelegatedProtectedMembershipsHold(string $actor, string $target): void
     {
+        if ($this->delegatedAccessAccountOnly()) {
+            // No memberships to protect. Returning, not skipping, keeps the assertions after this one.
+            return;
+        }
+
         $state = $this->delegatedAccessRead($actor, $target);
         $before = $this->delegatedAccessRecord($target);
         $memberships = $state['access']['workspaces'];
@@ -122,8 +151,9 @@ trait AssertsDelegatedAccessAdapter
      * Application administration changes only where both the capabilities and this read allow it.
      *
      * Where this actor may change it for this target there is nothing to refuse, and the assertion
-     * returns without checking. Seed an actor who may not to exercise it. It never skips: a skip
-     * would end the whole test method and silently drop the assertions after it.
+     * returns without checking. Seed an actor who may not to exercise it: one without the control at
+     * all, an actor reading themselves where self-demotion is refused, or the last administrator. It
+     * never skips: a skip would end the whole test method and silently drop the assertions after it.
      */
     protected function assertDelegatedApplicationAdminFollowsAllowedEdits(string $actor, string $target): void
     {
@@ -155,11 +185,21 @@ trait AssertsDelegatedAccessAdapter
 
     /**
      * A role the application did not advertise is refused, even in a membership the actor may edit.
+     *
+     * An account-only application advertises none, so there any membership at all is refused.
      */
     protected function assertDelegatedUnadvertisedRoleRefused(string $actor, string $target): void
     {
         $state = $this->delegatedAccessRead($actor, $target);
         $before = $this->delegatedAccessRecord($target);
+        if ($this->delegatedAccessAccountOnly()) {
+            $membership = ['id' => 'workspace-'.bin2hex(random_bytes(4)), 'role' => 'unadvertised-'.bin2hex(random_bytes(4))];
+            $this->assertDelegatedRefusal([DelegatedRefusal::ROLE_NOT_GRANTABLE, DelegatedRefusal::INVALID_REQUEST, DelegatedRefusal::NOT_AUTHORIZED], $actor, $this->delegatedUpdatePayload($target, $state['revision'], [$membership], $state['access']['application_admin']), 'a workspace membership in an account-only application');
+            $this->assertSame($before, $this->delegatedAccessRecord($target), 'Refusals change nothing');
+
+            return;
+        }
+
         $memberships = $state['access']['workspaces'];
         $editable = array_values(array_filter($memberships, static fn (array $m): bool => $m['editable']));
         $this->assertNotSame([], $editable, 'Seed the target with a membership the actor may change');
@@ -200,10 +240,18 @@ trait AssertsDelegatedAccessAdapter
         }
 
         try {
-            return $contract->adapterAnswer($fields, $application, (string) $payload['operation'], $payload['subject'] ?? null);
+            $answer = $contract->adapterAnswer($fields, $application, (string) $payload['operation'], $payload['subject'] ?? null);
         } catch (DelegatedAccessException) {
             $this->fail("The adapter's answer to {$payload['operation']} is outside the contract; the endpoint would send internal_error instead");
         }
+
+        // The endpoint validates one answer at a time and cannot see this; a provider holding the
+        // capabilities refuses an account-only application's answer that reports workspaces.
+        if (in_array($payload['operation'], ['workspaces', 'read', 'update'], true)) {
+            $this->assertTrue($contract->fitsCapabilities($this->delegatedAccessCapabilities(), $answer), "The adapter's answer to {$payload['operation']} reports workspaces, but the application advertises no workspace roles");
+        }
+
+        return $answer;
     }
 
     /**
@@ -244,6 +292,12 @@ trait AssertsDelegatedAccessAdapter
     protected function delegatedAccessCapabilities(): array
     {
         return $this->delegatedAccessCall($this->delegatedAccessManager(), ['operation' => 'capabilities']);
+    }
+
+    /** Whether the application advertises no workspace roles, so it has accounts and no workspaces. */
+    protected function delegatedAccessAccountOnly(): bool
+    {
+        return (new DelegatedContract)->accountOnly($this->delegatedAccessCapabilities());
     }
 
     /**

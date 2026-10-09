@@ -10,6 +10,12 @@ namespace BWH\Auth\OAuth\DelegatedAccess;
  * not, and accept provisioning of a subject it has not seen (bherila/auth-laravel#42). Version 1
  * is the default for every method, so an existing caller validates exactly what it did before.
  *
+ * A version 2 application that advertises no workspace roles is account-only: it has accounts, an
+ * application administrator flag and provisioning, and no workspaces. Every access value it sends
+ * or accepts carries `workspaces: []`. The shape validators see one message at a time, so that rule
+ * is checked against the capabilities response with {@see rolesAreAdvertised()} for access a
+ * provider sends and {@see fitsCapabilities()} for what an application answers.
+ *
  * This checks shapes and bounds only. Which roles an actor may grant, whether a subject may be
  * provisioned and every tenant rule remain the application's decisions.
  */
@@ -153,19 +159,34 @@ final class DelegatedContract
     }
 
     /**
+     * Whether a version 2 `capabilities` response describes an account-only application: one that
+     * advertises no workspace roles, so no membership can name a role and every access value it
+     * sends or accepts has `workspaces: []`.
+     *
+     * False for anything that is not a `controls.workspace_roles` list, so a capabilities value that
+     * was never validated is not mistaken for one.
+     */
+    public function accountOnly(array $capabilities): bool
+    {
+        return ($capabilities['controls']['workspace_roles'] ?? null) === [];
+    }
+
+    /**
      * Whether every membership in a version 2 access value names a role the application advertised.
      *
      * The shape validators cannot know the advertised roles, so a provider checks an access value
-     * it is about to send, or has received, against the capabilities response it holds.
+     * it is about to send, or has received, against the capabilities response it holds. An
+     * account-only application advertises none, so only an access value without memberships passes.
+     * A capabilities value without a `workspace_roles` list passes nothing.
      */
     public function rolesAreAdvertised(array $capabilities, array $access): bool
     {
-        $ids = $this->advertisedRoleIds($capabilities);
         $workspaces = $access['workspaces'] ?? null;
-        if ($ids === [] || ! is_array($workspaces)) {
+        if (! is_array($capabilities['controls']['workspace_roles'] ?? null) || ! is_array($workspaces)) {
             return false;
         }
 
+        $ids = $this->advertisedRoleIds($capabilities);
         foreach ($workspaces as $workspace) {
             if (! is_array($workspace) || ! in_array($workspace['role'] ?? null, $ids, true)) {
                 return false;
@@ -173,6 +194,31 @@ final class DelegatedContract
         }
 
         return true;
+    }
+
+    /**
+     * Whether a validated version 2 answer is consistent with the application's capabilities.
+     *
+     * For a workspace application this is always true: its answers are checked by shape alone, and a
+     * read may report a role the application has since retired. For an account-only application a
+     * `workspaces` page is empty, and a `read` or `update` state reports no memberships and does not
+     * offer workspace edits. Any other answer is accepted as it is.
+     *
+     * @param  array<string, mixed>  $capabilities  a validated version 2 capabilities response
+     * @param  array<string, mixed>  $response  a validated version 2 response from the same application
+     */
+    public function fitsCapabilities(array $capabilities, array $response): bool
+    {
+        if (! $this->accountOnly($capabilities)) {
+            return true;
+        }
+
+        return match ($response['operation'] ?? null) {
+            'workspaces' => ($response['workspaces'] ?? null) === [] && ($response['next_cursor'] ?? null) === null,
+            'read', 'update' => ($response['allowed_edits']['workspaces'] ?? null) === false
+                && (($response['access'] ?? null) === null || ($response['access']['workspaces'] ?? null) === []),
+            default => true,
+        };
     }
 
     private function assertSupported(int $version): void
@@ -276,8 +322,9 @@ final class DelegatedContract
             return false;
         }
 
+        // No roles at all is an account-only application ({@see accountOnly()}), not a missing list.
         $roles = $controls['workspace_roles'];
-        if (! is_array($roles) || ! array_is_list($roles) || $roles === [] || count($roles) > self::MAX_WORKSPACE_ROLES) {
+        if (! is_array($roles) || ! array_is_list($roles) || count($roles) > self::MAX_WORKSPACE_ROLES) {
             return false;
         }
 
