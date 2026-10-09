@@ -83,7 +83,8 @@ class DelegatedContractV2Test extends TestCase
 
         $roles = $this->capabilities()['controls']['workspace_roles'];
         foreach ([
-            'no roles' => ['workspace_roles' => []],
+            'roles that are not a list' => ['workspace_roles' => ['owner' => ['id' => 'owner', 'label' => 'Owner']]],
+            'no roles list' => ['workspace_roles' => null],
             'seventeen roles' => ['workspace_roles' => array_map(static fn (int $i): array => ['id' => 'r'.$i, 'label' => 'Role '.$i], range(1, 17))],
             'a duplicated role' => ['workspace_roles' => [$roles[0], $roles[0]]],
             'a role label longer than 255 bytes' => ['workspace_roles' => [['id' => 'owner', 'label' => str_repeat('l', 256)]]],
@@ -144,6 +145,55 @@ class DelegatedContractV2Test extends TestCase
         $this->assertFalse($contract->rolesAreAdvertised(['controls' => []], ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'auditor']]]));
     }
 
+    public function test_capabilities_without_roles_describe_an_account_only_application(): void
+    {
+        $contract = new DelegatedContract;
+        $accountOnly = $this->accountOnlyCapabilities();
+
+        $this->assertSame($accountOnly, $contract->response($accountOnly, self::APP, 'capabilities', null, 2));
+        $this->assertTrue($contract->accountOnly($accountOnly));
+        $this->assertSame([], $contract->advertisedRoleIds($accountOnly));
+        $this->assertFalse($contract->accountOnly($this->capabilities()));
+        $this->assertFalse($contract->accountOnly(['controls' => []]), 'a missing roles list is not an empty one');
+
+        // Version 1 has no roles to leave empty; its shape is unchanged.
+        $this->refused(fn () => $contract->response([...$accountOnly, 'contract_version' => 1], self::APP, 'capabilities', null, 1), 503);
+    }
+
+    public function test_an_account_only_application_takes_and_reports_no_memberships(): void
+    {
+        $contract = new DelegatedContract;
+        $accountOnly = $this->accountOnlyCapabilities();
+        $none = ['application_admin' => true, 'workspaces' => []];
+
+        // Requests: an update and a provisioning update carry no memberships.
+        $this->assertSame($none, $contract->request(self::APP, $this->update(['access' => $none]), 2)['access']);
+        $this->assertSame($none, $contract->request(self::APP, $this->update(['expected_revision' => null, 'access' => $none]), 2)['access']);
+        $this->assertTrue($contract->rolesAreAdvertised($accountOnly, $none));
+        $this->assertFalse($contract->rolesAreAdvertised($accountOnly, $this->update()['access']), 'any membership names a role it does not advertise');
+        $this->assertFalse($contract->rolesAreAdvertised(['controls' => []], $none), 'capabilities without a roles list pass nothing');
+        $this->assertTrue($contract->rolesAreAdvertised($this->capabilities(), $none), 'unchanged for a workspace application');
+
+        // Answers: no memberships and no workspace edits in a state, no workspaces in a page.
+        $state = [...$this->state(), 'access' => $none, 'allowed_edits' => ['application_admin' => true, 'workspaces' => false, 'provision' => false]];
+        $unprovisioned = [...$state, 'provisioned' => false, 'revision' => null, 'access' => null,
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true]];
+        $page = ['contract_version' => 2, 'application' => self::APP, 'operation' => 'workspaces', 'workspaces' => [], 'next_cursor' => null];
+        foreach ([$state, [...$state, 'operation' => 'update'], $unprovisioned, $page, $accountOnly] as $answer) {
+            $this->assertTrue($contract->fitsCapabilities($accountOnly, $answer), (string) $answer['operation']);
+        }
+
+        foreach ([
+            'a reported membership' => [...$state, 'access' => [...$none, 'workspaces' => [['id' => 'w1', 'role' => 'owner', 'editable' => false]]]],
+            'an offer of workspace edits' => [...$state, 'allowed_edits' => [...$state['allowed_edits'], 'workspaces' => true]],
+            'a listed workspace' => [...$page, 'workspaces' => [['id' => 'w1', 'label' => 'Example Workspace']]],
+            'another page of workspaces' => [...$page, 'next_cursor' => 'more'],
+        ] as $label => $answer) {
+            $this->assertFalse($contract->fitsCapabilities($accountOnly, $answer), $label);
+            $this->assertTrue($contract->fitsCapabilities($this->capabilities(), $answer), $label.' is only shape-checked for a workspace application');
+        }
+    }
+
     public function test_pages_are_the_same_in_both_versions(): void
     {
         $contract = new DelegatedContract;
@@ -188,6 +238,18 @@ class DelegatedContractV2Test extends TestCase
                 'provisioning' => true,
             ],
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function accountOnlyCapabilities(): array
+    {
+        $capabilities = $this->capabilities();
+        $capabilities['controls']['workspace_roles'] = [];
+        $capabilities['controls']['application_admin'] = true;
+
+        return $capabilities;
     }
 
     /**

@@ -195,10 +195,17 @@ class DelegatedAccessEndpointTest extends TestCase
     public function test_an_answer_outside_the_contract_is_reported_and_never_sent(): void
     {
         Exceptions::fake();
-        $this->answer = static fn (): array => ['controls' => ['application_admin' => false, 'workspace_roles' => [], 'provisioning' => true]];
+        $this->answer = static fn (): array => ['controls' => ['application_admin' => false, 'workspace_roles' => [], 'provisioning' => 'yes']];
 
         $this->send(['operation' => 'capabilities'])->assertStatus(500)->assertExactJson(['error' => 'internal_error']);
         Exceptions::assertReported(DelegatedAccessException::class);
+    }
+
+    public function test_an_account_only_application_advertises_no_workspace_roles(): void
+    {
+        $this->answer = static fn (): array => ['controls' => ['application_admin' => true, 'workspace_roles' => [], 'provisioning' => true]];
+
+        $this->send(['operation' => 'capabilities'])->assertOk()->assertJsonPath('controls.workspace_roles', []);
     }
 
     public function test_a_read_answer_must_echo_the_requested_subject(): void
