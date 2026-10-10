@@ -75,8 +75,32 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
+        $attributes += $this->providerIdentityStamp($model, $authCodeEntity->getUserIdentifier());
 
         $model->forceFill($attributes)->save();
+    }
+
+    /**
+     * The authorizing session's provider generation, stored on the code so the token
+     * minted from it inherits it rather than a freshly fetched one.
+     *
+     * @return array<string, string|int>
+     */
+    final protected function providerIdentityStamp(\Illuminate\Database\Eloquent\Model $model, string|int|null $userId): array
+    {
+        $stamp = app(ProviderIdentityTokens::class)->stampForIssue($this->request(), $userId);
+        if ($stamp === null) {
+            return [];
+        }
+        if (! $this->hasColumn($model->getTable(), ProviderIdentityTokens::GENERATION_COLUMN)) {
+            if (ProviderIdentityTokens::enabled()) {
+                throw new RuntimeException("The {$model->getTable()} provider identity columns are required.");
+            }
+
+            return [];
+        }
+
+        return ProviderIdentityTokens::attributes($stamp);
     }
 
     final public function isAuthCodeRevoked(string $codeId): bool
@@ -102,7 +126,7 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
 
         if (! $bound) {
             // A token request may not add a resource audience to an unbound code.
-            return $hasRequestedResource || $this->isApplicationAuthCodeRevoked($codeId);
+            return $hasRequestedResource || $this->providerIdentityRevoked($model) || $this->isApplicationAuthCodeRevoked($codeId);
         }
 
         if ($storedResource === null
@@ -114,7 +138,19 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
 
         $request?->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $storedResource);
 
-        return $this->isApplicationAuthCodeRevoked($codeId);
+        return $this->providerIdentityRevoked($model) || $this->isApplicationAuthCodeRevoked($codeId);
+    }
+
+    /** Refuses a code whose person was ended at the provider, and hands its stamp to the token. */
+    private function providerIdentityRevoked(\Illuminate\Database\Eloquent\Model $code): bool
+    {
+        $tokens = app(ProviderIdentityTokens::class);
+        if ($tokens->revoked($code, remote: false)) {
+            return true;
+        }
+        $tokens->carry($this->request(), $code);
+
+        return false;
     }
 
     /** Application-owned account, grant, or credential-version revocation policy. */

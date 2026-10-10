@@ -146,6 +146,20 @@ class AuthServiceProvider extends ServiceProvider
             }
         }
 
+        // Follows the profile, not the issuance switch: turning issuance off must not reopen
+        // the cookie path for credentials that already exist.
+        if (\BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
+            $kernel = $this->app->make(\Illuminate\Contracts\Http\Kernel::class);
+            if (method_exists($kernel, 'prependMiddleware')) {
+                $kernel->prependMiddleware(\BWH\Auth\Http\Middleware\IgnoreTransientTokenCookies::class);
+            }
+            $this->app->booted(function (): void {
+                Route::getRoutes()->getByName('passport.token.refresh')?->middleware(
+                    \BWH\Auth\Http\Middleware\RefuseTransientTokens::class,
+                );
+            });
+        }
+
         if ($this->oauthServerEnabled()
             && config('bherila-auth.oauth_server.authorization_response_issuer.enabled', false)) {
             $this->app->booted(function (): void {
