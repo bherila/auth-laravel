@@ -63,7 +63,11 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
-        $attributes += $this->providerIdentityStamp($model, $accessTokenId);
+        $stamp = $this->providerIdentityStamp($model, $accessTokenId);
+        // Checked again here: an account disabled (and its credentials revoked) between the new
+        // access token and this row must not end up holding a fresh, unrevoked refresh token.
+        app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->assertMayHold($stamp[ProviderIdentityTokens::OWNER_COLUMN] ?? null);
+        $attributes += $stamp;
 
         $model->forceFill($attributes)->save();
 
