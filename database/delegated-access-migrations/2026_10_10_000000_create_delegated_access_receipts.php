@@ -21,6 +21,8 @@ return new class extends Migration
             // Null while the adapter is deciding; then the status and exact body that were sent.
             $table->unsignedSmallInteger('status')->nullable();
             $table->mediumText('response')->nullable();
+            // When the current claim was taken; an unfinished claim older than the lease may be retaken.
+            $table->unsignedBigInteger('claimed_at');
             $table->unsignedBigInteger('created_at')->index();
 
             // One request per operation reaches the adapter: this key is what decides which.

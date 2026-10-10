@@ -1119,12 +1119,17 @@ manages it, and nothing else:
   body, byte for byte, without calling the adapter. The same `operation_id` on a different request,
   or from another actor, is refused as `invalid_request` (422). One that is still being decided is
   answered `operation_in_progress` (503): its outcome is not known yet.
+- A claim whose answer never arrives (the request died mid-write) blocks repeats for ten minutes
+  (`DatabaseReceiptStore::PENDING_LEASE_SECONDS`), and `receipt` reports it `unknown`. After that a
+  repeat of the same request (same actor and payload) claims it again and runs the adapter, whose
+  revision check decides afresh whether the first attempt changed anything. A request that
+  outlived its lease can no longer store or release over the claim that replaced it.
 - A success and every refusal the adapter makes (4xx) are stored. A 5xx from the adapter, an
   exception, or an answer outside the contract stores nothing, since nothing vouches for what
   happened; a later attempt is decided afresh, against the revision.
 - `receipt` answers `{operation_id, status: "known", response_status, response}`, where `response`
   is the stored body (a state on 200, `{error}` on a refusal), or `{operation_id, status: "unknown"}`
-  for one never stored, still pending, pruned, or another actor's. It never reaches the adapter and
+  for one never stored, still pending or abandoned, pruned, or another actor's. It never reaches the adapter and
   is answered whether or not writes are enabled.
 - Receipts are kept for 30 days.
 

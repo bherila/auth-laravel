@@ -518,6 +518,57 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->assertCount(1, $this->calls);
     }
 
+    public function test_an_unfinished_claim_blocks_repeats_for_the_lease_and_then_a_repeat_may_claim_it_again(): void
+    {
+        $this->freezeSecond();
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+        $payload = array_diff_key($update, ['operation_id' => true]);
+        $store = $this->app->make(DatabaseReceiptStore::class);
+        // A request that claimed the operation and died before its answer was stored.
+        $this->assertNull($store->claim(self::APPLICATION, $update['operation_id'], DatabaseReceiptStore::actor('actor-subject'), DatabaseReceiptStore::requestHash('actor-subject', $payload)));
+
+        $this->travel(DatabaseReceiptStore::PENDING_LEASE_SECONDS - 1)->seconds();
+        $this->send($update)->assertStatus(503)->assertExactJson(['error' => 'operation_in_progress']);
+        $this->send(['operation' => 'receipt', 'operation_id' => $update['operation_id']])->assertOk()->assertJsonPath('status', 'unknown');
+        $this->assertSame([], $this->calls);
+
+        $this->travel(1)->seconds();
+        $this->send(['operation' => 'receipt', 'operation_id' => $update['operation_id']])->assertOk()->assertJsonPath('status', 'unknown');
+        $this->send([...$update, 'expected_revision' => 'r2'])->assertStatus(422)->assertExactJson(['error' => 'invalid_request']);
+        $this->send($update, 'another-actor')->assertStatus(422);
+        $this->assertSame([], $this->calls, 'Only a repeat of the same request may take an abandoned claim over');
+
+        $first = $this->send($update)->assertOk();
+        $this->assertCount(1, $this->calls, 'The repeat ran the adapter, whose revision check decides afresh');
+        $this->assertSame($first->getContent(), $this->send($update)->getContent());
+        $this->assertSame('known', $this->send(['operation' => 'receipt', 'operation_id' => $update['operation_id']])->json('status'));
+        $this->assertCount(1, $this->calls);
+    }
+
+    public function test_a_request_that_outlived_its_lease_cannot_store_over_the_claim_that_replaced_it(): void
+    {
+        $this->freezeSecond();
+        $store = $this->app->make(DatabaseReceiptStore::class);
+        $operationId = DelegatedContract::operationId();
+        $actor = DatabaseReceiptStore::actor('actor-subject');
+        $first = DatabaseReceiptStore::now();
+        $this->assertNull($store->claim(self::APPLICATION, $operationId, $actor, str_repeat('h', 64), $first));
+
+        $this->travel(DatabaseReceiptStore::PENDING_LEASE_SECONDS)->seconds();
+        $second = DatabaseReceiptStore::now();
+        $this->assertNull($store->claim(self::APPLICATION, $operationId, $actor, str_repeat('h', 64), $second), 'Taken over once the lease is up');
+        $this->assertInstanceOf(DelegatedReceipt::class, $store->claim(self::APPLICATION, $operationId, $actor, str_repeat('h', 64), $second), 'and by one repeat only');
+
+        $store->complete(self::APPLICATION, $operationId, $first, 200, '{"late":true}');
+        $store->release(self::APPLICATION, $operationId, $first);
+        $held = $store->find(self::APPLICATION, $operationId);
+        $this->assertTrue($held?->pending() && $held->claimedAt === $second, 'The late request changed nothing');
+
+        $store->complete(self::APPLICATION, $operationId, $second, 409, '{"error":"revision_conflict"}');
+        $this->assertSame([409, '{"error":"revision_conflict"}'], [$store->find(self::APPLICATION, $operationId)?->status, $store->find(self::APPLICATION, $operationId)?->response]);
+    }
+
     public function test_an_outcome_nothing_vouches_for_is_not_stored_and_can_be_decided_again(): void
     {
         Exceptions::fake();
@@ -565,7 +616,7 @@ class DelegatedAccessEndpointTest extends TestCase
         $table = DB::table(DatabaseReceiptStore::TABLE);
         foreach (['old' => 31, 'recent' => 29] as $id => $days) {
             $table->insert(['application' => self::APPLICATION, 'operation_id' => str_pad($id, 32, 'x'), 'actor' => str_repeat('a', 64),
-                'request_hash' => str_repeat('h', 64), 'status' => 200, 'response' => '{}', 'created_at' => time() - $days * 86400]);
+                'request_hash' => str_repeat('h', 64), 'status' => 200, 'response' => '{}', 'claimed_at' => time() - $days * 86400, 'created_at' => time() - $days * 86400]);
         }
 
         $this->artisan('bherila-auth:prune-delegated-nonces')->expectsOutputToContain('Pruned 1 delegated access receipt(s) older than 30 days')->assertSuccessful();

@@ -17,11 +17,22 @@ final readonly class DelegatedReceipt
         public ?int $status,
         /** The exact body that was sent, or null while the write is still being decided. */
         public ?string $response,
+        /** When the current claim was taken, in Unix seconds. */
+        public int $claimedAt = 0,
     ) {}
 
     /** Whether the write was claimed and its answer is not stored yet: running, or interrupted. */
     public function pending(): bool
     {
         return $this->status === null || $this->response === null;
+    }
+
+    /**
+     * Whether a pending claim has outlived {@see DatabaseReceiptStore::PENDING_LEASE_SECONDS}: its
+     * request most likely died mid-write, and a repeat of it may claim the operation again.
+     */
+    public function abandoned(int $now): bool
+    {
+        return $this->pending() && $this->claimedAt <= $now - DatabaseReceiptStore::PENDING_LEASE_SECONDS;
     }
 }

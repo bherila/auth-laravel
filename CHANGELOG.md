@@ -33,7 +33,10 @@ can no longer reach an upgraded application.
   characters of `[A-Za-z0-9_-]`, never the assertion `jti`). The endpoint claims each write in the
   new `bherila_auth_delegated_receipts` table before the adapter runs, answers a repeat from the
   stored receipt without calling the adapter, refuses the same id on a different request with
-  `invalid_request`, and answers a write still being decided with `operation_in_progress` (503). The
+  `invalid_request`, and answers a write still being decided with `operation_in_progress` (503). A
+  claim left unfinished (a request that died mid-write) stops blocking after ten minutes
+  (`DatabaseReceiptStore::PENDING_LEASE_SECONDS`): a repeat of the same request then claims it again
+  and the adapter's revision check decides afresh. The
   new `receipt` operation returns the stored outcome or `unknown`. **Publish and run the
   `bherila-auth-delegated-access-migrations` again before upgrading**: writes are refused with
   `receipt_storage_unavailable` until the table exists. `DELEGATED_ACCESS_RECEIPT_CONNECTION`

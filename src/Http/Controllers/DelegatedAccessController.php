@@ -123,11 +123,12 @@ final class DelegatedAccessController extends Controller
             if ($operationId !== null) {
                 $receipts = $container->make(DatabaseReceiptStore::class);
                 $hash = DatabaseReceiptStore::requestHash($verified->subject, $payload);
-                $held = $receipts->claim($application, $operationId, DatabaseReceiptStore::actor($verified->subject), $hash);
+                $at = DatabaseReceiptStore::now();
+                $held = $receipts->claim($application, $operationId, DatabaseReceiptStore::actor($verified->subject), $hash, $at);
                 if ($held !== null) {
                     return self::replay($held, $hash);
                 }
-                $claimed = [$receipts, $operationId];
+                $claimed = [$receipts, $operationId, $at];
             }
 
             $context = $verified->withOperation($operation, $operationId);
@@ -170,7 +171,9 @@ final class DelegatedAccessController extends Controller
      *
      * The same operation id on a different request (another payload, or another actor) is refused,
      * and so is one still being decided: its outcome is not known yet, which is what a 503 tells a
-     * provider. A claim interrupted before its answer was stored stays that way until it is pruned.
+     * provider. A claim interrupted before its answer was stored blocks repeats for
+     * {@see DatabaseReceiptStore::PENDING_LEASE_SECONDS}; then the store lets a repeat take it over,
+     * so it never arrives here.
      */
     private static function replay(DelegatedReceipt $held, string $hash): JsonResponse
     {
@@ -189,12 +192,12 @@ final class DelegatedAccessController extends Controller
      * stored, so it is sent either way; a failure to store leaves the claim pending, which a repeat
      * and a receipt report as not known, and is reported.
      *
-     * @param  array{DatabaseReceiptStore, string}  $claimed
+     * @param  array{DatabaseReceiptStore, string, int}  $claimed
      */
     private static function stored(array $claimed, string $application, int $status, string $json): JsonResponse
     {
         try {
-            $claimed[0]->complete($application, $claimed[1], $status, $json);
+            $claimed[0]->complete($application, $claimed[1], $claimed[2], $status, $json);
         } catch (Throwable $failure) {
             report($failure);
         }
@@ -203,7 +206,7 @@ final class DelegatedAccessController extends Controller
     }
 
     /**
-     * @param  array{DatabaseReceiptStore, string}|null  $claimed
+     * @param  array{DatabaseReceiptStore, string, int}|null  $claimed
      */
     private static function release(?array $claimed, string $application): void
     {
@@ -212,7 +215,7 @@ final class DelegatedAccessController extends Controller
         }
 
         try {
-            $claimed[0]->release($application, $claimed[1]);
+            $claimed[0]->release($application, $claimed[1], $claimed[2]);
         } catch (Throwable $failure) {
             // Left pending: a repeat and a receipt then say the outcome is not known, which is true.
             report($failure);

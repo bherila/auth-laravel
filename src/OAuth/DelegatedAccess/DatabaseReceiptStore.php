@@ -4,6 +4,7 @@ namespace BWH\Auth\OAuth\DelegatedAccess;
 
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Carbon;
 use JsonException;
 use Throwable;
 
@@ -16,6 +17,12 @@ use Throwable;
  * A repeat of the same request is answered from the row; anything else carrying the same
  * operation id is refused. Receipts are kept for {@see RETENTION_DAYS} days.
  *
+ * A claim whose answer never arrives (the request died mid-write) blocks repeats for
+ * {@see PENDING_LEASE_SECONDS}. After that a repeat of the same request may claim it again, and
+ * the adapter's revision check decides afresh whether the first attempt changed anything. Each
+ * claim is identified by when it was taken, so a request that outlived its lease cannot store or
+ * release over the claim that replaced it.
+ *
  * Every storage failure refuses the write before the adapter runs. Nothing here may be skipped to
  * let a write through.
  */
@@ -25,18 +32,25 @@ final readonly class DatabaseReceiptStore
 
     public const RETENTION_DAYS = 30;
 
+    /** How long an unfinished claim blocks repeats of its operation: ten minutes. */
+    public const PENDING_LEASE_SECONDS = 600;
+
     public function __construct(private ConnectionInterface $connection) {}
 
     /**
      * Claim an operation for this request, or return the receipt another request already holds.
      *
+     * An abandoned claim ({@see DelegatedReceipt::abandoned()}) for the same request is taken over.
+     *
+     * @param  int|null  $at  the claim's time, now by default; pass it to {@see complete()} and {@see release()}
      * @return DelegatedReceipt|null null when this request claimed the operation and may run it
      *
      * @throws DelegatedAccessException `receipt_storage_unavailable` (503), or `operation_in_progress`
      *                                  (503) when the operation was released while this was looking
      */
-    public function claim(string $application, string $operationId, string $actor, string $requestHash): ?DelegatedReceipt
+    public function claim(string $application, string $operationId, string $actor, string $requestHash, ?int $at = null): ?DelegatedReceipt
     {
+        $at ??= self::now();
         try {
             $this->connection->table(self::TABLE)->insert([
                 'application' => $application,
@@ -45,7 +59,8 @@ final readonly class DatabaseReceiptStore
                 'request_hash' => $requestHash,
                 'status' => null,
                 'response' => null,
-                'created_at' => time(),
+                'claimed_at' => $at,
+                'created_at' => $at,
             ]);
 
             return null;
@@ -55,18 +70,37 @@ final readonly class DatabaseReceiptStore
             throw new DelegatedAccessException('receipt_storage_unavailable');
         }
 
-        return $this->find($application, $operationId) ?? throw new DelegatedAccessException('operation_in_progress');
+        $held = $this->find($application, $operationId) ?? throw new DelegatedAccessException('operation_in_progress');
+        if (! $held->abandoned($at) || ! hash_equals($held->requestHash, $requestHash)) {
+            return $held;
+        }
+
+        // Take it over only if it is still the abandoned claim seen above: of several repeats racing
+        // for it, the conditional update lets exactly one through.
+        try {
+            $taken = $this->connection->table(self::TABLE)
+                ->where('application', $application)->where('operation_id', $operationId)
+                ->whereNull('status')->where('request_hash', $requestHash)->where('claimed_at', $held->claimedAt)
+                ->update(['claimed_at' => $at]);
+        } catch (Throwable) {
+            throw new DelegatedAccessException('receipt_storage_unavailable');
+        }
+
+        // Lost the race: another repeat holds it now, so it is in progress, as the pending receipt says.
+        return $taken === 1 ? null : $held;
     }
 
     /**
      * Store the answer that is being sent for a claimed operation.
      *
+     * Nothing is stored when the claim taken at `$claimedAt` has since been taken over.
+     *
      * @throws Throwable when it cannot be stored; the claim then stays pending
      */
-    public function complete(string $application, string $operationId, int $status, string $response): void
+    public function complete(string $application, string $operationId, int $claimedAt, int $status, string $response): void
     {
         $this->connection->table(self::TABLE)
-            ->where('application', $application)->where('operation_id', $operationId)->whereNull('status')
+            ->where('application', $application)->where('operation_id', $operationId)->whereNull('status')->where('claimed_at', $claimedAt)
             ->update(['status' => $status, 'response' => $response]);
     }
 
@@ -74,10 +108,10 @@ final readonly class DatabaseReceiptStore
      * Give up a claim whose outcome nothing can vouch for (the adapter failed, or answered outside the
      * contract), so a later attempt is decided afresh against the application's revision.
      */
-    public function release(string $application, string $operationId): void
+    public function release(string $application, string $operationId, int $claimedAt): void
     {
         $this->connection->table(self::TABLE)
-            ->where('application', $application)->where('operation_id', $operationId)->whereNull('status')
+            ->where('application', $application)->where('operation_id', $operationId)->whereNull('status')->where('claimed_at', $claimedAt)
             ->delete();
     }
 
@@ -101,13 +135,20 @@ final readonly class DatabaseReceiptStore
             (string) $row->request_hash,
             $row->status === null ? null : (int) $row->status,
             $row->response === null ? null : (string) $row->response,
+            (int) $row->claimed_at,
         );
     }
 
     /** Delete receipts older than {@see RETENTION_DAYS} days, stored or still pending. */
     public function pruneExpired(): int
     {
-        return $this->connection->table(self::TABLE)->where('created_at', '<', time() - self::RETENTION_DAYS * 86400)->delete();
+        return $this->connection->table(self::TABLE)->where('created_at', '<', self::now() - self::RETENTION_DAYS * 86400)->delete();
+    }
+
+    /** The store's clock, in Unix seconds; follows Carbon's test time. */
+    public static function now(): int
+    {
+        return Carbon::now()->getTimestamp();
     }
 
     /** Who sent a write, as stored: a digest of the verified actor subject. */
