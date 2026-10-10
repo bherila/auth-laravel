@@ -1063,8 +1063,13 @@ still holds. The endpoint serves version 3 only and refuses any other version as
 | `remove` | `subject`, `expected_revision`, `operation_id` | a state |
 | `receipt` | `operation_id` | `operation_id`, `status`, and when known `response_status`, `response` |
 
-A state is `subject`, `provisioned`, `revision`, `access`, `allowed_edits` exactly as in version 2,
-optionally with the metadata below.
+A state is `subject`, `provisioned`, `revision`, `access`, `allowed_edits` as in version 2,
+optionally with the metadata below. `allowed_edits` gains a required boolean `remove`: whether a
+`remove` by this actor would succeed now, a no-op included. It is false whenever the removal would
+be refused (a protected membership, an administrator flag the actor may not change, the
+last-administrator rule, no permission), and always false for an unprovisioned subject. The
+contract refuses a state offering `remove` while it reports a membership `editable: false` or an
+administrator flag the actor may not change; the other reasons only the application knows.
 
 **Search.** `subjects` and `workspaces` take an optional `query`: 2 to 100 characters of valid
 UTF-8 without control characters (an absent query, never `null`, means none). The application
@@ -1100,7 +1105,8 @@ manages it, and nothing else:
    last-administrator rule, it is refused (`protected_membership`, `not_authorized` or
    `invalid_request`) and changes nothing. Never a partial removal.
 3. The account and its history stay. The answer is the new state, with `provisioned: true`, no
-   administrator flag and no memberships in the projection; the endpoint refuses to send any other.
+   administrator flag, no memberships in the projection and `allowed_edits.remove: true` (removing
+   again is a no-op); the endpoint refuses to send any other.
 4. The revision is compared as for an update (`revision_conflict`, 409). Removing a subject with
    nothing to remove changes nothing and answers the same revision. An unprovisioned subject is
    refused as `not_provisioned` (404).
@@ -1235,7 +1241,8 @@ Helpers for adapters:
 An account-only adapter answers `capabilities` with `workspace_roles: []`, `workspaces` with
 `{"workspaces": [], "next_cursor": null}` (searched or not), and every state with `workspaces: []`
 in `access` and `workspaces: false` in `allowed_edits`. Its `remove` clears the administrator flag
-and keeps the account. It authorizes each of those operations exactly as a
+and keeps the account, and `allowed_edits.remove` is false for the actor themselves and the last
+administrator. It authorizes each of those operations exactly as a
 workspace application does. The endpoint validates each answer on its own and cannot hold it to
 the capabilities; the conformance assertions below do.
 

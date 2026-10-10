@@ -121,6 +121,7 @@ class AccountOnlyAdapterConformanceTest extends TestCase
             'a read reporting a membership' => ['report_workspaces', 'assertDelegatedStaleRevisionRefused', ['manager', 'target']],
             'revisions not compared' => ['ignore_revision', 'assertDelegatedStaleRevisionRefused', ['manager', 'target']],
             'a search showing hidden accounts' => ['search_service_accounts', 'assertDelegatedSearchStaysInScope', ['manager', 'subjects', 'target', 'service']],
+            'a removal offered that is refused' => ['offer_a_removal_it_refuses', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'manager']],
             'self-removal allowed' => ['allow_self_removal', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'manager']],
             'a removal deleting the account' => ['remove_the_account', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'other']],
             'revisions not compared on removal' => ['ignore_revision', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'other']],

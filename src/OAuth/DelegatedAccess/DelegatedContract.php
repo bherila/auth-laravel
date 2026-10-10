@@ -497,19 +497,26 @@ final class DelegatedContract
         return true;
     }
 
-    private function stateV2(array $response): bool
+    /**
+     * A version 2 state. Version 3 adds `allowed_edits.remove`: whether a `remove` by this actor
+     * would succeed now, including as a no-op. Nothing exists to remove from an unprovisioned subject.
+     */
+    private function stateV2(array $response, bool $removal = false): bool
     {
         $edits = $response['allowed_edits'] ?? null;
+        $keys = $removal ? ['application_admin', 'workspaces', 'provision', 'remove'] : ['application_admin', 'workspaces', 'provision'];
         if (! is_bool($response['provisioned'] ?? null)
-            || ! is_array($edits) || ! $this->hasExactKeys($edits, ['application_admin', 'workspaces', 'provision'])
+            || ! is_array($edits) || ! $this->hasExactKeys($edits, $keys)
             || ! is_bool($edits['application_admin']) || ! is_bool($edits['workspaces']) || ! is_bool($edits['provision'])
+            || ($removal && ! is_bool($edits['remove']))
             || ! array_key_exists('revision', $response) || ! array_key_exists('access', $response)) {
             return false;
         }
         if (! $response['provisioned']) {
             // Nothing exists to edit; the only thing that can be offered is creating it.
             return $response['revision'] === null && $response['access'] === null
-                && $edits['application_admin'] === false && $edits['workspaces'] === false;
+                && $edits['application_admin'] === false && $edits['workspaces'] === false
+                && (! $removal || $edits['remove'] === false);
         }
 
         return $edits['provision'] === false
@@ -525,7 +532,15 @@ final class DelegatedContract
      */
     private function stateV3(array $response): bool
     {
-        if (! $this->stateV2($response)) {
+        if (! $this->stateV2($response, true)) {
+            return false;
+        }
+        // A removal is refused whole when anything in the projection is protected, so a state reporting
+        // such a thing cannot offer one. Other refusals (permission, last administrator) are the
+        // application's to report as false.
+        if ($response['provisioned'] && $response['allowed_edits']['remove']
+            && (($response['access']['application_admin'] && ! $response['allowed_edits']['application_admin'])
+                || array_filter($response['access']['workspaces'], static fn (array $m): bool => $m['editable'] === false) !== [])) {
             return false;
         }
 
@@ -554,13 +569,15 @@ final class DelegatedContract
 
     /**
      * A removal leaves the account and nothing the actor manages: no administrator flag, no membership
-     * in the actor's projection. Memberships outside it are not reported, and survive.
+     * in the actor's projection, and a further removal offered as the no-op it would be. Memberships
+     * outside the projection are not reported, and survive.
      *
      * @param  array<string, mixed>  $response  a valid version 3 state
      */
     private function removed(array $response): bool
     {
-        return $response['provisioned'] === true
+        // Removing again would be a no-op, which succeeds.
+        return $response['provisioned'] === true && $response['allowed_edits']['remove'] === true
             && $response['access']['application_admin'] === false && $response['access']['workspaces'] === [];
     }
 

@@ -101,6 +101,16 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'target');
     }
 
+    /** A removal the actor has no permission for: an administrator flag managers may not change. */
+    public function test_a_removal_without_permission_is_refused_and_never_offered(): void
+    {
+        $this->adapter->admins['outsider'] = true;
+
+        $this->assertFalse($this->delegatedAccessRead('manager', 'outsider')['allowed_edits']['remove']);
+        $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'outsider');
+        $this->assertTrue($this->adapter->admins['outsider']);
+    }
+
     /** An adapter may apply its own rules before comparing revisions; the stale-revision check must not trip them. */
     public function test_the_stale_revision_check_passes_an_adapter_that_checks_its_rules_first(): void
     {
@@ -154,6 +164,8 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'a removal deleting the account' => ['remove_the_account', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'an empty removal changing the revision' => ['bump_revision_on_an_empty_removal', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'metadata from the future' => ['metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'removable']],
+            'a removal offered that is refused' => ['offer_a_removal_it_refuses', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'target']],
+            'a removal allowed but not offered' => ['hide_a_removal_it_allows', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
         ];
     }

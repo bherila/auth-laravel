@@ -27,6 +27,7 @@ use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
 use Lcobucci\JWT\Token\Builder;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * POST /application-access, driven the way the identity provider drives it: a real RS256 actor
@@ -637,7 +638,7 @@ class DelegatedAccessEndpointTest extends TestCase
     {
         return [
             'subject' => $subject, 'provisioned' => false, 'revision' => null, 'access' => null,
-            'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true],
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true, 'remove' => false],
         ];
     }
 
@@ -649,7 +650,7 @@ class DelegatedAccessEndpointTest extends TestCase
     {
         return [
             'subject' => $subject, 'provisioned' => true, 'revision' => 'r2', 'access' => $access,
-            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false],
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true],
         ];
     }
 
@@ -671,7 +672,7 @@ class DelegatedAccessEndpointTest extends TestCase
 
     /**
      * @param  array<string, mixed>  $input
-     * @return TestResponse<\Symfony\Component\HttpFoundation\Response>
+     * @return TestResponse<Response>
      */
     private function send(array $input, string $subject = 'actor-subject', ?string $token = null, ?string $body = null): TestResponse
     {

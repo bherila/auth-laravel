@@ -148,6 +148,33 @@ class DelegatedContractV3Test extends TestCase
         $this->refused(fn () => $contract->response([...$unprovisioned, 'provisioned_at' => '2026-10-10T12:00:00Z'], self::APP, 'read', 'subject-example', 3), 503, 'metadata for an account that does not exist');
     }
 
+    public function test_a_state_says_whether_a_removal_would_succeed(): void
+    {
+        $contract = new DelegatedContract;
+        $edits = ['application_admin' => true, 'workspaces' => true, 'provision' => false, 'remove' => true];
+        $removable = [...$this->state(), 'access' => ['application_admin' => true, 'workspaces' => [['id' => 'w2', 'role' => 'sender', 'editable' => true]]], 'allowed_edits' => $edits];
+
+        $this->assertSame($removable, $contract->response($removable, self::APP, 'read', 'subject-example', 3));
+        $this->assertSame(false, $contract->response($this->state(), self::APP, 'read', 'subject-example', 3)['allowed_edits']['remove']);
+        $closed = [...$removable, 'allowed_edits' => [...$edits, 'remove' => false]];
+        $this->assertSame($closed, $contract->response($closed, self::APP, 'read', 'subject-example', 3), 'refusing for its own reasons, such as permission');
+
+        $withoutFlag = $edits;
+        unset($withoutFlag['remove']);
+        foreach ([
+            'no remove flag' => ['allowed_edits' => $withoutFlag],
+            'a remove flag that is not a boolean' => ['allowed_edits' => [...$edits, 'remove' => 'yes']],
+            'removal offered over a protected membership' => ['access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'owner', 'editable' => false]]]],
+            'removal offered over an administrator flag the actor may not change' => ['allowed_edits' => [...$edits, 'application_admin' => false]],
+        ] as $label => $change) {
+            $this->refused(fn () => $contract->response([...$removable, ...$change], self::APP, 'read', 'subject-example', 3), 503, $label);
+        }
+
+        $unprovisioned = $this->unprovisioned();
+        $this->refused(fn () => $contract->response([...$unprovisioned, 'allowed_edits' => [...$unprovisioned['allowed_edits'], 'remove' => true]], self::APP, 'read', 'subject-example', 3), 503, 'removal offered for an account that does not exist');
+        $this->refused(fn () => $contract->response([...$removable, 'contract_version' => 2], self::APP, 'read', 'subject-example', 2), 503, 'the flag is new in version 3');
+    }
+
     public function test_a_role_may_carry_a_description(): void
     {
         $contract = new DelegatedContract;
@@ -175,7 +202,8 @@ class DelegatedContractV3Test extends TestCase
     public function test_a_removal_answers_with_the_account_kept_and_nothing_left_in_the_projection(): void
     {
         $contract = new DelegatedContract;
-        $removed = [...$this->state(), 'operation' => 'remove', 'access' => ['application_admin' => false, 'workspaces' => []], 'last_seen_at' => '2026-10-09T08:00:00Z'];
+        $removed = [...$this->state(), 'operation' => 'remove', 'access' => ['application_admin' => false, 'workspaces' => []], 'last_seen_at' => '2026-10-09T08:00:00Z',
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];
 
         $this->assertSame($removed, $contract->response($removed, self::APP, 'remove', 'subject-example', 3));
 
@@ -183,8 +211,9 @@ class DelegatedContractV3Test extends TestCase
             'an administrator flag left' => ['access' => ['application_admin' => true, 'workspaces' => []]],
             'a membership left in the projection' => ['access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'owner', 'editable' => false]]]],
             'the account gone' => ['provisioned' => false, 'revision' => null, 'access' => null, 'last_seen_at' => null,
-                'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true]],
+                'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true, 'remove' => false]],
             'another subject' => ['subject' => 'someone-else'],
+            'a further removal not offered, though it is a no-op' => ['allowed_edits' => [...$removed['allowed_edits'], 'remove' => false]],
         ] as $label => $change) {
             $this->refused(fn () => $contract->response([...$removed, ...$change], self::APP, 'remove', 'subject-example', 3), 503, $label);
         }
@@ -199,7 +228,7 @@ class DelegatedContractV3Test extends TestCase
         $answer = $contract->adapterAnswer([...$fields, 'first_sign_in_at' => '2026-10-01T09:30:00Z'], self::APP, 'read', 'subject-example');
         $this->assertSame(['contract_version' => 3, 'application' => self::APP, 'operation' => 'read'], array_slice($answer, 0, 3, true));
 
-        $removed = [...$fields, 'access' => ['application_admin' => false, 'workspaces' => []]];
+        $removed = [...$fields, 'access' => ['application_admin' => false, 'workspaces' => []], 'allowed_edits' => [...$fields['allowed_edits'], 'remove' => true]];
         $this->assertSame('remove', $contract->adapterAnswer($removed, self::APP, 'remove', 'subject-example')['operation']);
 
         foreach ([
@@ -293,7 +322,7 @@ class DelegatedContractV3Test extends TestCase
         $accountOnly = $this->capabilities();
         $accountOnly['controls']['workspace_roles'] = [];
         $removed = [...$this->state(), 'operation' => 'remove', 'access' => ['application_admin' => false, 'workspaces' => []],
-            'allowed_edits' => ['application_admin' => true, 'workspaces' => false, 'provision' => false]];
+            'allowed_edits' => ['application_admin' => true, 'workspaces' => false, 'provision' => false, 'remove' => true]];
 
         $this->assertTrue($contract->fitsCapabilities($accountOnly, $removed));
         $this->assertFalse($contract->fitsCapabilities($accountOnly, [...$removed, 'allowed_edits' => [...$removed['allowed_edits'], 'workspaces' => true]]));
@@ -379,7 +408,7 @@ class DelegatedContractV3Test extends TestCase
                 ['id' => 'w1', 'role' => 'owner', 'editable' => false],
                 ['id' => 'w2', 'role' => 'sender', 'editable' => true],
             ]],
-            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false],
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => false],
         ];
     }
 
@@ -389,7 +418,7 @@ class DelegatedContractV3Test extends TestCase
     private function unprovisioned(): array
     {
         return [...$this->state(), 'provisioned' => false, 'revision' => null, 'access' => null,
-            'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true]];
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true, 'remove' => false]];
     }
 
     private function refused(callable $action, int $status, string $label = ''): void

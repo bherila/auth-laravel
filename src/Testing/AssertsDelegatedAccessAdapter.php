@@ -317,6 +317,7 @@ trait AssertsDelegatedAccessAdapter
         if ($state['access']['application_admin']) {
             $this->assertTrue($state['allowed_edits']['application_admin'], 'Seed a target whose administrator flag the actor may change, or one without it');
         }
+        $this->assertTrue($state['allowed_edits']['remove'], 'allowed_edits.remove is true where a removal succeeds');
 
         $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedRemovePayload($target, 'stale-'.hash('sha256', $state['revision'])), 'a removal against a stale revision');
         $this->assertSame($before, $this->delegatedAccessRecord($target), 'A conflict changes nothing');
@@ -337,6 +338,7 @@ trait AssertsDelegatedAccessAdapter
         }
         $this->assertTrue($kept['provisioned'], 'The account and its history remain after removal');
         $this->assertSame($removed['revision'], $kept['revision'], 'Removal answers the state it left');
+        $this->assertTrue($kept['allowed_edits']['remove'], 'allowed_edits.remove is true where removing again would be a no-op');
 
         try {
             $again = $this->delegatedAccessCall($actor, $this->delegatedRemovePayload($target, $removed['revision']));
@@ -348,23 +350,23 @@ trait AssertsDelegatedAccessAdapter
     }
 
     /**
-     * A removal the actor cannot make whole is refused, and changes nothing: not even the parts the
-     * actor could have removed on their own.
+     * A removal the actor cannot make whole is refused, changes nothing (not even the parts the actor
+     * could have removed on their own), and was never offered: the read said `allowed_edits.remove`
+     * false.
      *
      * Seed a target with a membership the actor sees but may not change, or an administrator flag it
      * may not change: the actor themselves where self-demotion is refused, or the last administrator.
+     * Or an actor who may read the target but not remove it.
      */
     protected function assertDelegatedRemoveRefusedWithoutPartialChange(string $actor, string $target): void
     {
         $state = $this->delegatedAccessRead($actor, $target);
         $before = $this->delegatedAccessRecord($target);
-        $protected = array_filter($state['access']['workspaces'], static fn (array $m): bool => ! $m['editable']) !== []
-            || ($state['access']['application_admin'] && ! $state['allowed_edits']['application_admin']);
-        $this->assertTrue($protected, 'Seed a target with a membership the actor may not remove, or an administrator flag it may not change');
 
         $this->assertDelegatedRefusal([DelegatedRefusal::PROTECTED_MEMBERSHIP, DelegatedRefusal::NOT_AUTHORIZED, DelegatedRefusal::INVALID_REQUEST],
             $actor, $this->delegatedRemovePayload($target, $state['revision']), 'removing a subject with something the actor may not remove');
         $this->assertSame($before, $this->delegatedAccessRecord($target), 'A refused removal changes nothing, not even what the actor could have removed');
+        $this->assertFalse($state['allowed_edits']['remove'], 'allowed_edits.remove is false where a removal is refused');
     }
 
     /**

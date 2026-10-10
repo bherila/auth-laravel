@@ -71,6 +71,8 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'bump_revision_on_an_empty_removal' => false,
         'metadata_from_the_future' => false,
         'listing_metadata_from_the_future' => false,
+        'offer_a_removal_it_refuses' => false,
+        'hide_a_removal_it_allows' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -193,12 +195,25 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
             $metadata['last_seen_at'] = gmdate('Y-m-d\TH:i:s\Z', time() + 86400);
         }
 
+        $admin = $this->admins[$subject] ?? false;
+        // What remove() would decide: refused over an owner membership, or an administrator flag
+        // managers may not change.
+        $removable = ! in_array('owner', array_column($visible, 'role'), true) && (! $admin || $this->adminEditable);
+        if ($this->broken['offer_a_removal_it_refuses']) {
+            $removable = true;
+            // Reported as editable too, so the contract cannot see through it.
+            $visible = array_map(static fn (array $m): array => ['editable' => true] + $m, $visible);
+        }
+        if ($this->broken['hide_a_removal_it_allows']) {
+            $removable = false;
+        }
+
         return ($this->broken['answer_an_extra_field'] ? ['internal_id' => 42] : []) + [
             'subject' => $subject,
             'provisioned' => true,
             'revision' => $this->revision($subject),
-            'access' => ['application_admin' => $this->admins[$subject] ?? false, 'workspaces' => $visible],
-            'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false],
+            'access' => ['application_admin' => $admin, 'workspaces' => $visible],
+            'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false, 'remove' => $removable],
         ] + $metadata;
     }
 
@@ -297,12 +312,14 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $this->admins[$subject] = $this->broken['keep_application_admin_on_removal'] && $admin;
         if ($this->broken['remove_the_account']) {
             $answer = ['subject' => $subject, 'provisioned' => true, 'revision' => 'gone', 'access' => ['application_admin' => false, 'workspaces' => []],
-                'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false]];
+                'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];
             unset($this->memberships[$subject], $this->admins[$subject]);
         }
         $state = $answer ?? $this->state($managed, $subject);
 
         // The answer reports the projection the contract requires, whatever was actually kept.
+        $state['allowed_edits']['remove'] = true;
+
         return ['access' => ['application_admin' => false, 'workspaces' => []]] + $state;
     }
 }

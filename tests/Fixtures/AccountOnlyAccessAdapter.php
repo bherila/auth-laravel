@@ -30,6 +30,7 @@ final class AccountOnlyAccessAdapter implements ApplicationAccessAdapter
         'ignore_revision' => false,
         'search_service_accounts' => false,
         'allow_self_removal' => false,
+        'offer_a_removal_it_refuses' => false,
         'remove_the_account' => false,
     ];
 
@@ -86,7 +87,7 @@ final class AccountOnlyAccessAdapter implements ApplicationAccessAdapter
     {
         if (! isset($this->accounts[$subject])) {
             return ['subject' => $subject, 'provisioned' => false, 'revision' => null, 'access' => null,
-                'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true]];
+                'allowed_edits' => ['application_admin' => false, 'workspaces' => false, 'provision' => true, 'remove' => false]];
         }
 
         return [
@@ -95,7 +96,13 @@ final class AccountOnlyAccessAdapter implements ApplicationAccessAdapter
             'revision' => $this->revision($subject),
             'access' => ['application_admin' => $this->accounts[$subject],
                 'workspaces' => $this->broken['report_workspaces'] ? [['id' => 'w1', 'role' => 'member', 'editable' => false]] : []],
-            'allowed_edits' => ['application_admin' => $this->adminEditable($actor, $subject), 'workspaces' => false, 'provision' => false],
+            'allowed_edits' => [
+                // Broken, it offers both, so the contract cannot see that the removal will be refused.
+                'application_admin' => $this->adminEditable($actor, $subject) || $this->broken['offer_a_removal_it_refuses'],
+                'workspaces' => false, 'provision' => false,
+                // Refused for the actor themselves and for the last administrator.
+                'remove' => ! $this->accounts[$subject] || $this->adminEditable($actor, $subject) || $this->broken['offer_a_removal_it_refuses'],
+            ],
         ] + ($this->metadata[$subject] ?? []);
     }
 

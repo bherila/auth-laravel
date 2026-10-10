@@ -23,6 +23,10 @@ can no longer reach an upgraded application.
   history and memberships outside the actor's view, refuses rather than removes part of it, and
   keeps the revision when there is nothing to remove. The endpoint refuses to send a removal answer
   that leaves anything in the projection. It is a write: `DELEGATED_ACCESS_WRITES_ENABLED` gates it.
+- **`allowed_edits.remove`** (required boolean in every version 3 state): whether a removal by this
+  actor would succeed now, a no-op included. False for an unprovisioned subject and whenever the
+  removal would be refused; the contract refuses one offered over a protected membership or an
+  administrator flag the actor may not change, and the conformance trait checks it both ways.
 - **Metadata.** A state and each `subjects[]` listing entry may carry `provisioned_at`,
   `first_sign_in_at` and `last_seen_at` (ISO-8601 or null), and a workspace role a `description`.
 - **Operation ids and receipts.** `update` and `remove` require an `operation_id` (32 to 64
