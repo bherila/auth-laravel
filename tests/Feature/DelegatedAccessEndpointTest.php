@@ -13,6 +13,7 @@ use BWH\Auth\OAuth\DelegatedAccess\DelegatedReceipt;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use BWH\Auth\OAuth\PendingAccount;
+use BWH\Auth\Tests\Fixtures\SqlServerLikeSqliteConnection;
 use BWH\Auth\Tests\Fixtures\TransactionAbortingSqliteConnection;
 use BWH\Auth\Tests\TestCase;
 use Closure;
@@ -514,6 +515,28 @@ class DelegatedAccessEndpointTest extends TestCase
         } finally {
             $connection->rollBack();
         }
+    }
+
+    public function test_without_insert_or_ignore_a_claim_inserts_in_a_savepoint_and_a_duplicate_is_held(): void
+    {
+        $connection = new SqlServerLikeSqliteConnection(DB::connection()->getPdo(), ':memory:', '', ['driver' => 'sqlite', 'name' => 'sqlsrv-like']);
+        $store = new DatabaseReceiptStore($connection);
+        $this->app->instance(DatabaseReceiptStore::class, $store);
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+
+        // On its own, and inside a surrounding transaction that a stray error would abort.
+        $first = $this->send($update)->assertOk();
+        $this->assertSame($first->getContent(), $this->send($update)->assertOk()->getContent());
+        $connection->beginTransaction();
+        try {
+            $this->assertSame($first->getContent(), $this->send($update)->assertOk()->getContent());
+            $this->assertNull($store->claim(self::APPLICATION, DelegatedContract::operationId(), str_repeat('a', 64), str_repeat('h', 64)));
+            $this->assertSame(2, $connection->table(DatabaseReceiptStore::TABLE)->count(), 'The surrounding transaction is still usable');
+        } finally {
+            $connection->rollBack();
+        }
+        $this->assertCount(1, $this->calls);
     }
 
     public function test_the_same_operation_id_on_another_request_or_from_another_actor_is_refused(): void

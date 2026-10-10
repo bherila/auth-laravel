@@ -11,7 +11,7 @@ use PDOException;
  * SQLite with PostgreSQL's transaction rule: once a statement fails inside a transaction, every
  * later statement fails until it is rolled back, even when the first failure was caught.
  */
-final class TransactionAbortingSqliteConnection extends SQLiteConnection
+class TransactionAbortingSqliteConnection extends SQLiteConnection
 {
     private bool $aborted = false;
 

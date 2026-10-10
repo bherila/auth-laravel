@@ -2,7 +2,9 @@
 
 namespace BWH\Auth\OAuth\DelegatedAccess;
 
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use JsonException;
 use Throwable;
@@ -50,20 +52,19 @@ final readonly class DatabaseReceiptStore
     public function claim(string $application, string $operationId, string $actor, string $requestHash, ?int $at = null): ?DelegatedReceipt
     {
         $at ??= self::now();
-        // A conflict-safe insert, never a caught duplicate-key error: on PostgreSQL that error would
-        // abort a surrounding transaction, and every statement after it, the read below included.
+        $row = [
+            'application' => $application,
+            'operation_key' => self::key($operationId),
+            'operation_id' => $operationId,
+            'actor' => $actor,
+            'request_hash' => $requestHash,
+            'status' => null,
+            'response' => null,
+            'claimed_at' => $at,
+            'created_at' => $at,
+        ];
         try {
-            $inserted = $this->connection->table(self::TABLE)->insertOrIgnore([
-                'application' => $application,
-                'operation_key' => self::key($operationId),
-                'operation_id' => $operationId,
-                'actor' => $actor,
-                'request_hash' => $requestHash,
-                'status' => null,
-                'response' => null,
-                'claimed_at' => $at,
-                'created_at' => $at,
-            ]);
+            $inserted = $this->insertOnce($row);
         } catch (Throwable) {
             throw new DelegatedAccessException('receipt_storage_unavailable');
         }
@@ -90,6 +91,30 @@ final readonly class DatabaseReceiptStore
 
         // Lost the race: another repeat holds it now, so it is in progress, as the pending receipt says.
         return $taken === 1 ? null : $held;
+    }
+
+    /**
+     * Insert the row unless its key exists; 1 when inserted, 0 when somebody holds it.
+     *
+     * A conflict-safe insert, never a bare caught duplicate-key error: on PostgreSQL that error would
+     * abort a surrounding transaction, and every statement after it, the read that follows included.
+     * SQL Server's grammar has no insert-or-ignore, so there the insert runs in its own transaction,
+     * a savepoint inside a surrounding one, and only a duplicate key counts as held.
+     *
+     * @param  array<string, mixed>  $row
+     */
+    private function insertOnce(array $row): int
+    {
+        $driver = $this->connection instanceof Connection ? $this->connection->getDriverName() : null;
+        if ($driver !== 'sqlsrv') {
+            return $this->connection->table(self::TABLE)->insertOrIgnore($row);
+        }
+
+        try {
+            return $this->connection->transaction(fn (): int => $this->connection->table(self::TABLE)->insert($row) ? 1 : 0);
+        } catch (UniqueConstraintViolationException) {
+            return 0;
+        }
     }
 
     /**

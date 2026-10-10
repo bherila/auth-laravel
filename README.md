@@ -1116,7 +1116,7 @@ manages it, and nothing else:
 
 - The write is claimed before the adapter runs, keyed by application and a SHA-256 of
   `operation_id` (ids are case-sensitive, whatever the column collation), with a conflict-safe
-  insert that never aborts a surrounding transaction. A repeat
+  insert that never aborts a surrounding transaction (on SQL Server, an insert in a savepoint). A repeat
   of the same request (same actor, same canonical payload) is answered with the stored status and
   body, byte for byte, without calling the adapter. The same `operation_id` on a different request,
   or from another actor, is refused as `invalid_request` (422). One that is still being decided is
