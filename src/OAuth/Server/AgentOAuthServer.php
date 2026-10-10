@@ -226,7 +226,9 @@ final class AgentOAuthServer
             $path = substr($path, strlen($appPath));
         }
 
-        return '/.well-known/oauth-protected-resource'.($path === '' ? '/api/v1' : $path);
+        // A resource at the application root is discovered at the bare well-known path,
+        // exactly where its challenges point (OAuthProtectedResource::wellKnownFor()).
+        return '/.well-known/oauth-protected-resource'.$path;
     }
 
     /**

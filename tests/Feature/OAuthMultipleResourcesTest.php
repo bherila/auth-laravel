@@ -282,6 +282,14 @@ final class OAuthMultipleResourcesTest extends TestCase
             ->assertHeaderMissing('Access-Control-Allow-Origin');
     }
 
+    public function test_a_resource_at_the_application_root_is_discovered_where_its_challenge_points(): void
+    {
+        config(['bherila-auth.oauth_server.resources.root' => ['uri' => self::APP]]);
+
+        $this->assertSame('/.well-known/oauth-protected-resource', AgentOAuthServer::protectedResourceMetadataPath('root'));
+        $this->assertSame(self::APP.'/.well-known/oauth-protected-resource', OAuthProtectedResource::metadataUrl('root'));
+    }
+
     public function test_misconfigured_resources_fail_loudly(): void
     {
         config(['bherila-auth.oauth_server.resources' => [
