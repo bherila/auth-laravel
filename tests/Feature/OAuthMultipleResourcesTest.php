@@ -283,6 +283,9 @@ final class OAuthMultipleResourcesTest extends TestCase
             ->assertHeaderMissing('Access-Control-Allow-Origin');
         $this->call('OPTIONS', '/oauth/token', [], [], [], ['HTTP_ORIGIN' => 'https://other.example.test'])->assertForbidden();
         $this->getJson('/.well-known/oauth-authorization-server')->assertOk()->assertHeaderMissing('Access-Control-Allow-Origin');
+        // Cacheable either way, so even the header-less answers vary by Origin.
+        $this->assertStringContainsString('Origin', (string) $this->getJson('/.well-known/oauth-authorization-server')->headers->get('Vary'));
+        $this->assertStringContainsString('Origin', (string) $this->getJson('/.well-known/oauth-authorization-server', ['Origin' => 'https://other.example.test'])->headers->get('Vary'));
 
         config(['bherila-auth.oauth_server.cors.allowed_origins' => []]);
         $this->getJson('/.well-known/oauth-authorization-server', ['Origin' => 'https://agent.example.test'])

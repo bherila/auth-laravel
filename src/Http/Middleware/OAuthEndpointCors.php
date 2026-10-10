@@ -29,8 +29,29 @@ final class OAuthEndpointCors
         }
 
         $response = $next($request);
+        if ($allowed) {
+            return $this->decorate($response, $origin);
+        }
+        // Once CORS depends on the origin, every response varies by it: a cache must never hand
+        // a header-less copy (fetched without an Origin, or by an unlisted one) to a listed origin.
+        if ($this->configured()) {
+            $this->vary($response);
+        }
 
-        return $allowed ? $this->decorate($response, $origin) : $response;
+        return $response;
+    }
+
+    private function configured(): bool
+    {
+        $origins = config('bherila-auth.oauth_server.cors.allowed_origins', []);
+
+        return is_array($origins) && $origins !== [];
+    }
+
+    private function vary(Response $response): void
+    {
+        $vary = array_filter(array_map('trim', explode(',', (string) $response->headers->get('Vary', ''))));
+        $response->headers->set('Vary', implode(', ', array_unique([...$vary, 'Origin'])));
     }
 
     private function allows(string $origin): bool
@@ -47,8 +68,7 @@ final class OAuthEndpointCors
     {
         $response->headers->set('Access-Control-Allow-Origin', $origin);
         $response->headers->set('Access-Control-Expose-Headers', 'WWW-Authenticate');
-        $vary = array_filter(array_map('trim', explode(',', (string) $response->headers->get('Vary', ''))));
-        $response->headers->set('Vary', implode(', ', array_unique([...$vary, 'Origin'])));
+        $this->vary($response);
 
         return $response;
     }
