@@ -235,6 +235,7 @@ final class OAuthMultipleResourcesTest extends TestCase
             'resource' => self::APP.'/api/v1/mcp',
         ], ['Accept' => 'application/json'])->assertStatus(400);
         $this->assertFalse((bool) Passport::refreshToken()->newQuery()->sole()->revoked, 'Refused before the grant consumed it');
+        $this->bearer('POST', '/api/v1/mcp', $tokens['access_token'])->assertUnauthorized();
     }
 
     public function test_personal_tokens_bind_to_the_default_resource_and_its_ceiling(): void

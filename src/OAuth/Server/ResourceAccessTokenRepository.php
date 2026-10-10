@@ -249,7 +249,9 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         if ($expectedResource === null
             || $storedResource === null
             || ! OAuthResourceIndicator::isConfiguredResource($storedResource)
-            || $storedResource !== $expectedResource) {
+            || $storedResource !== $expectedResource
+            // A ceiling tightened after issuance applies to tokens already out, too.
+            || ! OAuthResourceIndicator::scopesAllowedFor($storedResource, $scopes)) {
             return true;
         }
 
