@@ -12,6 +12,7 @@ use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Contracts\LoginThrottle;
 use BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter;
 use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
+use BWH\Auth\OAuth\DelegatedAccess\DatabaseReceiptStore;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use BWH\Auth\Services\AuthAuditLogLoginThrottle;
 use BWH\Auth\Services\DatabaseAuthAuditLogger;
@@ -58,6 +59,9 @@ class AuthServiceProvider extends ServiceProvider
         $this->app->bind(OAuthTokenIntrospector::class, RemoteOAuthTokenIntrospector::class);
         $this->app->bindIf(NonceStore::class, fn ($app): NonceStore => new DatabaseNonceStore(
             $app['db']->connection(config('bherila-auth.delegated_access.nonce_connection')),
+        ));
+        $this->app->bindIf(DatabaseReceiptStore::class, fn ($app): DatabaseReceiptStore => new DatabaseReceiptStore(
+            $app['db']->connection(config('bherila-auth.delegated_access.receipt_connection')),
         ));
 
         $this->registerOAuthServerBindings();

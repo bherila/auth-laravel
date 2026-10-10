@@ -4,24 +4,29 @@ namespace BWH\Auth\Tests\Feature;
 
 use BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter;
 use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
+use BWH\Auth\OAuth\DelegatedAccess\DatabaseReceiptStore;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessException;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessSettings;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedCursor;
+use BWH\Auth\OAuth\DelegatedAccess\DelegatedReceipt;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use BWH\Auth\OAuth\PendingAccount;
 use BWH\Auth\Tests\TestCase;
 use Closure;
 use DateTimeImmutable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Testing\TestResponse;
 use Lcobucci\JWT\Encoding\ChainedFormatter;
 use Lcobucci\JWT\Encoding\JoseEncoder;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use Lcobucci\JWT\Signer\Rsa\Sha256;
 use Lcobucci\JWT\Token\Builder;
+use RuntimeException;
 
 /**
  * POST /application-access, driven the way the identity provider drives it: a real RS256 actor
@@ -61,6 +66,12 @@ class DelegatedAccessEndpointTest extends TestCase
                 return $this->test->answer($actorSubject, $payload);
             }
         });
+    }
+
+    protected function defineDatabaseMigrations(): void
+    {
+        parent::defineDatabaseMigrations();
+        $this->loadMigrationsFrom(__DIR__.'/../../database/delegated-access-migrations');
     }
 
     protected function setUp(): void
@@ -407,6 +418,154 @@ class DelegatedAccessEndpointTest extends TestCase
         Exceptions::assertReported(DelegatedAccessException::class);
     }
 
+    public function test_a_repeated_write_is_answered_from_its_receipt_without_the_adapter(): void
+    {
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+
+        $first = $this->send($update)->assertOk();
+        $again = $this->send($update)->assertOk();
+        $this->assertSame($first->getContent(), $again->getContent());
+        $this->assertCount(1, $this->calls);
+
+        // The same request with its keys in another order is the same request.
+        $reordered = (string) json_encode(['operation_id' => $update['operation_id'], 'access' => ['workspaces' => [], 'application_admin' => false],
+            'expected_revision' => 'r1', 'subject' => 'target-subject', 'operation' => 'update', 'application' => self::APPLICATION, 'contract_version' => 3]);
+        $this->send([], body: $reordered)->assertOk()->assertHeaderContains('Cache-Control', 'no-store');
+        $this->assertSame($first->getContent(), $this->send([], body: $reordered)->getContent());
+        $this->assertCount(1, $this->calls);
+    }
+
+    public function test_the_same_operation_id_on_another_request_or_from_another_actor_is_refused(): void
+    {
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+        $this->send($update)->assertOk();
+
+        foreach ([
+            [[...$update, 'expected_revision' => 'r2'], 'actor-subject'],
+            [[...$update, 'subject' => 'another-subject'], 'actor-subject'],
+            [['operation' => 'remove', 'subject' => 'target-subject', 'expected_revision' => 'r1', 'operation_id' => $update['operation_id']], 'actor-subject'],
+            [$update, 'another-actor'],
+        ] as [$input, $actor]) {
+            $this->send($input, $actor)->assertStatus(422)->assertExactJson(['error' => 'invalid_request']);
+        }
+        $this->assertCount(1, $this->calls);
+    }
+
+    public function test_a_refusal_from_the_adapter_is_the_stored_outcome(): void
+    {
+        $this->answer = static fn (): array => throw new DelegatedAccessException('revision_conflict', 409);
+        $remove = ['operation' => 'remove', 'subject' => 'target-subject', 'expected_revision' => 'r1', 'operation_id' => DelegatedContract::operationId()];
+
+        $this->send($remove)->assertStatus(409)->assertExactJson(['error' => 'revision_conflict']);
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $this->send($remove)->assertStatus(409)->assertExactJson(['error' => 'revision_conflict']);
+        $this->assertCount(1, $this->calls);
+
+        $receipt = $this->send(['operation' => 'receipt', 'operation_id' => $remove['operation_id']])->assertOk()->json();
+        $write = (new DelegatedContract)->request(self::APPLICATION, $remove, 3);
+        $this->assertSame(['contract_version' => 3, 'application' => self::APPLICATION, 'operation' => 'receipt', 'operation_id' => $remove['operation_id'],
+            'status' => 'known', 'response_status' => 409, 'response' => ['error' => 'revision_conflict']], (new DelegatedContract)->receipt($receipt, self::APPLICATION, $write));
+    }
+
+    public function test_a_receipt_holds_the_answer_that_was_sent_and_only_for_its_actor(): void
+    {
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+        $sent = $this->send($update)->assertOk()->json();
+        config(['bherila-auth.delegated_access.writes_enabled' => false]);
+
+        $receipt = $this->send(['operation' => 'receipt', 'operation_id' => $update['operation_id']])->assertOk()->assertHeaderContains('Cache-Control', 'no-store')->json();
+        $this->assertSame(['status' => 'known', 'response_status' => 200, 'response' => $sent], array_slice($receipt, 4, null, true));
+        (new DelegatedContract)->receipt($receipt, self::APPLICATION, (new DelegatedContract)->request(self::APPLICATION, $update, 3));
+
+        $this->send(['operation' => 'receipt', 'operation_id' => $update['operation_id']], 'another-actor')->assertOk()->assertJsonPath('status', 'unknown');
+        $unknown = DelegatedContract::operationId();
+        $this->send(['operation' => 'receipt', 'operation_id' => $unknown])->assertOk()
+            ->assertExactJson(['contract_version' => 3, 'application' => self::APPLICATION, 'operation' => 'receipt', 'operation_id' => $unknown, 'status' => 'unknown']);
+        $this->assertCount(1, $this->calls, 'A receipt never reaches the adapter.');
+    }
+
+    public function test_a_write_being_decided_is_never_run_twice(): void
+    {
+        $operationId = DelegatedContract::operationId();
+        $update = $this->update(['operation_id' => $operationId]);
+        $held = 'unset';
+        $this->answer = function (string $actor, array $payload) use ($operationId, &$held): array {
+            // A second request for the same operation, arriving while this one runs, gets no claim.
+            $held = $this->app->make(DatabaseReceiptStore::class)->claim(self::APPLICATION, $operationId, DatabaseReceiptStore::actor($actor), DatabaseReceiptStore::requestHash($actor, $payload));
+
+            return self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        };
+
+        $this->send($update)->assertOk();
+        $this->assertInstanceOf(DelegatedReceipt::class, $held);
+        $this->assertTrue($held->pending());
+
+        // Seen from outside: a claim without an answer is in progress, and its receipt is unknown.
+        $pending = DelegatedContract::operationId();
+        $payload = ['operation' => 'update', 'subject' => 'target-subject', 'expected_revision' => 'r1', 'access' => ['application_admin' => false, 'workspaces' => []]];
+        $this->assertNull($this->app->make(DatabaseReceiptStore::class)->claim(self::APPLICATION, $pending, DatabaseReceiptStore::actor('actor-subject'), DatabaseReceiptStore::requestHash('actor-subject', $payload)));
+        $this->send([...$payload, 'operation_id' => $pending])->assertStatus(503)->assertExactJson(['error' => 'operation_in_progress']);
+        $this->send(['operation' => 'receipt', 'operation_id' => $pending])->assertOk()->assertJsonPath('status', 'unknown');
+        $this->assertCount(1, $this->calls);
+    }
+
+    public function test_an_outcome_nothing_vouches_for_is_not_stored_and_can_be_decided_again(): void
+    {
+        Exceptions::fake();
+        $update = $this->update();
+        foreach ([
+            static fn (): array => throw new DelegatedAccessException('unavailable', 503),
+            static fn (): array => throw new RuntimeException('The database went away.'),
+            static fn (): array => ['subject' => 'someone-else'],
+        ] as $answer) {
+            $this->answer = $answer;
+            $this->send($update)->assertServerError();
+            $this->send(['operation' => 'receipt', 'operation_id' => $update['operation_id']])->assertOk()->assertJsonPath('status', 'unknown');
+        }
+
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $this->send($update)->assertOk();
+        $this->assertCount(4, $this->calls);
+    }
+
+    public function test_a_write_is_refused_before_the_adapter_when_receipts_cannot_be_stored(): void
+    {
+        Schema::drop(DatabaseReceiptStore::TABLE);
+
+        $this->send($this->update())->assertStatus(503)->assertExactJson(['error' => 'receipt_storage_unavailable']);
+        $this->send(['operation' => 'receipt', 'operation_id' => DelegatedContract::operationId()])->assertStatus(503);
+        $this->send(['operation' => 'capabilities'])->assertOk();
+        $this->assertSame([['actor-subject', ['operation' => 'capabilities']]], $this->calls);
+    }
+
+    public function test_a_request_hash_ignores_key_order_and_the_operation_id_but_not_the_actor_or_list_order(): void
+    {
+        $payload = $this->update(['access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'member'], ['id' => 'w2', 'role' => 'owner']]]]);
+        $hash = DatabaseReceiptStore::requestHash('actor-subject', $payload);
+
+        $this->assertSame($hash, DatabaseReceiptStore::requestHash('actor-subject', array_reverse($payload, true)));
+        $this->assertSame($hash, DatabaseReceiptStore::requestHash('actor-subject', [...$payload, 'operation_id' => DelegatedContract::operationId(), 'contract_version' => 3, 'application' => self::APPLICATION]));
+        $this->assertSame($hash, DatabaseReceiptStore::requestHash('actor-subject', [...$payload, 'access' => ['workspaces' => [['role' => 'member', 'id' => 'w1'], ['role' => 'owner', 'id' => 'w2']], 'application_admin' => false]]));
+        $this->assertNotSame($hash, DatabaseReceiptStore::requestHash('another-actor', $payload));
+        $this->assertNotSame($hash, DatabaseReceiptStore::requestHash('actor-subject', [...$payload, 'access' => [...$payload['access'], 'workspaces' => array_reverse($payload['access']['workspaces'])]]));
+        $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $hash);
+    }
+
+    public function test_the_prune_command_deletes_receipts_older_than_thirty_days(): void
+    {
+        $table = DB::table(DatabaseReceiptStore::TABLE);
+        foreach (['old' => 31, 'recent' => 29] as $id => $days) {
+            $table->insert(['application' => self::APPLICATION, 'operation_id' => str_pad($id, 32, 'x'), 'actor' => str_repeat('a', 64),
+                'request_hash' => str_repeat('h', 64), 'status' => 200, 'response' => '{}', 'created_at' => time() - $days * 86400]);
+        }
+
+        $this->artisan('bherila-auth:prune-delegated-nonces')->expectsOutputToContain('Pruned 1 delegated access receipt(s) older than 30 days')->assertSuccessful();
+        $this->assertSame([str_pad('recent', 32, 'x')], DB::table(DatabaseReceiptStore::TABLE)->pluck('operation_id')->all());
+    }
+
     public function test_the_default_nonce_store_is_the_database_store(): void
     {
         $this->app->forgetInstance(NonceStore::class);
@@ -487,6 +646,16 @@ class DelegatedAccessEndpointTest extends TestCase
             'subject' => $subject, 'provisioned' => true, 'revision' => 'r2', 'access' => $access,
             'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false],
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $changes
+     * @return array<string, mixed>
+     */
+    private function update(array $changes = []): array
+    {
+        return ['operation' => 'update', 'subject' => 'target-subject', 'expected_revision' => 'r1',
+            'access' => ['application_admin' => false, 'workspaces' => []], 'operation_id' => DelegatedContract::operationId(), ...$changes];
     }
 
     /** @param array<string, mixed> $input */

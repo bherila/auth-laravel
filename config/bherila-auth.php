@@ -152,10 +152,10 @@ return [
 
     'delegated_access' => [
         // The endpoint an identity provider calls to manage people's access in this application
-        // (delegated access contract version 2). Its route exists only when the application binds
+        // (delegated access contract version 3). Its route exists only when the application binds
         // BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter, and answers 404 until enabled.
         'enabled' => env('DELEGATED_ACCESS_ENABLED', false),
-        // Whether delegated changes (`update`) are accepted. Off by default, independent of the
+        // Whether delegated changes (`update`, `remove`) are accepted. Off by default, independent of the
         // provider's own switch, so this application decides when it accepts writes.
         'writes_enabled' => env('DELEGATED_ACCESS_WRITES_ENABLED', false),
         // The provider's exact HTTPS issuer. Must be the sign-in provider (oauth_client.base_url):
@@ -171,6 +171,9 @@ return [
         'oauth_provider' => env('OAUTH_PROVIDER'),
         // The nonce table's connection; null for the default. Must be durable and shared by every worker.
         'nonce_connection' => env('DELEGATED_ACCESS_NONCE_CONNECTION'),
+        // The operation receipts table's connection; the nonce connection unless set. Durable and
+        // shared by every worker, like the nonces: a lost receipt lets a repeated write run again.
+        'receipt_connection' => env('DELEGATED_ACCESS_RECEIPT_CONNECTION', env('DELEGATED_ACCESS_NONCE_CONNECTION')),
         'path' => '/application-access',
         'per_minute' => 120,
     ],
