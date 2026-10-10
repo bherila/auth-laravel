@@ -202,7 +202,8 @@ final readonly class ProviderIdentityTokens
 
             return $generation === null ? null : ['subject' => $binding->subject, 'generation' => $generation];
         }
-        $identity = $this->session->assertActive($request, $binding->provider, $binding->subject);
+        // Issuing a credential is a privileged act: never rely on the session's freshness window.
+        $identity = $this->session->assertActive($request, $binding->provider, $binding->subject, fresh: true);
         if ($identity->credentialVersion === null) {
             throw new RuntimeException('Issuing a credential requires a verified provider session.');
         }

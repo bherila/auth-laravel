@@ -194,8 +194,9 @@ final class ProviderIdentityTokensTest extends TestCase
 
     public function test_an_unavailable_provider_is_retryable_and_never_consumes_the_refresh_token(): void
     {
-        Http::fake(['*' => Http::sequence()->pushStatus(503)->pushStatus(503)->push($this->activeStatus())]);
+        Http::fake(['*' => Http::sequence()->push($this->activeStatus())->pushStatus(503)->pushStatus(503)->push($this->activeStatus())]);
         [$client, $tokens] = $this->connect($this->user());
+        $this->travel(300)->seconds(); // past the answer issuance shared
 
         $this->useToken($tokens['access_token'])->assertStatus(503)->assertHeader('Retry-After', '30');
         $this->refresh($client, $tokens['refresh_token'])->assertStatus(503);
@@ -252,7 +253,7 @@ final class ProviderIdentityTokensTest extends TestCase
 
     public function test_a_credential_from_before_enforcement_stays_refused_after_its_account_is_unbound(): void
     {
-        Http::fake();
+        Http::fake(fn () => Http::response($this->activeStatus()));
         $user = $this->user();
         [$client, $tokens] = $this->connect($user);
         Passport::token()->newQuery()->update(['provider_subject' => null, 'provider_generation' => null]);
@@ -284,6 +285,18 @@ final class ProviderIdentityTokensTest extends TestCase
         $this->assertNull(Passport::token()->newQuery()->sole()->provider_generation);
     }
 
+    public function test_issuing_a_credential_checks_the_provider_freshly(): void
+    {
+        Http::fake(fn () => Http::response(['contract_version' => 1, 'active' => false]));
+        $user = $this->user();
+
+        // The session was checked a moment ago, but the identity has since been disabled.
+        $this->actingAs($user)->withSession($this->sessionState())
+            ->postJson('/account/api-credentials/tokens', ['name' => 'Late', 'scopes' => ['items:read'], 'lifetime' => 'P30D'])
+            ->assertUnauthorized();
+        $this->assertSame(0, Passport::token()->newQuery()->count());
+    }
+
     public function test_unbound_accounts_are_left_to_the_application(): void
     {
         Http::fake();
@@ -312,7 +325,7 @@ final class ProviderIdentityTokensTest extends TestCase
 
     public function test_applications_can_check_freshly_before_a_privileged_operation(): void
     {
-        Http::fake(['*' => Http::sequence()->push($this->activeStatus())->push(['contract_version' => 1, 'active' => false])]);
+        Http::fake(['*' => Http::sequence()->push($this->activeStatus())->push($this->activeStatus())->push(['contract_version' => 1, 'active' => false])]);
         $user = $this->user();
         $this->connect($user);
         $token = (string) Passport::token()->newQuery()->sole()->getKey();
