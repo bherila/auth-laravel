@@ -4,6 +4,27 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.22.0 - Unreleased
+
+### Delegated access contract versions 1 and 2 removed (breaking)
+
+- `DelegatedContract` speaks contract version 3 only. `DelegatedContract::VERSION_1` and
+  `VERSION_2` are removed, with every version 1 and 2 request field, capability, state and access
+  validator. `request()` and `response()` now default to `VERSION_3`; any other version is
+  `unsupported_contract_version` (500).
+- **Applications already on version 3 need no change.** The endpoint, the adapter interface and
+  `AssertsDelegatedAccessAdapter` are unchanged. The provider drops its version 1 and 2 path:
+  every call passing `VERSION_1` or `VERSION_2`, or relying on the old `VERSION_1` default, must
+  pass `VERSION_3` or nothing.
+
+### Receipts migration uses the receipt connection
+
+- The receipts migration now checks for and creates its table on
+  `bherila-auth.delegated_access.receipt_connection` rather than the default connection, which is
+  where `DatabaseReceiptStore` reads and writes it. Applications that already copied this fix into
+  their published migration need nothing; others with a separate receipt connection should create
+  the table there.
+
 ## v0.21.0 - 2026-10-10
 
 ### Delegated access contract version 3 (breaking)

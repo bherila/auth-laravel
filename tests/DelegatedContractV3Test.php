@@ -18,19 +18,18 @@ class DelegatedContractV3Test extends TestCase
 
     private const OPERATION = 'op_0123456789abcdefghijklmnopqrstuv';
 
-    public function test_version_three_is_spoken_and_its_operations_exist_only_in_it(): void
+    public function test_version_three_is_the_only_version(): void
     {
         $contract = new DelegatedContract;
 
         $this->assertSame(3, $contract->request(self::APP, ['operation' => 'capabilities'], 3)['contract_version']);
-
-        foreach ([1, 2] as $version) {
-            $this->refused(fn () => $contract->request(self::APP, $this->remove(), $version), 422, "remove in version {$version}");
-            $this->refused(fn () => $contract->request(self::APP, ['operation' => 'receipt', 'operation_id' => self::OPERATION], $version), 422, "receipt in version {$version}");
-            $this->refused(fn () => $contract->request(self::APP, ['operation' => 'subjects', 'query' => 'ex'], $version), 422, "search in version {$version}");
+        $this->assertSame(3, $contract->request(self::APP, ['operation' => 'capabilities'])['contract_version']);
+        foreach ([1, 2, 4] as $version) {
+            $this->refused(fn () => $contract->request(self::APP, ['operation' => 'capabilities'], $version), 500, "request in version {$version}");
+            $this->refused(fn () => $contract->response([...$this->state(), 'contract_version' => $version], self::APP, 'read', 'subject-example', $version), 500, "response in version {$version}");
+            $this->refused(fn () => $contract->response([...$this->state(), 'contract_version' => $version], self::APP, 'read', 'subject-example'), 503, "a version {$version} envelope");
         }
-        $this->refused(fn () => $contract->request(self::APP, ['operation' => 'capabilities'], 4), 500);
-        $this->refused(fn () => $contract->response($this->state(), self::APP, 'read', 'subject-example', 2), 503, 'a version 3 answer is not a version 2 one');
+        $this->assertFalse(defined(DelegatedContract::class.'::VERSION_1') || defined(DelegatedContract::class.'::VERSION_2'));
     }
 
     public function test_a_search_query_is_two_to_one_hundred_characters_of_text(): void
@@ -172,7 +171,6 @@ class DelegatedContractV3Test extends TestCase
 
         $unprovisioned = $this->unprovisioned();
         $this->refused(fn () => $contract->response([...$unprovisioned, 'allowed_edits' => [...$unprovisioned['allowed_edits'], 'remove' => true]], self::APP, 'read', 'subject-example', 3), 503, 'removal offered for an account that does not exist');
-        $this->refused(fn () => $contract->response([...$removable, 'contract_version' => 2], self::APP, 'read', 'subject-example', 2), 503, 'the flag is new in version 3');
     }
 
     public function test_a_role_may_carry_a_description(): void
@@ -195,8 +193,6 @@ class DelegatedContractV3Test extends TestCase
             $this->refused(fn () => $contract->response($changed, self::APP, 'capabilities', null, 3), 503, $label);
         }
 
-        $v2 = [...$capabilities, 'contract_version' => 2];
-        $this->refused(fn () => $contract->response($v2, self::APP, 'capabilities', null, 2), 503, 'descriptions are new in version 3');
     }
 
     public function test_a_removal_answers_with_the_account_kept_and_nothing_left_in_the_projection(): void

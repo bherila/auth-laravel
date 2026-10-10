@@ -9,11 +9,14 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasTable(DatabaseReceiptStore::TABLE)) {
+        // The connection the receipt store uses (bherila-auth.delegated_access.receipt_connection),
+        // which may not be the default one.
+        $schema = Schema::connection(config('bherila-auth.delegated_access.receipt_connection'));
+        if ($schema->hasTable(DatabaseReceiptStore::TABLE)) {
             return;
         }
 
-        Schema::create(DatabaseReceiptStore::TABLE, function (Blueprint $table) {
+        $schema->create(DatabaseReceiptStore::TABLE, function (Blueprint $table) {
             $table->string('application', 191);
             // The key is a digest of the operation id: ids are case-sensitive, and a case-insensitive
             // collation (common on MySQL and MariaDB) would otherwise make `ABC…` and `abc…` one.
