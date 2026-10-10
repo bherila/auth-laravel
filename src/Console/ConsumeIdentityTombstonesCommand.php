@@ -49,6 +49,10 @@ class ConsumeIdentityTombstonesCommand extends Command
 
     public function handle(IdentityTombstoneClient $client, IdentityTombstoneCursorStore $store): int
     {
+        // The application reuses one command object across Artisan calls in a process, so
+        // nothing from an earlier run may decide this one's outcome or throttle budget.
+        $this->received = $this->acknowledged = $this->failed = $this->throttleWaits = 0;
+
         // Binding a handler is the opt-in. Scheduling the command without one is a
         // misconfiguration that would otherwise leave deletions unapplied silently.
         if (! $this->laravel->bound(IdentityTombstoneHandler::class)) {

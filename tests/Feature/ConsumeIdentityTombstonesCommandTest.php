@@ -174,6 +174,30 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
             && ! str_contains($message.json_encode($context), 'subject-secret'));
     }
 
+    public function test_each_invocation_starts_with_fresh_counts_and_throttle_budget(): void
+    {
+        // The command object is reused by repeated Artisan calls in one process.
+        $this->handler->failing[self::id(1)] = true;
+        $this->provider([
+            self::page([1]),
+            Http::response('', 429, ['Retry-After' => '1']), Http::response('', 429, ['Retry-After' => '1']),
+            Http::response('', 429, ['Retry-After' => '1']), self::page([]),
+            Http::response('', 429, ['Retry-After' => '1']), self::page([2]),
+        ]);
+
+        [$first] = $this->run_();
+        $this->assertSame(1, $first);
+
+        $this->handler->failing = [];
+        [$second, $output] = $this->run_();
+        $this->assertSame(0, $second, $output);
+        $this->assertStringContainsString('0 received, 0 acknowledged, 0 failed, 1 page(s) read.', $output);
+
+        [$third, $output] = $this->run_();
+        $this->assertSame(0, $third, 'Earlier throttle waits do not use up this run\'s budget: '.$output);
+        $this->assertSame([self::id(2)], $this->acknowledged);
+    }
+
     public function test_an_unavailable_feed_fails_without_touching_the_cursor_or_the_handler(): void
     {
         $this->storeCursor('cursor-1');
