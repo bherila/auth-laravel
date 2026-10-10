@@ -36,6 +36,9 @@ final readonly class ProviderIdentityTokens
 
     public const GENERATION_COLUMN = 'provider_generation';
 
+    /** On refresh tokens, which have no owner column of their own. */
+    public const OWNER_COLUMN = 'provider_user_id';
+
     /** The stamp carried from a code or refresh token to the access token minted from it. */
     public const REQUEST_ATTRIBUTE = 'bherila_auth.provider_identity_stamp';
 
@@ -115,7 +118,7 @@ final readonly class ProviderIdentityTokens
         if (! self::enabled()) {
             return false;
         }
-        $userId = $credential->getAttribute('user_id');
+        $userId = $credential->getAttribute('user_id') ?? $credential->getAttribute(self::OWNER_COLUMN);
         if ($userId === null || $userId === '') {
             return false;
         }

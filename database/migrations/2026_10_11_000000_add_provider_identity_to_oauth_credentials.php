@@ -7,15 +7,16 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * The provider subject and credential generation an authorization code or access
-     * token was issued under (refresh tokens use their access token's). Nullable: rows
+     * The provider subject and credential generation an authorization code, access token
+     * or refresh token was issued under. A refresh token also records its owner, so it
+     * stays checkable after its expired access token is purged. Nullable: rows
      * issued before this migration have none, and are retired rather than upgraded once
      * provider identity enforcement is enabled. Adds only absent columns, like the
      * OAuth server metadata migration, so it is safe beside application-owned columns.
      */
     public function up(): void
     {
-        foreach (['oauth_auth_codes', 'oauth_access_tokens'] as $table) {
+        foreach (['oauth_auth_codes', 'oauth_access_tokens', 'oauth_refresh_tokens'] as $table) {
             $this->addColumn($table, 'provider_subject', function (Blueprint $blueprint): void {
                 $blueprint->string('provider_subject', 191)->nullable();
             });
@@ -23,6 +24,9 @@ return new class extends Migration
                 $blueprint->unsignedBigInteger('provider_generation')->nullable();
             });
         }
+        $this->addColumn('oauth_refresh_tokens', 'provider_user_id', function (Blueprint $blueprint): void {
+            $blueprint->string('provider_user_id', 191)->nullable();
+        });
     }
 
     /** Intentionally a no-op, for the same reason as the OAuth server metadata migration. */

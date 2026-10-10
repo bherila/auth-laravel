@@ -170,6 +170,17 @@ final class ProviderIdentityTokensTest extends TestCase
         Http::assertSentCount(1 + 1, 'One shared check for use, one fresh check for renewal');
     }
 
+    public function test_a_refresh_token_stays_checkable_after_its_access_token_is_purged(): void
+    {
+        Http::fake(fn () => Http::response($this->activeStatus()));
+        [$client, $tokens] = $this->connect($this->user());
+        $refresh = Passport::refreshToken()->newQuery()->sole();
+        $this->assertSame(['subject-example', 7], [$refresh->provider_subject, (int) $refresh->provider_generation]);
+        Passport::token()->newQuery()->delete();
+
+        $this->refresh($client, $tokens['refresh_token'])->assertOk();
+    }
+
     public function test_a_reset_or_disable_at_the_provider_ends_use_and_renewal(): void
     {
         Http::fake(['*' => Http::sequence()->push($this->activeStatus())->push($this->activeStatus(8))->push($this->activeStatus(8))]);
@@ -199,6 +210,7 @@ final class ProviderIdentityTokensTest extends TestCase
         config(['bherila-auth.provider_identity.enabled' => false]);
         [$client, $tokens] = $this->connect($this->user());
         Passport::token()->newQuery()->update(['provider_subject' => null, 'provider_generation' => null]);
+        Passport::refreshToken()->newQuery()->update(['provider_subject' => null, 'provider_generation' => null, 'provider_user_id' => null]);
 
         config(['bherila-auth.provider_identity.enabled' => true]);
         $this->useToken($tokens['access_token'])->assertUnauthorized();
