@@ -81,7 +81,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
 
         if ($resource !== null) {
             $resource = OAuthResourceIndicator::canonicalize($resource);
-            if ($resource === null || $resource !== OAuthResourceIndicator::configuredCanonical()) {
+            if ($resource === null || ! OAuthResourceIndicator::isConfiguredResource($resource)) {
                 throw new RuntimeException('The access-token resource is not configured.');
             }
         }
@@ -224,7 +224,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         }
 
         try {
-            $configuredResource = OAuthResourceIndicator::configuredCanonical();
+            OAuthResourceIndicator::resources();
             $issuer = OAuthResourceIndicator::issuer();
         } catch (Throwable) {
             return true;
@@ -241,7 +241,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         // explicitly marked the current route with its expected audience.
         if ($expectedResource === null
             || $storedResource === null
-            || $storedResource !== $configuredResource
+            || ! OAuthResourceIndicator::isConfiguredResource($storedResource)
             || $storedResource !== $expectedResource) {
             return true;
         }
@@ -271,7 +271,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         }
 
         $resource = OAuthResourceIndicator::requestResource($request);
-        if ($resource === null || $resource !== OAuthResourceIndicator::configuredCanonical()) {
+        if ($resource === null || ! OAuthResourceIndicator::isConfiguredResource($resource)) {
             throw new RuntimeException('The requested OAuth resource is invalid.');
         }
 

@@ -60,7 +60,7 @@ final class ResourceAccessToken implements AccessTokenEntityInterface
         }
 
         $canonical = OAuthResourceIndicator::canonicalize($resource);
-        if ($canonical === null || $canonical !== OAuthResourceIndicator::configuredCanonical()) {
+        if ($canonical === null || ! OAuthResourceIndicator::isConfiguredResource($canonical)) {
             throw new RuntimeException('The access-token resource is not configured.');
         }
 

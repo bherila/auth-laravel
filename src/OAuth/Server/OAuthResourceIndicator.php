@@ -26,20 +26,92 @@ final class OAuthResourceIndicator
         return (string) $issuer;
     }
 
-    public static function resource(): string
+    /**
+     * The configured protected resources, by name, each with its canonical identifier and
+     * its scope ceiling (null: the whole catalog).
+     *
+     * An application protecting one resource configures `oauth_server.resource`; it is the
+     * single resource `default`. One protecting several (for example a REST API and an MCP
+     * endpoint, each its own audience) configures `oauth_server.resources` instead.
+     *
+     * @return array<string, array{uri: string, scopes: list<string>|null}>
+     */
+    public static function resources(): array
     {
-        $resource = config('bherila-auth.oauth_server.resource');
-        if (! is_string($resource) || self::canonicalize($resource) === null) {
-            throw new RuntimeException('The OAuth protected resource is not configured.');
+        $configured = config('bherila-auth.oauth_server.resources');
+        if (! is_array($configured) || $configured === []) {
+            $configured = ['default' => ['uri' => config('bherila-auth.oauth_server.resource')]];
         }
 
-        return $resource;
+        $resources = [];
+        foreach ($configured as $name => $definition) {
+            $uri = is_array($definition) ? ($definition['uri'] ?? null) : null;
+            $canonical = self::canonicalize($uri);
+            if (! is_string($name) || $name === '' || $canonical === null) {
+                throw new RuntimeException('An OAuth protected resource is not configured correctly.');
+            }
+            $scopes = $definition['scopes'] ?? null;
+            $resources[$name] = [
+                'uri' => $canonical,
+                'scopes' => is_array($scopes) ? self::scopeIdentifiers(array_is_list($scopes) ? $scopes : array_keys($scopes)) : null,
+            ];
+        }
+        if (count(array_unique(array_column($resources, 'uri'))) !== count($resources)) {
+            throw new RuntimeException('Two OAuth protected resources share an identifier.');
+        }
+
+        return $resources;
     }
 
+    /**
+     * The resource a request that names none is bound to (when that is enabled), and the one
+     * single-resource callers mean: `assume_omitted_resource` when it names a resource,
+     * otherwise the first configured.
+     */
+    public static function defaultName(): string
+    {
+        $resources = self::resources();
+        $assumed = config('bherila-auth.oauth_server.assume_omitted_resource');
+        if (is_string($assumed) && $assumed !== '') {
+            if (! array_key_exists($assumed, $resources)) {
+                throw new RuntimeException('The assumed OAuth protected resource is not configured.');
+            }
+
+            return $assumed;
+        }
+
+        return array_key_first($resources);
+    }
+
+    /** The canonical identifier of a configured resource; the default one when no name is given. */
+    public static function resource(?string $name = null): string
+    {
+        $resources = self::resources();
+        $name ??= self::defaultName();
+
+        return $resources[$name]['uri'] ?? throw new RuntimeException("The OAuth protected resource [{$name}] is not configured.");
+    }
+
+    /** The name of the configured resource with this identifier, if any. */
+    public static function nameFor(mixed $value): ?string
+    {
+        $canonical = self::canonicalize($value);
+        if ($canonical === null) {
+            return null;
+        }
+        foreach (self::resources() as $name => $resource) {
+            if ($resource['uri'] === $canonical) {
+                return $name;
+            }
+        }
+
+        return null;
+    }
+
+    /** The default resource's canonical identifier. Prefer isConfiguredResource() to test a value. */
     public static function configuredCanonical(): string
     {
-        return self::canonicalize(self::resource())
-            ?? throw new RuntimeException('The OAuth protected resource is not configured.');
+        return self::resource();
     }
 
     public static function canonicalize(mixed $value): ?string
@@ -83,9 +155,27 @@ final class OAuthResourceIndicator
         return "{$scheme}://{$host}{$port}".(string) ($parts['path'] ?? '');
     }
 
+    /** Whether the value is one of the configured resources. */
     public static function isConfiguredResource(mixed $value): bool
     {
-        return self::canonicalize($value) === self::canonicalize(self::resource());
+        return self::nameFor($value) !== null;
+    }
+
+    /**
+     * Whether these scopes fit the resource's ceiling. A scope may sit under several
+     * resources; the ceiling only keeps scopes off resources that do not list them.
+     *
+     * @param  mixed  $scopes
+     */
+    public static function scopesAllowedFor(string $resource, mixed $scopes): bool
+    {
+        $name = self::nameFor($resource);
+        if ($name === null) {
+            return false;
+        }
+        $ceiling = self::resources()[$name]['scopes'];
+
+        return $ceiling === null || array_diff(self::scopeIdentifiers($scopes), $ceiling) === [];
     }
 
     public static function validatedFor(Request $request): ?string
@@ -96,12 +186,18 @@ final class OAuthResourceIndicator
     }
 
     /** Mark a protected request with the exact audience its route accepts. */
-    public static function expectConfiguredFor(Request $request): string
+    public static function expectFor(Request $request, ?string $name = null): string
     {
-        $resource = self::configuredCanonical();
+        $resource = self::resource($name);
         $request->attributes->set(self::EXPECTED_RESOURCE_ATTRIBUTE, $resource);
 
         return $resource;
+    }
+
+    /** @deprecated use expectFor(); kept for applications calling it directly */
+    public static function expectConfiguredFor(Request $request): string
+    {
+        return self::expectFor($request);
     }
 
     public static function expectedFor(Request $request): ?string
@@ -123,7 +219,9 @@ final class OAuthResourceIndicator
      */
     public static function assumesOmittedResource(): bool
     {
-        return (bool) config('bherila-auth.oauth_server.assume_omitted_resource', false);
+        $assumed = config('bherila-auth.oauth_server.assume_omitted_resource', false);
+
+        return $assumed === true || (is_string($assumed) && $assumed !== '');
     }
 
     /** Whether a token/authorization request names a resource, explicitly or by that assumption. */
@@ -142,10 +240,35 @@ final class OAuthResourceIndicator
     public static function requestResource(Request $request): ?string
     {
         if (! $request->exists('resource')) {
-            return self::assumesOmittedResource() ? self::configuredCanonical() : null;
+            return self::assumesOmittedResource() ? self::resource() : null;
+        }
+        // One audience per credential: a repeated parameter is refused, not silently narrowed
+        // to whichever value the query parser kept.
+        if (self::repeatsResource($request)) {
+            return null;
         }
 
         return self::canonicalize($request->input('resource'));
+    }
+
+    /** Whether the raw query or form body carries `resource` more than once. */
+    public static function repeatsResource(Request $request): bool
+    {
+        $count = 0;
+        $sources = [(string) $request->server('QUERY_STRING', '')];
+        if (str_contains((string) $request->header('Content-Type', ''), 'application/x-www-form-urlencoded')) {
+            $sources[] = (string) $request->getContent();
+        }
+        foreach ($sources as $source) {
+            foreach (explode('&', $source) as $pair) {
+                $key = urldecode(explode('=', $pair, 2)[0]);
+                if ($key === 'resource' || str_starts_with($key, 'resource[')) {
+                    $count++;
+                }
+            }
+        }
+
+        return $count > 1;
     }
 
     /** @return list<string> */

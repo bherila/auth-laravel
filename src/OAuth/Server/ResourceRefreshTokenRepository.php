@@ -25,7 +25,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
 
         if ($resource !== null) {
             $resource = OAuthResourceIndicator::canonicalize($resource);
-            if ($resource === null || $resource !== OAuthResourceIndicator::configuredCanonical()) {
+            if ($resource === null || ! OAuthResourceIndicator::isConfiguredResource($resource)) {
                 throw new RuntimeException('The refresh-token resource is not configured.');
             }
         }
@@ -96,7 +96,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         }
 
         if ($storedResource === null
-            || $storedResource !== OAuthResourceIndicator::configuredCanonical()
+            || ! OAuthResourceIndicator::isConfiguredResource($storedResource)
             || ! $hasRequestedResource
             || $requestedResource !== $storedResource) {
             // Do not consume the refresh token for a resource mismatch. A client
