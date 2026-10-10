@@ -282,7 +282,7 @@ final class OAuthMultipleResourcesTest extends TestCase
 
         $this->getJson('/.well-known/oauth-authorization-server', ['Origin' => 'https://other.example.test'])->assertOk()
             ->assertHeaderMissing('Access-Control-Allow-Origin');
-        $this->call('OPTIONS', '/oauth/token', [], [], [], ['HTTP_ORIGIN' => 'https://other.example.test'])->assertForbidden();
+        $this->assertFalse($this->call('OPTIONS', '/oauth/token', [], [], [], ['HTTP_ORIGIN' => 'https://other.example.test'])->headers->has('Access-Control-Allow-Origin'));
         $this->getJson('/.well-known/oauth-authorization-server')->assertOk()->assertHeaderMissing('Access-Control-Allow-Origin');
         // Cacheable either way, so even the header-less answers vary by Origin.
         $this->assertStringContainsString('Origin', (string) $this->getJson('/.well-known/oauth-authorization-server')->headers->get('Vary'));
@@ -317,6 +317,30 @@ final class OAuthMultipleResourcesTest extends TestCase
         ]]);
         $this->expectExceptionMessage('share an identifier');
         OAuthResourceIndicator::resources();
+    }
+
+    public function test_resources_that_would_shadow_each_others_discovery_are_refused(): void
+    {
+        config(['bherila-auth.oauth_server.resources.other_host' => ['uri' => 'https://other.example.test/api/v1/mcp']]);
+        $this->expectExceptionMessage('share a metadata path');
+        OAuthResourceIndicator::resources();
+    }
+
+    public function test_a_malformed_resources_setting_fails_instead_of_falling_back(): void
+    {
+        config(['bherila-auth.oauth_server.resources' => 'rest']);
+        $this->expectExceptionMessage('not configured correctly');
+        OAuthResourceIndicator::resources();
+    }
+
+    public function test_preflights_from_unlisted_origins_reach_application_middleware(): void
+    {
+        config(['bherila-auth.oauth_server.cors.allowed_origins' => ['https://agent.example.test']]);
+        Route::middleware(\BWH\Auth\Http\Middleware\OAuthEndpointCors::class)
+            ->match(['GET', 'OPTIONS'], '/custom-cors-probe', fn () => response('app answered', 200));
+
+        $this->call('OPTIONS', '/custom-cors-probe', [], [], [], ['HTTP_ORIGIN' => 'https://other.example.test'])
+            ->assertOk()->assertSee('app answered');
     }
 
     public function test_a_malformed_scope_ceiling_fails_instead_of_admitting_everything(): void

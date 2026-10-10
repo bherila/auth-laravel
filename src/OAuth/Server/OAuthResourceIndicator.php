@@ -39,7 +39,12 @@ final class OAuthResourceIndicator
     public static function resources(): array
     {
         $configured = config('bherila-auth.oauth_server.resources');
-        if (! is_array($configured) || $configured === []) {
+        if ($configured !== null && ! is_array($configured)) {
+            // Absent or empty means the single legacy resource; anything else is a mistake that
+            // must not quietly drop the per-resource audiences and ceilings.
+            throw new RuntimeException('The OAuth protected resources are not configured correctly.');
+        }
+        if ($configured === null || $configured === []) {
             $configured = ['default' => ['uri' => config('bherila-auth.oauth_server.resource')]];
         }
 
@@ -62,6 +67,12 @@ final class OAuthResourceIndicator
         }
         if (count(array_unique(array_column($resources, 'uri'))) !== count($resources)) {
             throw new RuntimeException('Two OAuth protected resources share an identifier.');
+        }
+        // Each document is routed by path alone, so two resources whose identifiers differ only
+        // by host or a trailing slash would shadow each other's discovery.
+        $paths = array_map(static fn (array $resource): string => rtrim((string) (parse_url($resource['uri'], PHP_URL_PATH) ?? ''), '/'), $resources);
+        if (count(array_unique($paths)) !== count($paths)) {
+            throw new RuntimeException('Two OAuth protected resources share a metadata path.');
         }
 
         return $resources;
