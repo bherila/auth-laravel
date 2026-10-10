@@ -130,6 +130,12 @@ class AuthServiceProvider extends ServiceProvider
             $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class, PruneDynamicClientsCommand::class]);
         }
 
+        // Registered whether or not a handler is bound, so a scheduled run without one
+        // reports the missing handler rather than an unknown command.
+        if ($this->app->runningInConsole()) {
+            $this->commands([\BWH\Auth\Console\ConsumeIdentityTombstonesCommand::class]);
+        }
+
         // Opt-in: an application that manages trusted proxies itself, or has no
         // proxy in front, leaves this off and nothing changes.
         if ((bool) config('bherila-auth.trusted_proxies.apply', false)) {
