@@ -129,11 +129,13 @@ final readonly class ProviderIdentityTokens
         } catch (ProviderSessionExpired) {
             return true;
         }
+        $subject = $credential->getAttribute(self::SUBJECT_COLUMN);
         if ($binding === null) {
-            return false;
+            // Exempt only credentials issued to an account that was unbound at the time. One
+            // carrying a provider stamp belongs to an identity the account has since lost.
+            return $subject !== null;
         }
 
-        $subject = $credential->getAttribute(self::SUBJECT_COLUMN);
         $generation = $credential->getAttribute(self::GENERATION_COLUMN);
         if (! is_string($subject) || $subject !== $binding->subject || ! is_numeric($generation) || (int) $generation < 0) {
             return true;

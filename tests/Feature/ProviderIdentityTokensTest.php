@@ -227,6 +227,17 @@ final class ProviderIdentityTokensTest extends TestCase
         $this->useToken($tokens['access_token'])->assertUnauthorized();
     }
 
+    public function test_a_token_stops_when_its_account_loses_the_provider_binding(): void
+    {
+        Http::fake(fn () => Http::response($this->activeStatus()));
+        $user = $this->user();
+        [$client, $tokens] = $this->connect($user);
+        $user->forceFill(['oauth_provider' => null, 'oauth_subject' => null])->save();
+
+        $this->useToken($tokens['access_token'])->assertUnauthorized();
+        $this->refresh($client, $tokens['refresh_token'])->assertStatus(400);
+    }
+
     public function test_authorization_without_a_verified_session_issues_no_code(): void
     {
         Http::fake();
