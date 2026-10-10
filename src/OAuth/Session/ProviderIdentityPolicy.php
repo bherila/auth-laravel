@@ -81,7 +81,11 @@ final readonly class ProviderIdentityPolicy
             }
             $status = $this->client->status($subject);
             $observation = ['generation' => $status?->credentialVersion, 'checked_at' => Carbon::now()->getTimestamp()];
-            $this->cache(fn (Repository $store) => $store->put($this->key($subject), $observation, self::FRESHNESS_SECONDS));
+            // A store may report a failed write by returning false rather than throwing; an
+            // observation nobody else can read would make every caller ask again.
+            if (! $this->cache(fn (Repository $store) => $store->put($this->key($subject), $observation, self::FRESHNESS_SECONDS))) {
+                throw new ProviderStatusUnavailable('Provider status verification is unavailable.');
+            }
 
             return $observation;
         };

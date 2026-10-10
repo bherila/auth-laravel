@@ -249,6 +249,23 @@ class ProviderIdentityEnforcementTest extends TestCase
         }
     }
 
+    public function test_a_cache_write_reported_as_failed_refuses_retryably(): void
+    {
+        Http::fake(fn () => Http::response($this->payload()));
+        config(['cache.stores.unwritable' => ['driver' => 'unwritable']]);
+        Cache::extend('unwritable', fn () => Cache::repository(new class extends ArrayStore
+        {
+            public function put($key, $value, $seconds): bool
+            {
+                return false;
+            }
+        }));
+        config(['bherila-auth.provider_identity.cache_store' => 'unwritable']);
+
+        $this->expectException(ProviderStatusUnavailable::class);
+        $this->policy()->verify('subject-example', 7);
+    }
+
     public function test_a_failing_shared_store_refuses_retryably_instead_of_erroring(): void
     {
         Http::fake(fn () => Http::response($this->payload()));
