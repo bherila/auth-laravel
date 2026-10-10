@@ -9,6 +9,8 @@ Includes:
 
 - OAuth 2.0 authorization-code client mechanics with PKCE and validated identity responses
 - Opt-in [provider browser-session generation verification](docs/provider-session-verification.md)
+- Opt-in [identity tombstone consumption](docs/identity-tombstones.md): apply the identity provider's deletions
+  through an application-bound handler and acknowledge each one after local deletion commits
 - opt-in Passport authorization-server helpers for metadata, dynamic public-client registration,
   S256 PKCE, RFC 8707 resource binding, RFC 7662 backchannel introspection, and a shared consent experience
 - WebAuthn/passkey registration and login

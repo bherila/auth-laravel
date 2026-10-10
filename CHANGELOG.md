@@ -4,6 +4,28 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Identity tombstone consumer (opt-in)
+
+- New `bherila-auth:consume-identity-tombstones {--limit=} {--max-pages=10}` reads the identity
+  provider's pending deletion tombstone feed with the `oauth_client` credential, hands each
+  tombstone to the application's `BWH\Auth\OAuth\Lifecycle\IdentityTombstoneHandler`, and
+  acknowledges it only after the handler returns (its local deletion has committed). A handler
+  failure leaves that tombstone unacknowledged, the run continues, and the command exits non-zero.
+  The cursor advances only after a whole page is recorded and is kept per provider/client; a lease
+  in the cursor table keeps runs from overlapping. Output and logs carry counts and tombstone ids,
+  never subjects. See [docs/identity-tombstones.md](docs/identity-tombstones.md).
+- New `identity_tombstones` config section (`connection`, `table`, `page_limit`) and a separately
+  published migration group, `bherila-auth-identity-tombstone-migrations`, for the cursor table.
+- **Nothing changes until an application binds the handler**, publishes the migration and
+  schedules the command.
+
+### Shared reconciliation transport
+
+- `ProviderIdentityStatusClient` now sends through an internal transport shared with the tombstone
+  client. Its constructor, request, validation and exception messages are unchanged.
+
 ## v0.22.1 - 2026-10-10
 
 ### Personal API tokens may carry MCP connection scopes (opt-in)

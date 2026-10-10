@@ -15,6 +15,7 @@ Covered package capabilities:
 - Authenticated password change API.
 - Email-based 2FA APIs and mailables.
 - Database migrations for shared auth tables.
+- Opt-in identity provider reconciliation clients: session status checks and the deletion tombstone consumer (`bherila-auth:consume-identity-tombstones`).
 - Package routes, config, events, audit logger interfaces, and service classes.
 
 Out of scope:
@@ -54,6 +55,7 @@ Out of scope:
 - Laravel app session storage to WebAuthn challenge verification.
 - Browser/client to the OAuth authorization server and consent UI.
 - OAuth authorization server to the Passport token database and protected resource endpoint.
+- Laravel app to the identity provider's reconciliation API, authenticated with the static OAuth client credential (trusted HTTPS base URL, no redirects, bounded time and response size, strict response validation).
 - Composer dependency supply chain to deployed package code.
 - App-specific policy layer through `AuthUserPolicy` and `AuthAuditLogger`.
 
