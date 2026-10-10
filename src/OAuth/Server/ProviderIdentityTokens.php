@@ -39,6 +39,13 @@ final readonly class ProviderIdentityTokens
     /** On refresh tokens, which have no owner column of their own. */
     public const OWNER_COLUMN = 'provider_user_id';
 
+    /**
+     * The stamp recorded on a credential issued to an account with no provider binding. It
+     * tells such credentials apart from ones issued before stamping existed, which stay
+     * refused even if their account is later unbound.
+     */
+    public const UNBOUND_SUBJECT = '';
+
     /** The stamp carried from a code or refresh token to the access token minted from it. */
     public const REQUEST_ATTRIBUTE = 'bherila_auth.provider_identity_stamp';
 
@@ -134,9 +141,10 @@ final readonly class ProviderIdentityTokens
         }
         $subject = $credential->getAttribute(self::SUBJECT_COLUMN);
         if ($binding === null) {
-            // Exempt only credentials issued to an account that was unbound at the time. One
-            // carrying a provider stamp belongs to an identity the account has since lost.
-            return $subject !== null;
+            // Exempt only credentials recorded as issued to an unbound account. One carrying a
+            // provider stamp belongs to an identity the account has since lost, and one with
+            // no stamp at all predates enforcement and may have been issued while it was bound.
+            return $subject !== self::UNBOUND_SUBJECT;
         }
 
         $generation = $credential->getAttribute(self::GENERATION_COLUMN);
@@ -177,7 +185,7 @@ final readonly class ProviderIdentityTokens
         if ($user === null || ! $request->hasSession()) {
             $user = $this->users()->retrieveById($userId);
             if ($user !== null && $this->bindings->binding($user) === null) {
-                return null;
+                return self::unboundStamp();
             }
             throw new RuntimeException('Issuing a credential requires a verified provider session.');
         }
@@ -187,7 +195,7 @@ final readonly class ProviderIdentityTokens
 
         $binding = $this->bindings->binding($user);
         if ($binding === null) {
-            return null;
+            return self::unboundStamp();
         }
         if (! self::enabled()) {
             $generation = $this->session->baseline($request, $binding->provider, $binding->subject);
@@ -200,6 +208,12 @@ final readonly class ProviderIdentityTokens
         }
 
         return ['subject' => $binding->subject, 'generation' => $identity->credentialVersion];
+    }
+
+    /** @return array{subject: string, generation: int} */
+    private static function unboundStamp(): array
+    {
+        return ['subject' => self::UNBOUND_SUBJECT, 'generation' => 0];
     }
 
     private function users(): UserProvider

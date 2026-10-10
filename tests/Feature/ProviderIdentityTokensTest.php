@@ -250,6 +250,19 @@ final class ProviderIdentityTokensTest extends TestCase
         $this->refresh($client, $tokens['refresh_token'])->assertStatus(400);
     }
 
+    public function test_a_credential_from_before_enforcement_stays_refused_after_its_account_is_unbound(): void
+    {
+        Http::fake();
+        $user = $this->user();
+        [$client, $tokens] = $this->connect($user);
+        Passport::token()->newQuery()->update(['provider_subject' => null, 'provider_generation' => null]);
+        Passport::refreshToken()->newQuery()->update(['provider_subject' => null, 'provider_generation' => null]);
+        $user->forceFill(['oauth_provider' => null, 'oauth_subject' => null])->save();
+
+        $this->useToken($tokens['access_token'])->assertUnauthorized();
+        $this->refresh($client, $tokens['refresh_token'])->assertStatus(400);
+    }
+
     public function test_authorization_without_a_verified_session_issues_no_code(): void
     {
         Http::fake();
