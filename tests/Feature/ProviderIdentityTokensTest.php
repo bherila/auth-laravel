@@ -304,6 +304,15 @@ final class ProviderIdentityTokensTest extends TestCase
         $this->actingAs($this->user())->post('/oauth/token/refresh')->assertNotFound();
     }
 
+    public function test_a_transient_token_cookie_never_reaches_the_application(): void
+    {
+        // The cookie Passport's CreateFreshApiToken middleware would attach authenticates as
+        // the signed-in person with every scope; under the agent profile no route sees it.
+        Route::get('/cookie-probe', fn () => request()->cookie(Passport::cookie()) === null ? 'ignored' : 'present');
+        $this->withUnencryptedCookie(Passport::cookie(), 'example-cookie-value')
+            ->get('/cookie-probe')->assertOk()->assertSee('ignored');
+    }
+
     /** The authorize and approve steps, without the helper's assertion that a code came back. */
     private function agentOAuthCodeFlowWithoutAssertions(User $user, string $client): TestResponse
     {

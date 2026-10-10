@@ -147,6 +147,10 @@ class AuthServiceProvider extends ServiceProvider
         }
 
         if ($this->oauthServerEnabled() && \BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
+            $kernel = $this->app->make(\Illuminate\Contracts\Http\Kernel::class);
+            if (method_exists($kernel, 'prependMiddleware')) {
+                $kernel->prependMiddleware(\BWH\Auth\Http\Middleware\IgnoreTransientTokenCookies::class);
+            }
             $this->app->booted(function (): void {
                 Route::getRoutes()->getByName('passport.token.refresh')?->middleware(
                     \BWH\Auth\Http\Middleware\RefuseTransientTokens::class,
