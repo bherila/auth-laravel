@@ -222,6 +222,30 @@ return [
         'per_minute' => 120,
     ],
 
+    'identity_tombstones' => [
+        // Consuming the identity provider's deletion tombstone feed
+        // (`bherila-auth:consume-identity-tombstones`). Off until the application binds
+        // BWH\Auth\OAuth\Lifecycle\IdentityTombstoneHandler; uses the oauth_client credential.
+        // The cursor table's connection; null for the default. Durable and shared by every server
+        // that runs the command: it also holds the lease that keeps two runs from overlapping.
+        'connection' => env('BHERILA_AUTH_IDENTITY_TOMBSTONE_CONNECTION'),
+        'table' => 'bherila_auth_identity_tombstone_cursors',
+        // Tombstones whose handler failed, retried first on each run rather than when the feed drains.
+        'retry_table' => 'bherila_auth_identity_tombstone_retries',
+        // How long a run holds its lease before another may take over (seconds, at least 60).
+        'lease_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_LEASE_SECONDS', 900),
+        // The longest one handler call may take (seconds, at most lease_seconds). Before each call
+        // the run makes sure this much lease remains, so a handler finishing within it never
+        // overlaps another run. Nothing can renew the lease during the call itself.
+        'handler_budget_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_HANDLER_BUDGET_SECONDS', 300),
+        // Tombstones per page, 1 through 100 (the provider's maximum).
+        'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 25),
+        // The most provider requests (reads and acknowledgements) one run sends per minute; 0 for
+        // unpaced. The provider allows 60 a minute shared with session status checks, so the
+        // default leaves half for those.
+        'requests_per_minute' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_REQUESTS_PER_MINUTE', 30),
+    ],
+
     'migrations' => [
         'drop_tables_on_rollback' => false,
     ],

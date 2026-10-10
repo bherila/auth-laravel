@@ -43,6 +43,32 @@ the first entry here is in the git history.
 - `ProviderSessionExpired` and `ProviderStatusUnavailable` render as 401 and 503 when uncaught.
 - The agent profile refuses Passport's transient-token cookie route.
 
+### Identity tombstone consumer (opt-in)
+
+- New `bherila-auth:consume-identity-tombstones {--limit=} {--max-pages=4}` reads the identity
+  provider's pending deletion tombstone feed with the `oauth_client` credential, hands each
+  tombstone to the application's `BWH\Auth\OAuth\Lifecycle\IdentityTombstoneHandler`, and
+  acknowledges it only after the handler returns (its local deletion has committed). A handler
+  failure leaves that tombstone unacknowledged and records it in a retry table, so it is retried
+  first on every later run; the run continues, and the command exits non-zero.
+  The cursor advances only after a whole page is recorded and is kept per provider/client; a lease
+  in the cursor table (`lease_seconds`, default 900) keeps runs from overlapping, renewed before
+  each handler call so that at least `handler_budget_seconds` (default 300) remain. Output and
+  logs carry counts and tombstone ids, never subjects. See [docs/identity-tombstones.md](docs/identity-tombstones.md).
+- Requests are paced to `requests_per_minute` (default 30) so a run leaves half of the provider's
+  shared 60-a-minute reconciliation allowance to session status checks; pages default to 25.
+- New `identity_tombstones` config section (`connection`, `table`, `retry_table`, `lease_seconds`,
+  `handler_budget_seconds`, `page_limit`, `requests_per_minute`) and
+  a separately published migration group, `bherila-auth-identity-tombstone-migrations`, for the
+  cursor and retry tables.
+- **Nothing changes until an application binds the handler**, publishes the migration and
+  schedules the command.
+
+### Shared reconciliation transport
+
+- `ProviderIdentityStatusClient` now sends through an internal transport shared with the tombstone
+  client. Its constructor, request, validation and exception messages are unchanged.
+
 ## v0.22.1 - 2026-10-10
 
 ### Personal API tokens may carry MCP connection scopes (opt-in)

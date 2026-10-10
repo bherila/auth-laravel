@@ -91,6 +91,10 @@ class AuthServiceProvider extends ServiceProvider
         ], 'bherila-auth-delegated-access-migrations');
 
         $this->publishes([
+            __DIR__.'/../database/identity-tombstone-migrations' => database_path('migrations'),
+        ], 'bherila-auth-identity-tombstone-migrations');
+
+        $this->publishes([
             __DIR__.'/../resources/views' => resource_path('views/vendor/bherila-auth'),
         ], 'bherila-auth-views');
 
@@ -125,6 +129,12 @@ class AuthServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([PruneAuthAuditLogCommand::class, PruneDelegatedAccessNoncesCommand::class, CheckCloudflareRangesCommand::class, PruneDynamicClientsCommand::class]);
+        }
+
+        // Registered whether or not a handler is bound, so a scheduled run without one
+        // reports the missing handler rather than an unknown command.
+        if ($this->app->runningInConsole()) {
+            $this->commands([\BWH\Auth\Console\ConsumeIdentityTombstonesCommand::class]);
         }
 
         // Opt-in: an application that manages trusted proxies itself, or has no
