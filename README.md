@@ -585,6 +585,10 @@ Route::post('/mcp', ...)->middleware([ExpectOAuthResource::class.':mcp_alias', '
 
 `oauth_server.cors.allowed_origins` lists the origins (or `*`) allowed to call discovery, registration and the token endpoint from a browser. Listed origins get `Access-Control-Allow-Origin` (never credentials) and preflights; any other origin gets no CORS headers, and requests without an `Origin` are unaffected. An MCP endpoint's own origin policy remains the application's.
 
+#### Accounts the application has disabled
+
+Bind a `BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy` to refuse OAuth credentials for accounts your application considers unable to hold them (disabled, suspended, not approved). Every authorization code, access token (agent and personal) and refresh token is checked when issued, exchanged, refreshed and used; a refused refresh is refused without consuming the refresh token. When disabling an account, also call `app(OAuthCredentialOwners::class)->revokeAll($user)` so re-enabling it does not revive old credentials. It is separate from `AuthUserPolicy::canLogin()`, which answers whether someone may sign in interactively.
+
 ### Agent preset operations
 
 - **Prune stale self-registrations daily:** `Schedule::command('bherila-auth:prune-dynamic-clients')->daily();`. The retention window is `oauth_server.dynamic_clients.retention_days`, and `last_used_at_column` must be set for recent use to count.
