@@ -2,8 +2,60 @@
 
 These helpers are opt-in. Installing the package does not add middleware, end
 local sessions or change application login policy. They implement the consumer
-side of the status contract in `auth-manager` epic #29; the provider status
-endpoint and consumer integration must deploy before enabling enforcement.
+side of the provider's identity-status contract; the provider status endpoint
+must be deployed before enabling enforcement.
+
+## Quick start
+
+1. In the login callback, after binding the account by provider and subject and
+   calling `Auth::login()` and `session()->regenerate()`:
+
+   ```php
+   try {
+       app(ProviderSession::class)->establish($request, $identity, Auth::guard());
+   } catch (ProviderStatusUnavailable) {
+       abort(503, 'Sign-in verification is unavailable. Please retry.');
+   }
+   ```
+
+2. Add `RequireActiveProviderSession` after authentication on every
+   session-authenticated route (for example, append it to the `web` group, or
+   use it alongside `auth`). Pass guard names as parameters if the route does
+   not use the default guard. A session holds one provider login: guards that
+   share a session must be signed in as the same provider subject. Sign-out routes
+   named in `provider_identity.except_routes` (default `logout`) are let through,
+   so a person can always end their session during an outage. The default
+   `ColumnProviderBindingResolver` reads Eloquent models; bind your own resolver
+   for guards whose users are not Eloquent models.
+3. If the account's binding does not live in `oauth_provider` / `oauth_subject`
+   columns, bind your own `ProviderBindingResolver`, or rename the columns in
+   `bherila-auth.provider_identity.binding`.
+4. Use a cache store shared by every web worker
+   (`bherila-auth.provider_identity.cache_store`), then set
+   `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED=true`.
+
+`establish()` remembers the login generation even while enforcement is off, so
+sessions started after deploying step 1 survive turning enforcement on. Sessions
+started before it have no baseline and are asked to sign in again once.
+
+The middleware implements the consumer actions described below: an ended identity
+logs out the guard, invalidates the session, regenerates the CSRF token and
+redirects (`expired_redirect_route`) or answers JSON 401; an unavailable provider
+answers 503 with `Retry-After` and keeps the session. Applications that need
+different responses can call `ProviderSession::assertActive()` themselves.
+
+## Shared observations
+
+`ProviderIdentityPolicy` holds one status observation per provider context and
+subject, shared by every credential of that person. A person with several
+sessions costs one status request per freshness window, which keeps traffic
+within the provider's per-client throttle without widening the window. A
+credential records the time of the observation it relied on, not the time it
+asked, so a shared answer never extends freshness. Inactive answers are shared
+too; outages are never cached. Privileged writes (`fresh: true`) bypass the
+shared observation and refresh it.
+
+## Details
 
 `OAuthIdentity::credentialVersion` preserves the optional integer returned by
 the provider's login identity response. Old providers continue to authenticate

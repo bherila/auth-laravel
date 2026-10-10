@@ -42,6 +42,7 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->app->bindIf(\BWH\Auth\OAuth\Credentials\CredentialOwnerResolver::class, \BWH\Auth\OAuth\Credentials\UserIsCredentialOwner::class);
         $this->app->bindIf(\BWH\Auth\OAuth\Credentials\GrantableScopes::class, \BWH\Auth\OAuth\Credentials\ConfiguredGrantableScopes::class);
+        $this->app->bindIf(\BWH\Auth\OAuth\Session\ProviderBindingResolver::class, \BWH\Auth\OAuth\Session\ColumnProviderBindingResolver::class);
         $this->mergeConfigRecursivelyFrom(__DIR__.'/../config/bherila-auth.php', 'bherila-auth');
         if ($this->oauthServerEnabled() && \BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
             // Before any provider boots, so Passport never registers device routes.
