@@ -84,7 +84,7 @@ final class AgentOAuthServerPresetTest extends TestCase
         $this->assertTrue($config['assume_omitted_resource']);
         $this->assertSame(['none'], $config['token_endpoint_auth_methods'], 'An overriding list replaces the preset list');
         $this->assertSame(['app_name' => 'Example'], $config['consent']);
-        $this->assertSame([EnsureOAuthServerEnabled::class, EnforceOAuthPkce::class, EnforceOAuthResourceIndicator::class, 'x'], AgentOAuthServer::passportMiddleware(['x']));
+        $this->assertSame([EnsureOAuthServerEnabled::class, \BWH\Auth\Http\Middleware\OAuthEndpointCors::class, EnforceOAuthPkce::class, EnforceOAuthResourceIndicator::class, 'x'], AgentOAuthServer::passportMiddleware(['x']));
     }
 
     /** RFC 9728: the well-known segment goes before the path of a path-mounted resource. */
