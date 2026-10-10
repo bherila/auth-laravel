@@ -152,7 +152,8 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
     {
         $schema = $model->getConnection()->getSchemaBuilder();
         if (! $schema->hasColumn($model->getTable(), ProviderIdentityTokens::OWNER_COLUMN)) {
-            if (ProviderIdentityTokens::enabled()) {
+            // Either check needs the owner once the access token is purged.
+            if (ProviderIdentityTokens::enabled() || app()->bound(\BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy::class)) {
                 throw new RuntimeException("The {$model->getTable()} provider identity columns are required.");
             }
 
