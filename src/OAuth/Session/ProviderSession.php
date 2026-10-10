@@ -3,6 +3,7 @@
 namespace BWH\Auth\OAuth\Session;
 
 use BWH\Auth\OAuth\OAuthIdentity;
+use Illuminate\Contracts\Auth\StatefulGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
@@ -11,7 +12,35 @@ final readonly class ProviderSession
 {
     private const KEY = 'bherila_auth.provider_session';
 
-    public function __construct(private ProviderIdentityStatusClient $client) {}
+    public function __construct(
+        private ProviderIdentityStatusClient $client,
+        private ProviderIdentityPolicy $policy,
+    ) {}
+
+    /**
+     * Remember the login generation for the guard that just authenticated.
+     *
+     * When enforcement is enabled, a login whose generation cannot be remembered is
+     * undone (logout, new session, new CSRF token) and reported as unavailable, so the
+     * application answers 503 and the person retries. When enforcement is off the
+     * baseline is still remembered if the provider supplies one, so turning it on later
+     * does not end every existing session at once.
+     */
+    public function establish(Request $request, OAuthIdentity $identity, StatefulGuard $guard): void
+    {
+        try {
+            $this->remember($request, $identity);
+        } catch (ProviderSessionExpired|ProviderStatusUnavailable $exception) {
+            if (! config('bherila-auth.provider_identity.enabled', false)) {
+                return;
+            }
+            $guard->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            throw new ProviderStatusUnavailable('Provider session verification is unavailable. Sign in again.', previous: $exception);
+        }
+    }
 
     /** Call only after successful callback binding and local authentication. */
     public function remember(Request $request, OAuthIdentity $identity): void
@@ -55,19 +84,21 @@ final readonly class ProviderSession
             $this->expire($request);
         }
 
-        $now = Carbon::now()->getTimestamp();
-        if (! $fresh && $state['checked_at'] <= $now && $now - $state['checked_at'] < 300) {
+        if (! $fresh && ProviderIdentityPolicy::isFresh($state['checked_at'])) {
             return new OAuthIdentity($provider, $subject, $state['name'], $state['email'],
                 credentialVersion: $state['generation']);
         }
 
-        $status = $this->client->status($subject);
-        if ($status === null || $status->credentialVersion !== $state['generation']) {
+        try {
+            // May be answered by an observation another credential of this person made;
+            // keeping its time, not now, stops a shared answer from extending freshness.
+            $checkedAt = $this->policy->verify($subject, $state['generation'], $fresh);
+        } catch (ProviderSessionExpired) {
             $this->expire($request);
         }
 
         // Keep the login generation immutable. A newer generation ends the old session.
-        $state['checked_at'] = $now;
+        $state['checked_at'] = $checkedAt;
         $request->session()->put(self::KEY, $state);
 
         return new OAuthIdentity($provider, $subject, $state['name'], $state['email'],
