@@ -63,7 +63,11 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
-        $attributes += $this->providerIdentityStamp($model, $accessTokenId);
+        $stamp = $this->providerIdentityStamp($model, $accessTokenId);
+        // Checked again here: an account disabled (and its credentials revoked) between the new
+        // access token and this row must not end up holding a fresh, unrevoked refresh token.
+        app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->assertMayHold($stamp[ProviderIdentityTokens::OWNER_COLUMN] ?? null);
+        $attributes += $stamp;
 
         $model->forceFill($attributes)->save();
 
@@ -129,9 +133,12 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             : Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
         $tokens = app(ProviderIdentityTokens::class);
         if ($credential === null) {
-            return ProviderIdentityTokens::enabled();
+            return ProviderIdentityTokens::enabled() || app()->bound(\BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy::class);
         }
-        if ($tokens->revoked($credential, fresh: true)) {
+        $owner = $credential->getAttribute('user_id') ?? $credential->getAttribute(ProviderIdentityTokens::OWNER_COLUMN);
+        // Refused before the grant revokes anything, so a refused refresh token is not consumed.
+        if (app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->refused($owner)
+            || $tokens->revoked($credential, fresh: true)) {
             return true;
         }
         $tokens->carry($this->request(), $credential);
@@ -149,7 +156,8 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
     {
         $schema = $model->getConnection()->getSchemaBuilder();
         if (! $schema->hasColumn($model->getTable(), ProviderIdentityTokens::OWNER_COLUMN)) {
-            if (ProviderIdentityTokens::enabled()) {
+            // Either check needs the owner once the access token is purged.
+            if (ProviderIdentityTokens::enabled() || app()->bound(\BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy::class)) {
                 throw new RuntimeException("The {$model->getTable()} provider identity columns are required.");
             }
 

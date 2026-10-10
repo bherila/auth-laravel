@@ -7,7 +7,6 @@ use BWH\Auth\OAuth\Session\ProviderIdentityPolicy;
 use BWH\Auth\OAuth\Session\ProviderSession;
 use BWH\Auth\OAuth\Session\ProviderSessionExpired;
 use Illuminate\Contracts\Auth\Authenticatable;
-use Illuminate\Contracts\Auth\UserProvider;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use RuntimeException;
@@ -130,7 +129,7 @@ final readonly class ProviderIdentityTokens
             return false;
         }
 
-        $user = $this->users()->retrieveById($userId);
+        $user = app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->find($userId);
         if ($user === null) {
             return true;
         }
@@ -183,7 +182,7 @@ final readonly class ProviderIdentityTokens
     {
         $user = $request?->user();
         if ($user === null || ! $request->hasSession()) {
-            $user = $this->users()->retrieveById($userId);
+            $user = app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->find($userId);
             if ($user !== null && $this->bindings->binding($user) === null) {
                 return self::unboundStamp();
             }
@@ -217,15 +216,4 @@ final readonly class ProviderIdentityTokens
         return ['subject' => self::UNBOUND_SUBJECT, 'generation' => 0];
     }
 
-    private function users(): UserProvider
-    {
-        $guard = (string) config('bherila-auth.provider_identity.bearer_guard', 'api');
-        $provider = config("auth.guards.{$guard}.provider");
-        $users = is_string($provider) ? auth()->createUserProvider($provider) : null;
-        if ($users === null) {
-            throw new RuntimeException('Provider identity enforcement needs the bearer guard\'s user provider.');
-        }
-
-        return $users;
-    }
 }
