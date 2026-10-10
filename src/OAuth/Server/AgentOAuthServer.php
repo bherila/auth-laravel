@@ -5,6 +5,7 @@ namespace BWH\Auth\OAuth\Server;
 use BWH\Auth\Http\Controllers\OAuthDynamicClientRegistrationController;
 use BWH\Auth\Http\Controllers\OAuthMetadataController;
 use BWH\Auth\Http\Middleware\EnforceOAuthPkce;
+use BWH\Auth\Http\Middleware\OAuthEndpointCors;
 use BWH\Auth\Http\Middleware\EnforceOAuthResourceIndicator;
 use BWH\Auth\Http\Middleware\EnsureOAuthServerEnabled;
 use Illuminate\Support\Facades\Route;
@@ -23,7 +24,9 @@ use Laravel\Passport\Passport;
  * - S256 PKCE for every client (EnforceOAuthPkce);
  * - public-only dynamic client registration at `/oauth/register`;
  * - RFC 8707 binding to `APP_URL/api/v1`, with an omitted `resource` taken as
- *   that one resource, since most generic clients never send it;
+ *   that one resource, since most generic clients never send it - or to several
+ *   resources, each its own audience with its own metadata document and scope
+ *   ceiling (see `resources` below);
  * - `none`, `client_secret_basic` and `client_secret_post` advertised -
  *   confidential clients are only ever ones a person registers;
  * - discovery metadata for the authorization server and protected resource.
@@ -37,6 +40,20 @@ use Laravel\Passport\Passport;
  *     ]),
  *
  * and in config/passport.php: `'middleware' => AgentOAuthServer::passportMiddleware()`.
+ *
+ * Several resources (RFC 9728 wants a document per endpoint whose `resource` is that
+ * endpoint's own URL, so an MCP endpoint is a resource of its own):
+ *
+ *     'oauth_server' => AgentOAuthServer::config(AppScopes::descriptions(), [
+ *         'resources' => [
+ *             'rest' => ['path' => '/api/v1', 'scopes' => AppScopes::rest()],
+ *             'mcp' => ['path' => '/api/v1/mcp', 'scopes' => ['mcp:use', ...AppScopes::modules()]],
+ *         ],
+ *         'assume_omitted_resource' => 'rest',
+ *     ]),
+ *
+ * then `ExpectOAuthResource::class.':mcp'` on the MCP route. A scope may be listed
+ * under several resources.
  */
 final class AgentOAuthServer
 {
@@ -60,11 +77,29 @@ final class AgentOAuthServer
             'scopes' => $scopes,
             'token_endpoint_auth_methods' => ['none', 'client_secret_basic', 'client_secret_post'],
             'assume_omitted_resource' => true,
+            // Origins of browser-based agents allowed to call discovery, registration and the
+            // token endpoint directly (`*` for any). Empty: no CORS headers at all.
+            'cors' => ['allowed_origins' => [], 'max_age' => 600],
             'introspection' => ['enabled' => false, 'clients' => []],
             // Marks the profile so the package's service provider completes the
             // Passport side (scopes, consent view, no device grant).
             'profile' => self::PROFILE,
         ], $overrides);
+
+        // Several resources, each its own audience: `path` is relative to the application
+        // URL (or give a full `uri`). The single `resource` key then names the default one,
+        // for callers that read it directly.
+        if (is_array($config['resources'] ?? null) && $config['resources'] !== []) {
+            foreach ($config['resources'] as $name => $definition) {
+                if (is_array($definition) && ! isset($definition['uri']) && is_string($definition['path'] ?? null)) {
+                    $config['resources'][$name]['uri'] = $base.'/'.ltrim($definition['path'], '/');
+                }
+            }
+            $default = is_string($config['assume_omitted_resource']) ? $config['assume_omitted_resource'] : array_key_first($config['resources']);
+            if (is_string($config['resources'][$default]['uri'] ?? null)) {
+                $config['resource'] = $config['resources'][$default]['uri'];
+            }
+        }
 
         // Derived from the final resource, so overriding the resource cannot
         // leave challenges pointing at a document nothing serves.
@@ -76,6 +111,9 @@ final class AgentOAuthServer
     }
 
     public const string PROFILE = 'agent';
+
+    /** The route default naming which resource a protected-resource document describes. */
+    public const string RESOURCE_ROUTE_DEFAULT = 'bherila_auth_resource';
 
     public static function active(): bool
     {
@@ -124,6 +162,7 @@ final class AgentOAuthServer
     {
         return [
             EnsureOAuthServerEnabled::class,
+            OAuthEndpointCors::class,
             EnforceOAuthPkce::class,
             EnforceOAuthResourceIndicator::class,
             ...$extra,
@@ -138,18 +177,25 @@ final class AgentOAuthServer
      */
     public static function routes(array $protectedResourceMiddleware = [], string $registrationThrottle = 'throttle:10,60'): void
     {
-        Route::withoutMiddleware(['web'])->middleware([EnsureOAuthServerEnabled::class])->group(static function () use ($protectedResourceMiddleware, $registrationThrottle): void {
+        Route::withoutMiddleware(['web'])->middleware([EnsureOAuthServerEnabled::class, OAuthEndpointCors::class])->group(static function () use ($protectedResourceMiddleware, $registrationThrottle): void {
             // RFC 8414: an issuer with a path is discovered under that path too.
             $issuerPath = rtrim((string) (parse_url((string) config('bherila-auth.oauth_server.issuer', ''), PHP_URL_PATH) ?? ''), '/');
             foreach (array_unique(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server'.$issuerPath]) as $path) {
-                Route::get($path, [OAuthMetadataController::class, 'authorizationServer']);
+                Route::match(['GET', 'OPTIONS'], $path, [OAuthMetadataController::class, 'authorizationServer']);
             }
-            // Only at the path derived from the one protected resource: RFC 9728
-            // requires the document's `resource` to match the URL it was
-            // discovered from, so no other suffix may serve it.
-            Route::get(self::protectedResourceMetadataPath(), [OAuthMetadataController::class, 'protectedResource'])
-                ->middleware($protectedResourceMiddleware);
+            // One document per protected resource, each only at the path derived from
+            // that resource: RFC 9728 requires a document's `resource` to be identical
+            // to the identifier it was discovered from, so no other path may serve it.
+            foreach (array_keys(OAuthResourceIndicator::resources()) as $resource) {
+                Route::match(['GET', 'OPTIONS'], self::protectedResourceMetadataPath($resource), [OAuthMetadataController::class, 'protectedResource'])
+                    ->defaults(self::RESOURCE_ROUTE_DEFAULT, $resource)
+                    ->middleware($protectedResourceMiddleware);
+            }
             Route::post('/oauth/register', OAuthDynamicClientRegistrationController::class)->middleware($registrationThrottle);
+            // Preflights for the machine endpoints a browser agent posts to; the middleware
+            // answers them before any controller runs.
+            Route::options('/oauth/register', static fn () => response('', 204));
+            Route::options('/oauth/token', static fn () => response('', 204));
         });
     }
 
@@ -172,10 +218,9 @@ final class AgentOAuthServer
      * application. A deployment mounted under a path must also route the
      * host-root well-known URL (see wellKnown()) to the application.
      */
-    public static function protectedResourceMetadataPath(): string
+    public static function protectedResourceMetadataPath(?string $resource = null): string
     {
-        $resource = (string) config('bherila-auth.oauth_server.resource', '');
-        $path = rtrim((string) (parse_url($resource, PHP_URL_PATH) ?? ''), '/');
+        $path = rtrim((string) (parse_url(OAuthResourceIndicator::resource($resource), PHP_URL_PATH) ?? ''), '/');
         $appPath = rtrim((string) (parse_url((string) config('app.url', ''), PHP_URL_PATH) ?? ''), '/');
         if ($appPath !== '' && str_starts_with($path, $appPath)) {
             $path = substr($path, strlen($appPath));

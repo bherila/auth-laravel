@@ -65,6 +65,27 @@ trait AssertsAgentOAuthContract
     }
 
     /**
+     * Follow a protected endpoint's own bearer challenge to its metadata, as a strict
+     * RFC 9728 client does, and assert the document describes exactly that endpoint's
+     * resource. Run it for every endpoint and alias an agent can be pointed at.
+     */
+    protected function assertProtectedResourceChallenge(string $method, string $path, string $expectedResource): void
+    {
+        $this->app['auth']->forgetGuards();
+        $challenge = $this->json($method, $path)->assertUnauthorized()->headers->get('WWW-Authenticate');
+        $this->assertIsString($challenge, "{$path} answers 401 with a bearer challenge");
+        $this->assertSame(1, preg_match('/resource_metadata="([^"]+)"/', $challenge, $match), "{$path}'s challenge names its resource metadata");
+        $metadataUrl = $match[1];
+        $this->assertSame(\BWH\Auth\OAuth\Server\OAuthProtectedResource::wellKnownFor($expectedResource), $metadataUrl,
+            "{$path}'s metadata is at the path-inserted well-known URL of its own resource");
+
+        $document = $this->getJson((string) parse_url($metadataUrl, PHP_URL_PATH))->assertOk()->json();
+        $this->assertSame($expectedResource, $document['resource'] ?? null,
+            "The metadata reached from {$path} names that resource exactly (RFC 9728 section 3.3)");
+        $this->assertContains((string) config('bherila-auth.oauth_server.issuer'), $document['authorization_servers'] ?? []);
+    }
+
+    /**
      * Authorize (approving consent unless Passport already holds it) and
      * exchange the code with PKCE and no `resource`.
      *

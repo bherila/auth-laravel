@@ -3,6 +3,7 @@
 namespace BWH\Auth\OAuth\Server;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
  * RFC 9728 protected-resource metadata and RFC 6750 bearer challenges.
@@ -12,41 +13,53 @@ use Illuminate\Http\JsonResponse;
  */
 final class OAuthProtectedResource
 {
-    /** @return array<string, mixed> */
-    public static function metadata(?array $supportedScopes = null): array
+    /**
+     * RFC 9728 metadata for one resource (the default when none is named). `resource` is
+     * that resource's identifier exactly, as a client that discovered it expects.
+     *
+     * @return array<string, mixed>
+     */
+    public static function metadata(?array $supportedScopes = null, ?string $resource = null): array
     {
-        $metadata = [
-            'resource' => OAuthResourceIndicator::resource(),
+        return [
+            'resource' => OAuthResourceIndicator::resource($resource),
             'authorization_servers' => [OAuthResourceIndicator::issuer()],
-            'scopes_supported' => self::scopes($supportedScopes),
+            'scopes_supported' => self::scopes($supportedScopes, $resource),
             'bearer_methods_supported' => ['header'],
         ];
-
-        return $metadata;
     }
 
-    public static function metadataResponse(?array $supportedScopes = null): JsonResponse
+    public static function metadataResponse(?array $supportedScopes = null, ?string $resource = null): JsonResponse
     {
-        return response()->json(self::metadata($supportedScopes))->withHeaders([
+        return response()->json(self::metadata($supportedScopes, $resource))->withHeaders([
             'Cache-Control' => 'public, max-age=300',
             'X-Content-Type-Options' => 'nosniff',
         ]);
     }
 
     /**
-     * Return the exact metadata URI that should be put in a bearer challenge.
-     * Applications serving multiple resources should configure this per route.
+     * The metadata URI for a resource's bearer challenge: the RFC 9728 path-inserted
+     * well-known URL of that resource's identifier. Without a name, the resource the
+     * current request's route expects, else the default one.
      */
-    public static function metadataUrl(): ?string
+    public static function metadataUrl(?string $resource = null): ?string
     {
+        $resource ??= self::currentResource();
+        $default = OAuthResourceIndicator::defaultName();
         $url = config('bherila-auth.oauth_server.protected_resource_metadata_url');
-        if ($url !== null) {
+        // The legacy single-resource override applies to the default resource only.
+        if ($url !== null && ($resource === null || $resource === $default)) {
             return OAuthResourceIndicator::absoluteHttpUrl($url);
         }
 
-        $resource = OAuthResourceIndicator::resource();
+        return self::wellKnownFor(OAuthResourceIndicator::resource($resource));
+    }
+
+    /** The RFC 9728 well-known URL for a resource identifier. */
+    public static function wellKnownFor(string $identifier): ?string
+    {
         try {
-            $parts = parse_url($resource);
+            $parts = parse_url($identifier);
         } catch (\ValueError) {
             return null;
         }
@@ -57,9 +70,17 @@ final class OAuthProtectedResource
         }
 
         $port = isset($parts['port']) ? ':'.(int) $parts['port'] : '';
-        $path = (string) ($parts['path'] ?? '');
+        $path = rtrim((string) ($parts['path'] ?? ''), '/');
 
         return "{$parts['scheme']}://{$parts['host']}{$port}/.well-known/oauth-protected-resource".$path;
+    }
+
+    /** The name of the resource the current request's route expects, if it declared one. */
+    private static function currentResource(): ?string
+    {
+        $request = app()->bound('request') ? app('request') : null;
+
+        return $request === null ? null : OAuthResourceIndicator::nameFor(OAuthResourceIndicator::expectedFor($request));
     }
 
     /**
@@ -126,6 +147,26 @@ final class OAuthProtectedResource
         ]);
     }
 
+    /**
+     * The 401 for an unauthenticated request to a protected route, for an application's
+     * exception handler:
+     *
+     *     $exceptions->render(fn (AuthenticationException $e, Request $request)
+     *         => OAuthProtectedResource::unauthenticated($request));
+     *
+     * Null for a route that declared no expected resource (ExpectOAuthResource), so the
+     * application's usual handling applies there. The challenge names the metadata of the
+     * route's own resource, from configuration rather than the request's host.
+     */
+    public static function unauthenticated(Request $request): ?JsonResponse
+    {
+        if (OAuthResourceIndicator::expectedFor($request) === null) {
+            return null;
+        }
+
+        return self::unauthorizedResponse('invalid_token', 'Authentication is required.');
+    }
+
     /** @param list<string> $scopes */
     public static function insufficientScopeResponse(array $scopes): JsonResponse
     {
@@ -160,10 +201,12 @@ final class OAuthProtectedResource
     }
 
     /** @return list<string> */
-    private static function scopes(?array $supportedScopes = null): array
+    private static function scopes(?array $supportedScopes = null, ?string $resource = null): array
     {
         if ($supportedScopes === null) {
-            $supportedScopes = config('bherila-auth.oauth_server.protected_resource_scopes');
+            $resource ??= OAuthResourceIndicator::defaultName();
+            $supportedScopes = OAuthResourceIndicator::resources()[$resource]['scopes']
+                ?? config('bherila-auth.oauth_server.protected_resource_scopes');
         }
         $scopes = $supportedScopes ?? config('bherila-auth.oauth_server.scopes', []);
         if (! is_array($scopes)) {
