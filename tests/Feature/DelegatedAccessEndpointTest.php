@@ -7,8 +7,8 @@ use BWH\Auth\OAuth\DelegatedAccess\DatabaseNonceStore;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessException;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedAccessSettings;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
-use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedCursor;
+use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use BWH\Auth\OAuth\PendingAccount;
 use BWH\Auth\Tests\TestCase;
@@ -25,7 +25,7 @@ use Lcobucci\JWT\Token\Builder;
 
 /**
  * POST /application-access, driven the way the identity provider drives it: a real RS256 actor
- * assertion bound to the exact body, and every success checked against contract version 2.
+ * assertion bound to the exact body, and every success checked against contract version 3.
  */
 class DelegatedAccessEndpointTest extends TestCase
 {
@@ -125,8 +125,8 @@ class DelegatedAccessEndpointTest extends TestCase
         $response = $this->send(['operation' => 'capabilities'])->assertOk()->assertHeaderContains('Cache-Control', 'no-store');
 
         $this->assertSame([['actor-subject', ['operation' => 'capabilities']]], $this->calls);
-        $this->assertSame(['contract_version' => 2, 'application' => self::APPLICATION, 'operation' => 'capabilities'], array_slice($response->json(), 0, 3, true));
-        (new DelegatedContract)->response($response->json(), self::APPLICATION, 'capabilities', null, DelegatedContract::VERSION_2);
+        $this->assertSame(['contract_version' => 3, 'application' => self::APPLICATION, 'operation' => 'capabilities'], array_slice($response->json(), 0, 3, true));
+        (new DelegatedContract)->response($response->json(), self::APPLICATION, 'capabilities', null, DelegatedContract::VERSION_3);
     }
 
     public function test_it_answers_404_until_enabled_and_never_calls_the_adapter(): void
@@ -175,9 +175,11 @@ class DelegatedAccessEndpointTest extends TestCase
     {
         foreach ([
             (string) json_encode(['contract_version' => 1, 'application' => self::APPLICATION, 'operation' => 'capabilities']),
-            (string) json_encode(['contract_version' => 2, 'application' => 'another-app', 'operation' => 'capabilities']),
+            (string) json_encode(['contract_version' => 2, 'application' => self::APPLICATION, 'operation' => 'capabilities']),
+            (string) json_encode(['contract_version' => '3', 'application' => self::APPLICATION, 'operation' => 'capabilities']),
+            (string) json_encode(['contract_version' => 3, 'application' => 'another-app', 'operation' => 'capabilities']),
             '{not json',
-            (string) json_encode(['contract_version' => 2, 'application' => self::APPLICATION, 'operation' => 'delete']),
+            (string) json_encode(['contract_version' => 3, 'application' => self::APPLICATION, 'operation' => 'delete']),
         ] as $body) {
             $this->send([], token: $this->assertion('actor-subject', $body), body: $body)->assertStatus(422);
         }
@@ -262,9 +264,11 @@ class DelegatedAccessEndpointTest extends TestCase
     {
         config(['bherila-auth.delegated_access.writes_enabled' => false]);
         $update = ['operation' => 'update', 'subject' => 'target-subject', 'expected_revision' => 'r1',
-            'access' => ['application_admin' => false, 'workspaces' => []]];
+            'access' => ['application_admin' => false, 'workspaces' => []], 'operation_id' => DelegatedContract::operationId()];
+        $remove = ['operation' => 'remove', 'subject' => 'target-subject', 'expected_revision' => 'r1', 'operation_id' => DelegatedContract::operationId()];
 
         $this->send($update)->assertStatus(403)->assertJsonPath('error', 'not_authorized');
+        $this->send($remove)->assertStatus(403)->assertJsonPath('error', 'not_authorized');
         $this->send(['operation' => 'capabilities'])->assertOk();
 
         $this->assertSame([['actor-subject', ['operation' => 'capabilities']]], $this->calls);
@@ -339,6 +343,69 @@ class DelegatedAccessEndpointTest extends TestCase
         Exceptions::assertReported(DelegatedAccessException::class);
     }
 
+    public function test_a_search_reaches_the_adapter_as_the_query_it_was_sent(): void
+    {
+        $this->answer = static fn (): array => ['subjects' => [['subject' => 'target-subject', 'label' => 'Example Person']], 'next_cursor' => null];
+
+        $this->send(['operation' => 'subjects', 'query' => 'Exam', 'limit' => 10])->assertOk()->assertJsonPath('subjects.0.subject', 'target-subject');
+        $this->send(['operation' => 'workspaces', 'query' => 'x'])->assertStatus(422)->assertJsonPath('error', 'invalid_request');
+
+        $this->assertSame([['actor-subject', ['operation' => 'subjects', 'query' => 'Exam', 'limit' => 10]]], $this->calls);
+    }
+
+    public function test_a_removal_reaches_the_adapter_with_its_operation_and_must_answer_an_empty_projection(): void
+    {
+        Exceptions::fake();
+        $operationId = DelegatedContract::operationId();
+        $remove = ['operation' => 'remove', 'subject' => 'target-subject', 'expected_revision' => 'r1', 'operation_id' => $operationId];
+        $seen = null;
+        $this->answer = function (string $actor, array $payload) use (&$seen): array {
+            $seen = app(DelegatedRequestContext::class);
+
+            return self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]) + ['provisioned_at' => '2026-10-01T09:30:00Z'];
+        };
+
+        $this->send($remove)->assertOk()->assertJsonPath('operation', 'remove')->assertJsonPath('access.workspaces', [])->assertJsonPath('provisioned_at', '2026-10-01T09:30:00Z');
+        $this->assertSame(['actor-subject', $remove], $this->calls[0]);
+        $this->assertInstanceOf(DelegatedRequestContext::class, $seen);
+        $this->assertSame(['remove', $operationId], [$seen->operation, $seen->operationId]);
+
+        // An answer that leaves something the actor manages is not a removal.
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => true, 'workspaces' => []]);
+        $this->send([...$remove, 'operation_id' => DelegatedContract::operationId()])->assertStatus(500)->assertExactJson(['error' => 'internal_error']);
+        Exceptions::assertReported(DelegatedAccessException::class);
+    }
+
+    public function test_a_read_has_no_operation_id_in_its_context(): void
+    {
+        $seen = null;
+        $this->answer = function (string $actor, array $payload) use (&$seen): array {
+            $seen = app(DelegatedRequestContext::class);
+
+            return self::unprovisioned((string) $payload['subject']);
+        };
+
+        $this->send(['operation' => 'read', 'subject' => 'target-subject'])->assertOk();
+        $this->assertNull($seen?->operationId);
+    }
+
+    public function test_an_operation_id_that_is_the_assertion_jti_is_refused_before_the_adapter(): void
+    {
+        $jti = bin2hex(random_bytes(32));
+        $body = $this->body(['operation' => 'remove', 'subject' => 'target-subject', 'expected_revision' => 'r1', 'operation_id' => $jti]);
+
+        $this->send([], token: $this->assertion('actor-subject', $body, $jti), body: $body)->assertStatus(422)->assertJsonPath('error', 'invalid_request');
+        $this->assertSame([], $this->calls);
+    }
+
+    public function test_a_state_with_malformed_metadata_is_never_sent(): void
+    {
+        Exceptions::fake();
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]) + ['last_seen_at' => '2026-10-10 12:00:00'];
+
+        $this->send(['operation' => 'read', 'subject' => 'target-subject'])->assertStatus(500)->assertExactJson(['error' => 'internal_error']);
+        Exceptions::assertReported(DelegatedAccessException::class);
+    }
 
     public function test_the_default_nonce_store_is_the_database_store(): void
     {
@@ -367,8 +434,8 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->assertSame(0, $cursors->after($actor, 'subjects', []));
 
         (new DelegatedContract)->response(
-            ['contract_version' => 2, 'application' => self::APPLICATION, 'operation' => 'subjects', 'subjects' => [], 'next_cursor' => $cursor],
-            self::APPLICATION, 'subjects', null, DelegatedContract::VERSION_2,
+            ['contract_version' => 3, 'application' => self::APPLICATION, 'operation' => 'subjects', 'subjects' => [], 'next_cursor' => $cursor],
+            self::APPLICATION, 'subjects', null, DelegatedContract::VERSION_3,
         );
 
         foreach ([[$actor.'x', 'subjects', $cursor], [$actor, 'workspaces', $cursor], [$actor, 'subjects', $cursor.'x'],
@@ -410,10 +477,22 @@ class DelegatedAccessEndpointTest extends TestCase
         ];
     }
 
+    /**
+     * @param  array<string, mixed>  $access
+     * @return array<string, mixed>
+     */
+    private static function provisioned(string $subject, array $access): array
+    {
+        return [
+            'subject' => $subject, 'provisioned' => true, 'revision' => 'r2', 'access' => $access,
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false],
+        ];
+    }
+
     /** @param array<string, mixed> $input */
     private function body(array $input): string
     {
-        return (string) json_encode(['contract_version' => 2, 'application' => self::APPLICATION, ...$input], JSON_UNESCAPED_SLASHES);
+        return (string) json_encode(['contract_version' => 3, 'application' => self::APPLICATION, ...$input], JSON_UNESCAPED_SLASHES);
     }
 
     /** @param array<string, mixed> $input */
@@ -428,7 +507,7 @@ class DelegatedAccessEndpointTest extends TestCase
         ], $body);
     }
 
-    private function assertion(string $subject, string $body): string
+    private function assertion(string $subject, string $body, ?string $jti = null): string
     {
         $now = new DateTimeImmutable('@'.time());
 
@@ -437,7 +516,7 @@ class DelegatedAccessEndpointTest extends TestCase
             ->withHeader('kid', 'integration-v1')
             ->issuedBy(self::ISSUER)->relatedTo($subject)->permittedFor(self::ENDPOINT)
             ->issuedAt($now)->expiresAt($now->modify('+60 seconds'))
-            ->identifiedBy(bin2hex(random_bytes(32)))
+            ->identifiedBy($jti ?? bin2hex(random_bytes(32)))
             ->withClaim('application', self::APPLICATION)
             ->withClaim('method', 'POST')
             ->withClaim('body_sha256', hash('sha256', $body))

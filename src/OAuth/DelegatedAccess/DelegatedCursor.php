@@ -9,9 +9,10 @@ use Throwable;
  * An opaque keyset cursor for `subjects` and `workspaces` pages.
  *
  * It carries the last key shown, never an offset, so a row removed between pages cannot make the
- * next page skip one. It is encrypted and bound to the actor and the operation, so it cannot be
- * forged, replayed by somebody else, or used against another listing. The actor is bound by digest,
- * which keeps every cursor within the contract's 512-byte bound whatever the subject's length.
+ * next page skip one. It is encrypted and bound to the actor, the operation and the search query,
+ * so it cannot be forged, replayed by somebody else, or used against another listing or another
+ * search. The actor and the query are bound by digest, which keeps every cursor within the
+ * contract's 512-byte bound whatever their length.
  */
 final readonly class DelegatedCursor
 {
@@ -19,13 +20,15 @@ final readonly class DelegatedCursor
 
     /**
      * @param  int  $after  The key of the last entry on this page.
+     * @param  string|null  $query  The search this page answers: the payload's `query`, or null for none.
      */
-    public function encode(string $actorSubject, string $operation, int $after): string
+    public function encode(string $actorSubject, string $operation, int $after, ?string $query = null): string
     {
         return $this->encrypter->encryptString((string) json_encode([
-            'a' => self::actor($actorSubject),
+            'a' => self::digest($actorSubject),
             'o' => $operation,
             'n' => $after,
+            'q' => $query === null ? null : self::digest($query),
         ]));
     }
 
@@ -34,7 +37,8 @@ final readonly class DelegatedCursor
      *
      * @param  array<string, mixed>  $payload
      *
-     * @throws DelegatedAccessException `invalid_cursor` (422) for a cursor that is not this actor's for this operation.
+     * @throws DelegatedAccessException `invalid_cursor` (422) for a cursor that is not this actor's for this
+     *                                  operation and this search: the payload's `query`, or none.
      */
     public function after(string $actorSubject, string $operation, array $payload): int
     {
@@ -48,16 +52,18 @@ final readonly class DelegatedCursor
             throw new DelegatedAccessException('invalid_cursor', 422);
         }
 
-        if (! is_array($cursor) || ! hash_equals(self::actor($actorSubject), (string) ($cursor['a'] ?? ''))
-            || ($cursor['o'] ?? null) !== $operation || ! is_int($cursor['n'] ?? null) || $cursor['n'] < 0) {
+        $query = isset($payload['query']) && is_string($payload['query']) ? self::digest($payload['query']) : null;
+        if (! is_array($cursor) || ! hash_equals(self::digest($actorSubject), (string) ($cursor['a'] ?? ''))
+            || ($cursor['o'] ?? null) !== $operation || ! is_int($cursor['n'] ?? null) || $cursor['n'] < 0
+            || ($cursor['q'] ?? null) !== $query) {
             throw new DelegatedAccessException('invalid_cursor', 422);
         }
 
         return $cursor['n'];
     }
 
-    private static function actor(string $actorSubject): string
+    private static function digest(string $value): string
     {
-        return rtrim(strtr(base64_encode(hash('sha256', $actorSubject, true)), '+/', '-_'), '=');
+        return rtrim(strtr(base64_encode(hash('sha256', $value, true)), '+/', '-_'), '=');
     }
 }

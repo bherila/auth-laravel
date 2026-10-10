@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use JsonException;
 
 /**
- * POST /application-access: the identity provider's delegated access requests, contract version 2.
+ * POST /application-access: the identity provider's delegated access requests, contract version 3.
  *
  * The order is the contract's. The signed actor assertion is verified first, bound to the exact
  * request body, and its single-use nonce consumed. Only then is the body parsed, validated, and
@@ -81,22 +81,30 @@ final class DelegatedAccessController extends Controller
                 throw new DelegatedAccessException('invalid_request', 422);
             }
 
-            if (! is_array($input) || ($input['contract_version'] ?? null) !== DelegatedContract::VERSION_2
+            // Version 3 only. An earlier version is refused, not translated: its rules are not these.
+            if (! is_array($input) || ($input['contract_version'] ?? null) !== DelegatedContract::VERSION_3
                 || ($input['application'] ?? null) !== $application) {
                 throw new DelegatedAccessException('invalid_request', 422);
             }
 
             unset($input['contract_version'], $input['application']);
-            $payload = $contract->request($application, $input, DelegatedContract::VERSION_2);
+            $payload = $contract->request($application, $input, DelegatedContract::VERSION_3);
             $operation = (string) $payload['operation'];
             unset($payload['contract_version'], $payload['application']);
+            $write = in_array($operation, DelegatedContract::WRITE_OPERATIONS, true);
+            $operationId = $write ? (string) $payload['operation_id'] : null;
 
             // An application that has not switched writes on refuses them here, before its adapter runs.
-            if ($operation === 'update' && ! $settings->writesEnabled()) {
+            if ($write && ! $settings->writesEnabled()) {
                 throw new DelegatedAccessException('not_authorized', 403);
             }
+            // The operation id names the action across retries; the jti names this one request. A
+            // provider that reuses one as the other would have every retry refused as a replay.
+            if ($operationId !== null && hash_equals($verified->jti, $operationId)) {
+                throw new DelegatedAccessException('invalid_request', 422);
+            }
 
-            $context = $verified->withOperation($operation);
+            $context = $verified->withOperation($operation, $operationId);
             $container->instance(DelegatedRequestContext::class, $context);
             try {
                 $fields = $container->make(ApplicationAccessAdapter::class)->handle($context->subject, $payload);

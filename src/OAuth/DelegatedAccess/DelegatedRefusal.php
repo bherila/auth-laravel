@@ -24,11 +24,17 @@ final class DelegatedRefusal
     /** The request is well formed but this application cannot apply it, for a reason not listed here. */
     public const INVALID_REQUEST = 'invalid_request';
 
-    /** The update changes or omits a membership the read reported as not editable for this actor. */
+    /**
+     * The update changes or omits a membership the read reported as not editable for this actor, or a
+     * removal would have to remove one.
+     */
     public const PROTECTED_MEMBERSHIP = 'protected_membership';
 
     /** The update names a role this actor may not grant, or that the application did not advertise. */
     public const ROLE_NOT_GRANTABLE = 'role_not_grantable';
+
+    /** A listing cursor that is not this actor's for this operation and search ({@see DelegatedCursor}). */
+    public const INVALID_CURSOR = 'invalid_cursor';
 
     public const STATUSES = [
         self::NOT_AUTHORIZED => 403,
@@ -37,6 +43,7 @@ final class DelegatedRefusal
         self::INVALID_REQUEST => 422,
         self::PROTECTED_MEMBERSHIP => 403,
         self::ROLE_NOT_GRANTABLE => 403,
+        self::INVALID_CURSOR => 422,
     ];
 
     public static function of(string $outcome): DelegatedAccessException

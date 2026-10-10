@@ -26,7 +26,7 @@ class DelegatedContractV2Test extends TestCase
 
         $this->refused(fn () => $contract->request(self::APP, $this->update(), 1), 422);
         $this->refused(fn () => $contract->response($this->capabilities(), self::APP, 'capabilities', null, 1), 503);
-        $this->refused(fn () => $contract->request(self::APP, ['operation' => 'capabilities'], 3), 500);
+        $this->refused(fn () => $contract->request(self::APP, ['operation' => 'capabilities'], 4), 500);
     }
 
     public function test_an_update_names_roles_within_their_bounds(): void
