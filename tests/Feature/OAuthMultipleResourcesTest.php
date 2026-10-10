@@ -225,6 +225,18 @@ final class OAuthMultipleResourcesTest extends TestCase
         $this->bearer('POST', '/api/v1/mcp', $refreshed['access_token'])->assertOk();
     }
 
+    public function test_a_tightened_ceiling_stops_existing_grants_from_minting_excluded_scopes(): void
+    {
+        ['client' => $client, 'tokens' => $tokens] = $this->connect('mcp:use items:read', self::APP.'/api/v1/mcp');
+        config(['bherila-auth.oauth_server.resources.mcp.scopes' => ['mcp:use']]);
+
+        $this->post('/oauth/token', [
+            'grant_type' => 'refresh_token', 'client_id' => $client, 'refresh_token' => $tokens['refresh_token'],
+            'resource' => self::APP.'/api/v1/mcp',
+        ], ['Accept' => 'application/json'])->assertStatus(400);
+        $this->assertFalse((bool) Passport::refreshToken()->newQuery()->sole()->revoked, 'Refused before the grant consumed it');
+    }
+
     public function test_personal_tokens_bind_to_the_default_resource_and_its_ceiling(): void
     {
         $issued = $this->actingAs($this->user, 'web')->postJson('/account/api-credentials/tokens', [

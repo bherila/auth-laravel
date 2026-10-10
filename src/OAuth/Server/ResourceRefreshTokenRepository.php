@@ -103,6 +103,12 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             // can retry the same token with the resource originally granted.
             return true;
         }
+        // A ceiling tightened since the grant applies to the token a refresh mints; refused
+        // here, before the grant revokes anything.
+        $grant = Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
+        if ($grant !== null && ! OAuthResourceIndicator::scopesAllowedFor($storedResource, $grant->getAttribute('scopes'))) {
+            return true;
+        }
 
         $request?->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $storedResource);
 

@@ -134,7 +134,9 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         if ($storedResource === null
             || ! OAuthResourceIndicator::isConfiguredResource($storedResource)
             || ! $hasRequestedResource
-            || $requestedResource !== $storedResource) {
+            || $requestedResource !== $storedResource
+            // A ceiling tightened since the code was granted applies to the token it mints.
+            || ! OAuthResourceIndicator::scopesAllowedFor($storedResource, $scopes)) {
             return true;
         }
 
