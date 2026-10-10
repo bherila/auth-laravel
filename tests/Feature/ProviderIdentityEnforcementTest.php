@@ -281,11 +281,13 @@ class ProviderIdentityEnforcementTest extends TestCase
             $guard);
         $this->assertSame(7, $request->session()->get('bherila_auth.provider_session.generation'));
 
-        // An old provider without generations does not block login while enforcement is off.
+        // An old provider without generations does not block login while enforcement is off,
+        // and the earlier login's baseline does not stand in for this one.
         app(ProviderSession::class)->establish($request,
             new OAuthIdentity('example-provider', 'subject-example', 'Example User', 'user@example.test'),
             $guard);
         $this->assertNotNull($guard->user());
+        $this->assertFalse($request->session()->has('bherila_auth.provider_session'));
     }
 
     // --- The browser middleware --------------------------------------------
