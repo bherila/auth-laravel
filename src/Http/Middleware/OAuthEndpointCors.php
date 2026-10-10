@@ -22,11 +22,11 @@ final class OAuthEndpointCors
         $origin = $request->headers->get('Origin');
         $allowed = is_string($origin) && $this->allows($origin);
 
-        if ($request->isMethod('OPTIONS')) {
-            $response = response('', $allowed ? 204 : 403);
-
-            return $allowed ? $this->preflight($this->decorate($response, $origin)) : $response;
+        if ($request->isMethod('OPTIONS') && $allowed) {
+            return $this->preflight($this->decorate(response('', 204), $origin));
         }
+        // Any other preflight continues, so an application's own CORS middleware on these routes
+        // can still answer it.
 
         $response = $next($request);
         if ($allowed) {
