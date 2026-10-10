@@ -99,7 +99,14 @@ final class ApiCredentialService
      */
     public function tokenScopes(): array
     {
-        return $this->grantableScopes() + $this->connectionScopes();
+        // Only scopes the personal-token resource admits, so every offered choice can be issued.
+        $resource = $this->credentialResource();
+
+        return array_filter(
+            $this->grantableScopes() + $this->connectionScopes(),
+            static fn (string $scope): bool => OAuthResourceIndicator::scopesAllowedFor($resource, [$scope]),
+            ARRAY_FILTER_USE_KEY,
+        );
     }
 
     /**

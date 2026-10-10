@@ -244,6 +244,13 @@ final class OAuthMultipleResourcesTest extends TestCase
         ])->assertCreated()->json('data.token');
         $this->bearer('GET', '/api/v1/items', $issued)->assertOk();
         $this->assertSame(self::APP.'/api/v1', Passport::token()->newQuery()->sole()->resource_uri);
+
+        // Offered only what the REST resource admits; the MCP connection scope is not.
+        $offered = array_column($this->actingAs($this->user, 'web')->getJson('/account/api-credentials')->json('data.token_scopes'), 'id');
+        $this->assertSame(['items:read', 'reports:read'], $offered);
+        $this->actingAs($this->user, 'web')->postJson('/account/api-credentials/tokens', [
+            'name' => 'Connection', 'scopes' => ['mcp:use'], 'lifetime' => 'P30D',
+        ])->assertUnprocessable();
     }
 
     public function test_listed_browser_origins_can_reach_every_oauth_machine_endpoint(): void
