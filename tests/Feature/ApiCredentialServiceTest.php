@@ -9,6 +9,7 @@ use BWH\Auth\OAuth\Server\OAuthResourceIndicator;
 use BWH\Auth\Http\Middleware\ExpectOAuthResource;
 use BWH\Auth\Tests\Fixtures\User;
 use BWH\Auth\Tests\TestCase;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Route;
 use Laravel\Passport\Http\Middleware\CheckToken;
 use Laravel\Passport\Passport;
@@ -292,6 +293,198 @@ final class ApiCredentialServiceTest extends TestCase
         $listed = $this->getJson(self::BASE)->assertOk()->json('data.apps');
         $this->assertSame($app['client_id'], $listed[0]['id']);
         $this->deleteJson($listed[0]['delete_href'])->assertOk();
+    }
+
+    /**
+     * The connection-scope opt-in is off by default, and with the default the
+     * index, the refusals and the issued token are exactly what they were before
+     * the option existed (simulated by removing its keys from the config).
+     */
+    public function test_by_default_no_personal_token_carries_a_connection_scope_and_nothing_changes(): void
+    {
+        $defaults = require __DIR__.'/../../config/bherila-auth.php';
+        $this->assertSame([], $defaults['oauth_server']['credentials']['personal_token_connection_scopes']);
+        $now = now()->toImmutable();
+        $longest = max(array_map(static fn (string $spec) => $now->add(new \DateInterval($spec)), $defaults['oauth_server']['credentials']['token_lifetimes']));
+        $this->assertLessThan($longest, $now->add(new \DateInterval($defaults['oauth_server']['credentials']['personal_token_connection_max_lifetime'])), 'The default connection cap is shorter than the longest default lifetime');
+
+        $this->actingAs($this->user);
+        foreach (['PT4H', 'P30D', 'P90D'] as $lifetime) {
+            $this->postJson(self::BASE.'/tokens', ['name' => 'x', 'scopes' => ['mcp:use', 'items:read'], 'lifetime' => $lifetime])->assertJsonValidationErrors('scopes.0');
+        }
+        $this->assertSame(0, Passport::token()->newQuery()->count());
+        $this->postJson(self::BASE.'/apps', ['name' => 'x', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['mcp:use']])->assertJsonValidationErrors('scopes.0');
+
+        $withDefault = $this->postJson(self::BASE.'/tokens', ['name' => 'Default', 'scopes' => ['items:read'], 'lifetime' => 'P90D'])->assertCreated()->json('data.token');
+        $index = $this->getJson(self::BASE)->assertOk();
+        $this->assertSame(['scopes', 'token_lifetimes', 'issue_token_href', 'register_app_href', 'tokens', 'apps'], array_keys($index->json('data')));
+        $this->assertSame(['id', 'name', 'scopes', 'created_at', 'expires_at', 'revoke_href'], array_keys($index->json('data.tokens.0')));
+
+        // The same configuration as it was before the option existed.
+        config(['bherila-auth.oauth_server.credentials' => \Illuminate\Support\Arr::except(
+            config('bherila-auth.oauth_server.credentials'),
+            ['personal_token_connection_scopes', 'personal_token_connection_max_lifetime'],
+        )]);
+        $this->assertSame($index->getContent(), $this->getJson(self::BASE)->assertOk()->getContent());
+        $before = $this->postJson(self::BASE.'/tokens', ['name' => 'Before', 'scopes' => ['items:read'], 'lifetime' => 'P90D'])->assertCreated()->json('data.token');
+        $this->postJson(self::BASE.'/tokens', ['name' => 'x', 'scopes' => ['mcp:use'], 'lifetime' => 'PT4H'])->assertJsonValidationErrors('scopes.0');
+
+        $shape = static function (string $token): array {
+            $claims = OAuthResourceIndicator::tokenClaims($token);
+            $row = Passport::token()->newQuery()->findOrFail($claims['jti']);
+
+            return [
+                'claims' => array_keys($claims),
+                'aud' => array_slice((array) $claims['aud'], 1),
+                'resource' => $claims['resource'],
+                'scopes' => $claims['scopes'],
+                'lifetime' => (int) round($claims['exp'] - $claims['iat']),
+                'row' => Arr::except($row->getAttributes(), ['id', 'name', 'created_at', 'updated_at', 'expires_at']),
+            ];
+        };
+        $this->assertSame($shape($before), $shape($withDefault));
+    }
+
+    public function test_an_opted_in_token_carries_the_connection_scope_bound_to_the_resource(): void
+    {
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_scopes' => ['mcp:use']]);
+        $this->actingAs($this->user);
+
+        $index = $this->getJson(self::BASE)->assertOk()->assertHeader('Cache-Control', 'no-store, private')->json('data');
+        $this->assertSame(['items:read', 'items:write'], array_column($index['scopes'], 'id'), 'OAuth apps are still offered no connection scope');
+        $this->assertSame([['id' => 'mcp:use', 'description' => 'Connect through MCP']], $index['token_connection_scopes']);
+        $this->assertSame(['PT4H', 'P30D'], $index['connection_token_lifetimes'], 'Only lifetimes under the default P30D cap');
+
+        $issued = $this->postJson(self::BASE.'/tokens', ['name' => 'Static MCP key', 'scopes' => ['mcp:use', 'items:read'], 'lifetime' => 'P30D'])
+            ->assertCreated()->assertHeader('Cache-Control', 'no-store, private')->json('data');
+        $this->assertStringNotContainsString($issued['token'], json_encode(session()->all(), JSON_THROW_ON_ERROR));
+        $row = Passport::token()->newQuery()->where('user_id', $this->user->id)->sole();
+        $this->assertSame(['mcp:use', 'items:read'], $row->scopes);
+        $this->assertSame(self::APP.'/api/v1', $row->resource_uri);
+        $claims = OAuthResourceIndicator::tokenClaims($issued['token']);
+        $this->assertSame(self::APP.'/api/v1', $claims['resource'] ?? null);
+        $this->assertContains(self::APP.'/api/v1', (array) $claims['aud']);
+        $this->assertEqualsWithDelta(now()->addDays(30)->getTimestamp(), $row->expires_at?->getTimestamp(), 60);
+
+        $this->postJson(self::BASE.'/tokens', ['name' => 'Plain', 'scopes' => ['items:read'], 'lifetime' => 'P90D'])->assertCreated();
+        $listed = collect($this->getJson(self::BASE)->json('data.tokens'))->keyBy('name');
+        $this->assertTrue($listed['Static MCP key']['connection']);
+        $this->assertFalse($listed['Plain']['connection']);
+
+        $this->postJson(self::BASE.'/apps', ['name' => 'x', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['mcp:use']])
+            ->assertJsonValidationErrors('scopes.0');
+
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/mcp', [], ['Authorization' => 'Bearer '.$issued['token']])->assertOk();
+        $this->app['auth']->forgetGuards();
+        $this->getJson('/api/v1/items', ['Authorization' => 'Bearer '.$issued['token']])->assertOk();
+
+        $this->actingAs($this->user)->deleteJson($listed['Static MCP key']['revoke_href'])->assertOk();
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/mcp', [], ['Authorization' => 'Bearer '.$issued['token']])->assertUnauthorized();
+    }
+
+    /** Only listed connection scopes, and only ones the catalog has and exclusions allow. */
+    public function test_connection_scopes_are_held_to_the_list_the_catalog_and_the_exclusions(): void
+    {
+        config([
+            'bherila-auth.oauth_server.resource_required_scopes' => ['mcp:use', 'admin:all', 'ghost:use', 'items:write'],
+            'bherila-auth.oauth_server.credentials.personal_token_connection_scopes' => ['mcp:use', 'admin:all', 'ghost:use', 'items:read'],
+        ]);
+        $this->actingAs($this->user);
+
+        $index = $this->getJson(self::BASE)->assertOk()->json('data');
+        $this->assertSame(['mcp:use'], array_column($index['token_connection_scopes'], 'id'), 'Excluded (admin:all), uncatalogued (ghost:use), unlisted (items:write) and non-connection (items:read) entries are not connection scopes on offer');
+        $this->assertSame(['items:read'], array_column($index['scopes'], 'id'));
+
+        foreach (['admin:all', 'ghost:use', 'items:write'] as $scope) {
+            $this->postJson(self::BASE.'/tokens', ['name' => 'x', 'scopes' => [$scope], 'lifetime' => 'PT4H'])->assertJsonValidationErrors('scopes.0');
+        }
+        $this->assertSame(0, Passport::token()->newQuery()->count());
+        $this->assertSame(['mcp:use' => 'Connect through MCP'], app(ApiCredentialService::class)->connectionScopes());
+    }
+
+    public function test_a_token_carrying_a_connection_scope_is_held_to_the_lifetime_cap(): void
+    {
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_scopes' => ['mcp:use']]);
+        $this->actingAs($this->user);
+
+        $this->postJson(self::BASE.'/tokens', ['name' => 'Too long', 'scopes' => ['mcp:use'], 'lifetime' => 'P90D'])->assertJsonValidationErrors('credential');
+        $this->assertSame(0, Passport::token()->newQuery()->count());
+        $this->postJson(self::BASE.'/tokens', ['name' => 'REST only', 'scopes' => ['items:read'], 'lifetime' => 'P90D'])->assertCreated();
+
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_max_lifetime' => 'PT4H']);
+        $this->assertSame(['PT4H'], $this->getJson(self::BASE)->json('data.connection_token_lifetimes'));
+        $this->postJson(self::BASE.'/tokens', ['name' => 'Too long', 'scopes' => ['mcp:use'], 'lifetime' => 'P30D'])->assertJsonValidationErrors('credential');
+        $this->postJson(self::BASE.'/tokens', ['name' => 'Short', 'scopes' => ['mcp:use'], 'lifetime' => 'PT4H'])->assertCreated();
+        $short = Passport::token()->newQuery()->where('name', 'api-token: Short')->sole();
+        $this->assertEqualsWithDelta(now()->addHours(4)->getTimestamp(), $short->expires_at?->getTimestamp(), 60);
+
+        // An unusable cap fails closed: nothing to offer, nothing issued.
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_max_lifetime' => 'not-a-duration']);
+        $index = $this->getJson(self::BASE)->json('data');
+        $this->assertSame([], $index['token_connection_scopes']);
+        $this->assertSame([], $index['connection_token_lifetimes']);
+        $this->postJson(self::BASE.'/tokens', ['name' => 'x', 'scopes' => ['mcp:use'], 'lifetime' => 'PT4H'])->assertJsonValidationErrors('scopes.0');
+        $this->assertSame(2, Passport::token()->newQuery()->count());
+    }
+
+    /**
+     * Once opted in, the cap holds even for a connection scope a custom
+     * GrantableScopes binding already offered; without the opt-in such a
+     * binding behaves as it always did.
+     */
+    public function test_the_cap_covers_a_connection_scope_a_custom_binding_offers_only_once_opted_in(): void
+    {
+        $this->app->instance(\BWH\Auth\OAuth\Credentials\GrantableScopes::class, new class implements \BWH\Auth\OAuth\Credentials\GrantableScopes
+        {
+            public function scopes(): array
+            {
+                return ['mcp:use' => 'Connect', 'items:read' => 'Read items'];
+            }
+        });
+        $this->actingAs($this->user);
+
+        $this->postJson(self::BASE.'/tokens', ['name' => 'Legacy', 'scopes' => ['mcp:use'], 'lifetime' => 'P90D'])->assertCreated();
+        $this->assertArrayNotHasKey('connection', $this->getJson(self::BASE)->json('data.tokens.0'));
+
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_scopes' => ['mcp:use']]);
+        $this->postJson(self::BASE.'/tokens', ['name' => 'Capped', 'scopes' => ['mcp:use'], 'lifetime' => 'P90D'])->assertJsonValidationErrors('credential');
+        $this->assertTrue($this->getJson(self::BASE)->json('data.tokens.0.connection'));
+        $this->assertSame(1, Passport::token()->newQuery()->count());
+    }
+
+    /** Bound like an OAuth access token: accepted only where the route expects its resource. */
+    public function test_a_connection_token_is_accepted_only_for_its_bound_resource(): void
+    {
+        Route::post('/api/unmarked/mcp', fn () => response()->json(['ok' => true]))
+            ->middleware(['auth:api', CheckToken::using('mcp:use')]);
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_scopes' => ['mcp:use']]);
+        $token = $this->actingAs($this->user)->postJson(self::BASE.'/tokens', ['name' => 'MCP', 'scopes' => ['mcp:use'], 'lifetime' => 'PT4H'])
+            ->assertCreated()->json('data.token');
+
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/mcp', [], ['Authorization' => 'Bearer '.$token])->assertOk();
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/unmarked/mcp', [], ['Authorization' => 'Bearer '.$token])->assertUnauthorized();
+
+        // The route now expects another resource; the token stays bound to its own.
+        config(['bherila-auth.oauth_server.resource' => 'https://other.example.test/api/v1']);
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/mcp', [], ['Authorization' => 'Bearer '.$token])->assertUnauthorized();
+    }
+
+    public function test_an_opted_in_token_without_the_connection_scope_is_refused_at_the_connection_endpoint(): void
+    {
+        config(['bherila-auth.oauth_server.credentials.personal_token_connection_scopes' => ['mcp:use']]);
+        $token = $this->actingAs($this->user)->postJson(self::BASE.'/tokens', ['name' => 'REST', 'scopes' => ['items:read'], 'lifetime' => 'PT4H'])
+            ->assertCreated()->json('data.token');
+        $this->assertSame(['items:read'], Passport::token()->newQuery()->sole()->scopes);
+
+        $this->app['auth']->forgetGuards();
+        $this->postJson('/api/v1/mcp', [], ['Authorization' => 'Bearer '.$token])->assertForbidden();
+        $this->app['auth']->forgetGuards();
+        $this->getJson('/api/v1/items', ['Authorization' => 'Bearer '.$token])->assertOk();
     }
 
     public function test_redirect_uri_rules(): void

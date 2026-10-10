@@ -4,6 +4,29 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.22.1 - Unreleased
+
+### Personal API tokens may carry MCP connection scopes (opt-in)
+
+- New `oauth_server.credentials.personal_token_connection_scopes` (default `[]`, off) names the
+  connection scopes (`resource_required_scopes` entries, such as `mcp:use`) a personal API token
+  may carry, for agent clients that reach an MCP endpoint only with a static bearer key. A listed
+  scope is offered only if it is also in the scope catalog and not in `credentials.excluded_scopes`,
+  and only to personal tokens, never to OAuth apps.
+- New `oauth_server.credentials.personal_token_connection_max_lifetime` (default `P30D`) caps the
+  lifetime of any token carrying a connection scope once the opt-in is on; a longer offered lifetime
+  is refused with 422, and an invalid value offers no connection scope.
+- Such a token is resource-bound like every personal token and accepted only on routes marked with
+  `ExpectOAuthResource`. When opted in, the credentials index adds `token_connection_scopes`,
+  `connection_token_lifetimes` and a per-token `connection` flag. `ApiCredentialService` gains
+  `connectionScopes()`, `connectionScopesEnabled()`, `connectionLifetimes()`, `tokenScopes()` and
+  `carriesConnectionScope()`; `ConfiguredGrantableScopes` gains static `catalog()` and
+  `excludedScopes()`.
+- **Tradeoff:** a long-lived static key with connection rights and no per-client consent screen.
+  Removing a scope from the list stops new tokens, not issued ones. See the README.
+- **With the default configuration nothing changes:** the same index, the same refusals and the
+  same issued tokens.
+
 ## v0.22.0 - 2026-10-10
 
 ### Delegated access contract versions 1 and 2 removed (breaking)

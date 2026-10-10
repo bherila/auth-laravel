@@ -127,6 +127,24 @@ return [
             'owner_model' => null,
             // Scopes never offered to a credential, beyond the MCP-connection scopes.
             'excluded_scopes' => [],
+            // Opt-in, off by default: the MCP-connection scopes (entries of
+            // `resource_required_scopes`, such as `mcp:use`) a personal API token
+            // may carry, for agent clients that reach an MCP endpoint only with a
+            // static bearer key. Each must also be in the scope catalog and not in
+            // `excluded_scopes`; OAuth apps are never offered one.
+            //
+            // The tradeoff: such a token is a long-lived static key with
+            // connection rights. Nobody sees a consent screen naming the client
+            // that uses it, it works from anywhere until it expires or is
+            // revoked, and anyone who copies it can connect as its owner. It is
+            // still bound to this server's one protected resource (RFC 8707), so
+            // it is accepted only on routes marked with ExpectOAuthResource.
+            // Removing a scope here stops new tokens, not tokens already issued.
+            'personal_token_connection_scopes' => [],
+            // The longest lifetime (ISO-8601) a token carrying a connection scope
+            // may have once the opt-in is on; only offered lifetimes no longer
+            // than this are accepted for one. An invalid value offers none.
+            'personal_token_connection_max_lifetime' => 'P30D',
         ],
         'introspection' => [
             // RFC 7662 is application-routed and opt-in. Each confidential

@@ -583,6 +583,28 @@ All return JSON. Each new secret appears once, in a `201` no-store body. While t
 
 Bind `GrantableScopes` to offer only the scopes your REST operations use. Bind `CredentialOwnerResolver`, or set `credentials.owner_model`, when your API guard loads a different model from the web guard.
 
+#### Personal API tokens that open an MCP connection (opt-in)
+
+By default no credential the service issues carries an MCP connection scope (any `resource_required_scopes` entry, such as `mcp:use`): a pasted API token reaches REST and per-module endpoints, never an endpoint that requires the connection scope. Some agent clients connect to a remote MCP server only with a static bearer key and cannot run the authorization-code flow. To let personal API tokens serve them, name the connection scopes a token may carry:
+
+```php
+'credentials' => [
+    'enabled' => true,
+    'token_lifetimes' => ['PT4H', 'P30D', 'P90D', 'P365D'],
+    'personal_token_connection_scopes' => ['mcp:use'],      // default []: off
+    'personal_token_connection_max_lifetime' => 'P30D',     // the default
+],
+```
+
+**The tradeoff.** Such a token is a long-lived static key with connection rights. Nobody sees a consent screen naming the client that uses it, it works from anywhere until it expires or is revoked, and anyone who copies it can connect as its owner. Prefer an OAuth app, or the dynamic-registration flow, for any client that can run OAuth; turn this on only for the ones that cannot.
+
+What the opt-in does, and does not:
+
+- **Offer.** Only listed scopes that are also `resource_required_scopes` entries, in the scope catalog, and not in `credentials.excluded_scopes`. They are offered to personal tokens only, never to OAuth apps (which reach a connection through consent). The index adds `token_connection_scopes`, `connection_token_lifetimes`, and a `connection` flag on each listed token; with the opt-in off the index is unchanged.
+- **Cap.** A token carrying any connection scope may have only an offered lifetime no longer than `personal_token_connection_max_lifetime`; a longer request is refused (422). An invalid value offers no connection scope at all. Once opted in, the cap also covers a connection scope a custom `GrantableScopes` binding already offered.
+- **Bind.** Like every personal token, it is bound to the configured protected resource (RFC 8707): the row's resource column, the JWT `aud` and `resource` claims. It is accepted only on routes marked with `ExpectOAuthResource` for that resource, and the route still checks scopes, so a token without the connection scope is refused at the connection endpoint.
+- **Unchanged.** Issuance stays browser-only with the secret returned once (no-store); listing, revocation and expiry behave as for any personal token. Removing a scope from the list stops new tokens but does not revoke tokens already issued: revoke those from the listing (they are flagged `connection`), and keep the cap short so they age out.
+
 ### OAuth client integration
 
 `BWH\Auth\OAuth\OAuthClient` owns state and PKCE generation, authorization redirects,
