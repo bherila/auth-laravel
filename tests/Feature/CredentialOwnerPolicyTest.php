@@ -226,12 +226,34 @@ final class CredentialOwnerPolicyTest extends TestCase
     {
         $user = $this->user();
         [$client, $tokens] = $this->connect($user);
+        [$client2, $tokens2] = $this->connect($user);
+        // One grant's access token already purged, as Passport's purge does to expired tokens.
+        Passport::token()->newQuery()->whereKey(Passport::refreshToken()->newQuery()->latest('expires_at')->first()->access_token_id)->delete();
+        $revoked = [];
+        \Illuminate\Support\Facades\Event::listen(\Laravel\Passport\Events\AccessTokenRevoked::class, function ($event) use (&$revoked): void {
+            $revoked[] = $event->tokenId;
+        });
         $this->disable($user);
         $this->assertSame(1, app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->revokeAll($user));
+        $this->assertCount(1, $revoked, 'Each live access token is revoked through the repository');
+        $this->assertSame(0, Passport::refreshToken()->newQuery()->where('revoked', false)->count(), 'Including a refresh token whose access token was purged');
 
         $this->enable($user);
         $this->useToken($tokens['access_token'])->assertUnauthorized();
         $this->refresh($client, $tokens['refresh_token'])->assertStatus(400);
+    }
+
+    public function test_a_bound_policy_needs_the_refresh_owner_column(): void
+    {
+        \Illuminate\Support\Facades\Schema::table('oauth_refresh_tokens', fn ($table) => $table->dropColumn('provider_user_id'));
+        $user = $this->user();
+        $client = $this->client();
+
+        // Without it a refresh token becomes unusable once its access token is purged, so
+        // issuing one fails loudly instead.
+        $this->withoutExceptionHandling();
+        $this->expectExceptionMessage('provider identity columns are required');
+        $this->connect($user);
     }
 
     /** The authorize and approve steps, without the helper's assertion that a code came back. */
