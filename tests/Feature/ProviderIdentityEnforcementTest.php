@@ -377,6 +377,19 @@ class ProviderIdentityEnforcementTest extends TestCase
         ];
     }
 
+    public function test_a_missing_binding_column_is_refused_rather_than_exempting_everyone(): void
+    {
+        Http::fake();
+        config(['bherila-auth.provider_identity.binding.subject_column' => 'misnamed_subject']);
+        $this->actingAs($this->user(null, null))->getJson('/private')->assertStatus(401);
+
+        config(['bherila-auth.provider_identity.binding.subject_column' => 'oauth_subject']);
+        $partial = User::query()->select(['id', 'name', 'email'])->findOrFail($this->user(null, null)->getKey());
+        $this->flushSession();
+        $this->actingAs($partial)->getJson('/private')->assertStatus(401);
+        Http::assertNothingSent();
+    }
+
     public function test_the_session_binding_must_match_the_account_binding(): void
     {
         Http::fake();

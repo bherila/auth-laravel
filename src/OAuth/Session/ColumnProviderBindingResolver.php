@@ -14,8 +14,16 @@ final class ColumnProviderBindingResolver implements ProviderBindingResolver
             throw new ProviderSessionExpired('The provider session binding is invalid.');
         }
 
-        $provider = $user->getAttribute((string) config('bherila-auth.provider_identity.binding.provider_column', 'oauth_provider'));
-        $subject = $user->getAttribute((string) config('bherila-auth.provider_identity.binding.subject_column', 'oauth_subject'));
+        $providerColumn = (string) config('bherila-auth.provider_identity.binding.provider_column', 'oauth_provider');
+        $subjectColumn = (string) config('bherila-auth.provider_identity.binding.subject_column', 'oauth_subject');
+        $attributes = $user->getAttributes();
+        // An absent column (misnamed in configuration, not selected, or never migrated) reads
+        // as null, which would exempt every account as if it were deliberately unbound.
+        if (! array_key_exists($providerColumn, $attributes) || ! array_key_exists($subjectColumn, $attributes)) {
+            throw new ProviderSessionExpired('The provider session binding is invalid.');
+        }
+        $provider = $user->getAttribute($providerColumn);
+        $subject = $user->getAttribute($subjectColumn);
         if ($provider === null && $subject === null) {
             return null;
         }
