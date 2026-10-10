@@ -587,7 +587,7 @@ Route::post('/mcp', ...)->middleware([ExpectOAuthResource::class.':mcp_alias', '
 
 #### Accounts the application has disabled
 
-Bind a `BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy` to refuse OAuth credentials for accounts your application considers unable to hold them (disabled, suspended, not approved). Every authorization code, access token (agent and personal) and refresh token is checked when issued, exchanged, refreshed and used; a refused refresh is refused without consuming the refresh token. When disabling an account, also call `app(OAuthCredentialOwners::class)->revokeAll($user)` so re-enabling it does not revive old credentials. It is separate from `AuthUserPolicy::canLogin()`, which answers whether someone may sign in interactively.
+Publish and run the package migrations first (`2026_10_11_000000_add_provider_identity_to_oauth_credentials` adds the refresh-token owner column the policy needs), then bind a `BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy` to refuse OAuth credentials for accounts your application considers unable to hold them (disabled, suspended, not approved). Every authorization code, access token (agent and personal) and refresh token is checked when issued, exchanged, refreshed and used; a refused refresh is refused without consuming the refresh token. When disabling an account, also call `app(OAuthCredentialOwners::class)->revokeAll($user)` so re-enabling it does not revive old credentials. It is separate from `AuthUserPolicy::canLogin()`, which answers whether someone may sign in interactively.
 
 ### Agent preset operations
 
