@@ -43,6 +43,8 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->app->instance(IdentityTombstoneHandler::class, $this->handler);
         Http::preventStrayRequests();
         Sleep::fake();
+        // Unpaced unless a test is about pacing, so throttle waits are the only sleeps.
+        config(['bherila-auth.identity_tombstones.requests_per_minute' => 0]);
         // Inside the fixtures' purge window (2026-08-26 to 2026-09-25).
         $this->travelTo(new \DateTimeImmutable('2026-08-27T00:00:00Z'));
     }
@@ -140,8 +142,8 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->assertSame('example-provider', $this->handler->handled[0]->provider);
         $this->assertSame('subject-secret-1', $this->handler->handled[0]->subject);
         $this->assertSame([self::id(1), self::id(2), self::id(3)], $this->acknowledged);
-        $this->assertStringEndsWith('/identity-tombstones?limit=100', $this->reads[0]->url());
-        $this->assertStringEndsWith('/identity-tombstones?limit=100&cursor=cursor-1', $this->reads[1]->url());
+        $this->assertStringEndsWith('/identity-tombstones?limit=25', $this->reads[0]->url());
+        $this->assertStringEndsWith('/identity-tombstones?limit=25&cursor=cursor-1', $this->reads[1]->url());
         $this->assertNull($this->storedCursor(), 'The next cycle starts without a cursor');
         $this->assertStringContainsString('Identity tombstones: 3 received, 0 retried, 3 acknowledged, 0 failed, 2 page(s) read.', $output);
         $this->assertStringNotContainsString('subject-secret', $output);
@@ -369,7 +371,7 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->provider([self::page([])]);
 
         $this->assertSame(0, $this->run_()[0]);
-        $this->assertStringEndsWith('?limit=100', $this->reads[0]->url());
+        $this->assertStringEndsWith('?limit=25', $this->reads[0]->url());
     }
 
     public function test_nothing_is_consumed_without_a_bound_handler(): void
@@ -469,6 +471,42 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
 
         $this->assertSame(2, $code);
         $this->assertStringContainsString('handler_budget_seconds must be from 1 through lease_seconds (120)', $output);
+        Http::assertNothingSent();
+    }
+
+    public function test_by_default_requests_are_paced_to_half_the_providers_shared_limit(): void
+    {
+        $shipped = (require __DIR__.'/../../config/bherila-auth.php')['identity_tombstones'];
+        $this->assertSame([25, 30], [$shipped['page_limit'], $shipped['requests_per_minute']]);
+        config(['bherila-auth.identity_tombstones.requests_per_minute' => $shipped['requests_per_minute']]);
+        Sleep::fake(syncWithCarbon: true);
+        $this->provider([self::page([1, 2], 'cursor-1'), self::page([3])]);
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(0, $code, $output);
+        // Five requests (two reads, three acknowledgements), each two seconds after the last: 30 a minute.
+        Sleep::assertSequence(array_fill(0, 4, Sleep::for(2000)->milliseconds()));
+    }
+
+    public function test_pacing_is_configurable_and_counts_time_already_spent(): void
+    {
+        config(['bherila-auth.identity_tombstones.requests_per_minute' => 12]);
+        Sleep::fake(syncWithCarbon: true);
+        // The handler takes three of the five seconds between the read and the acknowledgement.
+        $this->handler->during = fn () => $this->travel(3)->seconds();
+        $this->provider([self::page([1])]);
+
+        $this->assertSame(0, $this->run_()[0]);
+        Sleep::assertSequence([Sleep::for(2000)->milliseconds()]);
+    }
+
+    public function test_an_invalid_request_rate_is_refused(): void
+    {
+        config(['bherila-auth.identity_tombstones.requests_per_minute' => -1]);
+        Http::fake();
+
+        $this->assertSame(2, $this->run_()[0]);
         Http::assertNothingSent();
     }
 

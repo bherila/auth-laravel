@@ -10,6 +10,7 @@ use BWH\Auth\OAuth\Lifecycle\IdentityTombstoneHandler;
 use BWH\Auth\OAuth\Lifecycle\IdentityTombstonePage;
 use BWH\Auth\OAuth\Lifecycle\IdentityTombstoneRetryStore;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Sleep;
 
@@ -30,7 +31,7 @@ class ConsumeIdentityTombstonesCommand extends Command
 {
     protected $signature = 'bherila-auth:consume-identity-tombstones
         {--limit= : Tombstones per page, 1 through 100 (defaults to bherila-auth.identity_tombstones.page_limit)}
-        {--max-pages=10 : The most pages this run reads, 1 through 1000}';
+        {--max-pages=4 : The most pages this run reads, 1 through 1000}';
 
     protected $description = 'Apply the identity provider\'s deletion tombstones and acknowledge each one after local deletion commits.';
 
@@ -67,12 +68,19 @@ class ConsumeIdentityTombstonesCommand extends Command
 
     private int $budget;
 
+    /** Seconds between provider requests; 0 sends them unpaced. */
+    private float $interval = 0.0;
+
+    /** When the previous provider request was sent (unix seconds), for pacing. */
+    private ?float $lastRequestAt = null;
+
     public function handle(IdentityTombstoneClient $client, IdentityTombstoneCursorStore $store, IdentityTombstoneRetryStore $retries): int
     {
         // The application reuses one command object across Artisan calls in a process, so
         // nothing from an earlier run may decide this one's outcome or throttle budget.
         $this->received = $this->retried = $this->acknowledged = $this->failed = $this->throttleWaits = 0;
         $this->attempted = [];
+        $this->lastRequestAt = null;
 
         // Binding a handler is the opt-in. Scheduling the command without one is a
         // misconfiguration that would otherwise leave deletions unapplied silently.
@@ -99,6 +107,16 @@ class ConsumeIdentityTombstonesCommand extends Command
             return self::INVALID;
         }
         $this->budget = $budget;
+        // The provider's reconciliation throttle (60 a minute) is shared with session status
+        // checks, so by default a run uses at most half of it.
+        $perMinute = filter_var(config('bherila-auth.identity_tombstones.requests_per_minute', 30), FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 0, 'max_range' => 6000]]);
+        if ($perMinute === false) {
+            $this->error('identity_tombstones.requests_per_minute must be from 0 (unpaced) through 6000.');
+
+            return self::INVALID;
+        }
+        $this->interval = $perMinute === 0 ? 0.0 : 60 / $perMinute;
 
         if (! $store->installed() || ! $retries->installed()) {
             $this->error('The identity tombstone tables are not installed; publish bherila-auth-identity-tombstone-migrations and migrate.');
@@ -281,6 +299,23 @@ class ConsumeIdentityTombstonesCommand extends Command
         }
     }
 
+    /** Space provider requests at least the configured interval apart. */
+    private function pace(): void
+    {
+        if ($this->interval <= 0) {
+            return;
+        }
+        $now = (float) Date::now()->format('U.u');
+        if ($this->lastRequestAt !== null) {
+            $wait = (int) ceil(($this->lastRequestAt + $this->interval - $now) * 1000);
+            if ($wait > 0) {
+                Sleep::for($wait)->milliseconds();
+                $now = (float) Date::now()->format('U.u');
+            }
+        }
+        $this->lastRequestAt = $now;
+    }
+
     /**
      * Run a feed call, waiting out the provider's throttle a bounded number of times per run.
      * The reconciliation throttle is shared with session status checks, so waiting is
@@ -295,6 +330,8 @@ class ConsumeIdentityTombstonesCommand extends Command
     {
         while (true) {
             try {
+                $this->pace();
+
                 return $call();
             } catch (IdentityTombstoneFeedUnavailable $exception) {
                 if ($exception->reason !== IdentityTombstoneFeedUnavailable::THROTTLED

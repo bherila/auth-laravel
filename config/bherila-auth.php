@@ -213,7 +213,11 @@ return [
         // overlaps another run. Nothing can renew the lease during the call itself.
         'handler_budget_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_HANDLER_BUDGET_SECONDS', 300),
         // Tombstones per page, 1 through 100 (the provider's maximum).
-        'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
+        'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 25),
+        // The most provider requests (reads and acknowledgements) one run sends per minute; 0 for
+        // unpaced. The provider allows 60 a minute shared with session status checks, so the
+        // default leaves half for those.
+        'requests_per_minute' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_REQUESTS_PER_MINUTE', 30),
     ],
 
     'migrations' => [

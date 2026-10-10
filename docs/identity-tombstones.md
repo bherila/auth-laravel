@@ -111,8 +111,14 @@ rollback.
 // routes/console.php
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('bherila-auth:consume-identity-tombstones')->everyFiveMinutes();
+Schedule::command('bherila-auth:consume-identity-tombstones')
+    ->everyFiveMinutes()
+    ->runInBackground();
 ```
+
+A run with a backlog is paced (below) and can take a few minutes, so run it in the
+background rather than delaying the rest of the schedule. The lease, not the scheduler,
+keeps runs from overlapping.
 
 The command authenticates with the existing `bherila-auth.oauth_client` client id and
 secret over HTTPS (loopback HTTP only in `local`/`testing`) and never follows redirects.
@@ -121,8 +127,8 @@ Each run:
 1. takes the lease, or exits 0 with "skipped" while another run holds it;
 2. retries recorded failures, least recently attempted first (up to `--limit` of them),
    acknowledging each one whose handler now succeeds;
-3. reads up to `--max-pages` (default 10) pages of `--limit` tombstones (default
-   `identity_tombstones.page_limit`, at most 100), starting from the stored cursor;
+3. reads up to `--max-pages` (default 4) pages of `--limit` tombstones (default
+   `identity_tombstones.page_limit`, 25; at most 100), starting from the stored cursor;
 4. hands each tombstone to the handler and acknowledges it when the handler returns, or
    records it for a retry when the handler throws;
 5. stores the next cursor once every tombstone on the page has been handled or recorded
@@ -135,7 +141,8 @@ once the tombstone's `purge_after` has passed. The provider still delivers a tom
 that was never acknowledged, so one dropped at the end of the purge window comes back
 when the feed cycles.
 
-It exits 2 when `handler_budget_seconds` exceeds `lease_seconds`, and non-zero when no handler is bound, either table is missing, the provider
+It exits 2 when `handler_budget_seconds` exceeds `lease_seconds` or `requests_per_minute` is
+negative, and non-zero when no handler is bound, either table is missing, the provider
 settings are missing or untrusted, the feed is unavailable or malformed, an
 acknowledgement fails, or any handler call throws. The single summary line holds counts
 only, so scheduler output and alerts never contain subjects.
@@ -144,9 +151,15 @@ A page that the provider answered with malformed data is refused whole. A failed
 acknowledgement stops the run before the rest of its page and leaves the cursor where it
 was; the page is read again next time, which is safe. When the provider throttles
 (HTTP 429) a run waits out its `Retry-After`, at most 60 seconds and three times, then
-stops until the next run. The provider's reconciliation throttle is shared with
-[session status checks](provider-session-verification.md), so a large backlog drains
-over several runs rather than all at once. If the provider refuses the stored cursor
+stops until the next run.
+
+The provider allows 60 reconciliation requests a minute, shared with
+[session status checks](provider-session-verification.md). Every read and acknowledgement
+counts, including those for retries, so a run spaces its requests to at most
+`identity_tombstones.requests_per_minute` (default 30), leaving the rest for status
+checks. A full default run (4 pages of 25) therefore takes about three and a half
+minutes, and a large backlog drains over several runs. Set it to 0 only where the
+provider gives this application a separate allowance. If the provider refuses the stored cursor
 (for example after the client credential changed), the cursor is cleared and the next
 run starts from the oldest. Cursors are also kept per provider base URL and client id,
 so a new client never sends an old client's cursor.
@@ -160,7 +173,8 @@ so a new client never sends an old client's cursor.
     'retry_table' => 'bherila_auth_identity_tombstone_retries',
     'lease_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_LEASE_SECONDS', 900),
     'handler_budget_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_HANDLER_BUDGET_SECONDS', 300),
-    'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
+    'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 25),
+    'requests_per_minute' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_REQUESTS_PER_MINUTE', 30),
 ],
 ```
 
