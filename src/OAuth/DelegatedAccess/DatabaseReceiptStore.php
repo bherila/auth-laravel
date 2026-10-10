@@ -3,7 +3,6 @@
 namespace BWH\Auth\OAuth\DelegatedAccess;
 
 use Illuminate\Database\ConnectionInterface;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use JsonException;
 use Throwable;
@@ -51,8 +50,10 @@ final readonly class DatabaseReceiptStore
     public function claim(string $application, string $operationId, string $actor, string $requestHash, ?int $at = null): ?DelegatedReceipt
     {
         $at ??= self::now();
+        // A conflict-safe insert, never a caught duplicate-key error: on PostgreSQL that error would
+        // abort a surrounding transaction, and every statement after it, the read below included.
         try {
-            $this->connection->table(self::TABLE)->insert([
+            $inserted = $this->connection->table(self::TABLE)->insertOrIgnore([
                 'application' => $application,
                 'operation_key' => self::key($operationId),
                 'operation_id' => $operationId,
@@ -63,14 +64,14 @@ final readonly class DatabaseReceiptStore
                 'claimed_at' => $at,
                 'created_at' => $at,
             ]);
-
-            return null;
-        } catch (UniqueConstraintViolationException) {
-            // Somebody holds it. Fall through to what they hold.
         } catch (Throwable) {
             throw new DelegatedAccessException('receipt_storage_unavailable');
         }
+        if ($inserted === 1) {
+            return null;
+        }
 
+        // Somebody holds it: what do they hold?
         $held = $this->find($application, $operationId) ?? throw new DelegatedAccessException('operation_in_progress');
         if (! $held->abandoned($at) || ! hash_equals($held->requestHash, $requestHash)) {
             return $held;

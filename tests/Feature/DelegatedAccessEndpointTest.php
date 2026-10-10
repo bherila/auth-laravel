@@ -13,9 +13,11 @@ use BWH\Auth\OAuth\DelegatedAccess\DelegatedReceipt;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedRequestContext;
 use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use BWH\Auth\OAuth\PendingAccount;
+use BWH\Auth\Tests\Fixtures\TransactionAbortingSqliteConnection;
 use BWH\Auth\Tests\TestCase;
 use Closure;
 use DateTimeImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\RateLimiter;
@@ -477,6 +479,41 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->send($this->update(['operation_id' => $id]))->assertOk();
         $this->send($this->update(['operation_id' => strtolower($id)]))->assertOk();
         $this->assertCount(2, $this->calls);
+    }
+
+    public function test_a_duplicate_claim_inside_an_outer_transaction_leaves_it_usable_and_replays(): void
+    {
+        $connection = new TransactionAbortingSqliteConnection(DB::connection()->getPdo(), ':memory:', '', ['driver' => 'sqlite', 'name' => 'aborting']);
+        $store = new DatabaseReceiptStore($connection);
+        $this->app->instance(DatabaseReceiptStore::class, $store);
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+        $payload = array_diff_key($update, ['operation_id' => true]);
+
+        $connection->beginTransaction();
+        try {
+            $first = $this->send($update)->assertOk();
+            $this->assertSame($first->getContent(), $this->send($update)->assertOk()->getContent(), 'The duplicate claim replays');
+            $held = $store->claim(self::APPLICATION, $update['operation_id'], DatabaseReceiptStore::actor('actor-subject'), DatabaseReceiptStore::requestHash('actor-subject', $payload));
+            $this->assertSame(200, $held?->status);
+            $this->assertSame(1, $connection->table(DatabaseReceiptStore::TABLE)->count(), 'The outer transaction is still usable');
+        } finally {
+            $connection->rollBack();
+        }
+        $this->assertCount(1, $this->calls);
+
+        // The connection does model the rule this guards against.
+        $connection->beginTransaction();
+        try {
+            try {
+                $connection->insert('INSERT INTO '.DatabaseReceiptStore::TABLE.' (application) VALUES (NULL)');
+            } catch (QueryException) {
+            }
+            $this->expectException(QueryException::class);
+            $connection->table(DatabaseReceiptStore::TABLE)->count();
+        } finally {
+            $connection->rollBack();
+        }
     }
 
     public function test_the_same_operation_id_on_another_request_or_from_another_actor_is_refused(): void
