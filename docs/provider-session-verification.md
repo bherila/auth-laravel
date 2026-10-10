@@ -21,7 +21,8 @@ must be deployed before enabling enforcement.
 2. Add `RequireActiveProviderSession` after authentication on every
    session-authenticated route (for example, append it to the `web` group, or
    use it alongside `auth`). Pass guard names as parameters if the route does
-   not use the default guard.
+   not use the default guard. A session holds one provider login: guards that
+   share a session must be signed in as the same provider subject.
 3. If the account's binding does not live in `oauth_provider` / `oauth_subject`
    columns, bind your own `ProviderBindingResolver`, or rename the columns in
    `bherila-auth.provider_identity.binding`.
