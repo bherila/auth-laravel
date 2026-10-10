@@ -4,6 +4,32 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Provider identity enforcement for browser sessions (opt-in)
+
+- New `provider_identity` configuration section, off by default
+  (`BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED`).
+- `ProviderIdentityPolicy` decides whether a provider identity may still act through a credential
+  established at a given generation, independent of the credential type. Every credential of one
+  person shares one status observation per freshness window (a configurable cache store), and a
+  credential keeps the observation's time rather than "now", so sharing never extends freshness.
+  A newer generation still ends an older credential; it is never adopted.
+- `ProviderSession::establish()` wraps `remember()` for the login callback: with enforcement on, a
+  login whose generation cannot be remembered is undone and reported as unavailable; with it off,
+  the baseline is still remembered when available, so enabling enforcement later does not end
+  every session at once.
+- `RequireActiveProviderSession` middleware ends a browser session whose identity was disabled,
+  deleted, reset or ungranted: log out, invalidate, new CSRF token, then a redirect
+  (`expired_redirect_route`) or a JSON 401. An unavailable provider answers a retryable 503 and
+  keeps the session. Unsafe methods always check freshly. Only stateful guards are checked.
+- `ProviderBindingResolver` (default `ColumnProviderBindingResolver`, columns from configuration)
+  says where an account's provider binding lives. Unbound accounts are left to the application's
+  login policy; an incomplete binding or one naming another provider is refused, never treated as
+  unbound.
+- `ProviderSession::assertActive()` now goes through the shared policy; its behaviour for a single
+  session is unchanged.
+
 ## v0.22.1 - 2026-10-10
 
 ### Personal API tokens may carry MCP connection scopes (opt-in)
