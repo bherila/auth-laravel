@@ -44,6 +44,8 @@ the first entry here is in the git history.
   `access_denied`.
 - `OAuthCredentialOwners::revokeAll($owner)` revokes an account's codes, access and refresh tokens, for
   a durable boundary when the application disables it.
+- Requires the package migration `add_provider_identity_to_oauth_credentials` (refresh-token owner
+  column) before binding the policy.
 
 ### CORS for OAuth machine endpoints
 

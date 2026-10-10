@@ -25,7 +25,8 @@ return new class extends Migration
             });
         }
         $this->addColumn('oauth_refresh_tokens', 'provider_user_id', function (Blueprint $blueprint): void {
-            $blueprint->string('provider_user_id', 191)->nullable();
+            // Indexed: revoking an account's credentials looks refresh tokens up by owner.
+            $blueprint->string('provider_user_id', 191)->nullable()->index();
         });
     }
 

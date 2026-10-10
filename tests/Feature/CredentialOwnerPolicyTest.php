@@ -245,7 +245,10 @@ final class CredentialOwnerPolicyTest extends TestCase
 
     public function test_a_bound_policy_needs_the_refresh_owner_column(): void
     {
-        \Illuminate\Support\Facades\Schema::table('oauth_refresh_tokens', fn ($table) => $table->dropColumn('provider_user_id'));
+        \Illuminate\Support\Facades\Schema::table('oauth_refresh_tokens', function ($table): void {
+            $table->dropIndex(['provider_user_id']);
+            $table->dropColumn('provider_user_id');
+        });
         $user = $this->user();
         $client = $this->client();
 
