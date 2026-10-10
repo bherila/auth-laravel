@@ -310,6 +310,16 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->assertStringContainsString('stopped: the tombstone feed is unavailable (invalid)', $output);
     }
 
+    public function test_a_page_without_data_ends_in_the_controlled_failure_summary(): void
+    {
+        $this->provider([['contract_version' => 1, 'has_more' => false, 'next_cursor' => null]]);
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString('stopped: the tombstone feed is unavailable (invalid)', $output);
+    }
+
     public function test_a_failed_acknowledgement_stops_the_run_and_leaves_the_page_to_be_read_again(): void
     {
         Log::spy();

@@ -65,7 +65,8 @@ final readonly class IdentityTombstoneClient
             cursorSent: $cursor !== null,
         );
 
-        if (($data['contract_version'] ?? null) !== 1 || ! array_is_list($items = $data['data'] ?? null)
+        if (($data['contract_version'] ?? null) !== 1
+            || ! is_array($items = $data['data'] ?? null) || ! array_is_list($items)
             || count($items) > $limit || ! is_bool($hasMore = $data['has_more'] ?? null)
             || ! array_key_exists('next_cursor', $data)) {
             throw self::invalid();
