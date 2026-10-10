@@ -3,6 +3,8 @@
 namespace BWH\Auth\OAuth\Session;
 
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Carbon;
 
@@ -43,11 +45,7 @@ final readonly class ProviderIdentityPolicy
         }
 
         $observation = $fresh ? null : $this->cached($subject);
-        if ($observation === null) {
-            $status = $this->client->status($subject);
-            $observation = ['generation' => $status?->credentialVersion, 'checked_at' => Carbon::now()->getTimestamp()];
-            $this->store()->put($this->key($subject), $observation, self::FRESHNESS_SECONDS);
-        }
+        $observation ??= $this->refresh($subject, $fresh);
 
         if ($observation['generation'] !== $baseline) {
             throw new ProviderSessionExpired('The provider identity is no longer active for this credential.');
@@ -64,10 +62,70 @@ final readonly class ProviderIdentityPolicy
         return $checkedAt <= $now && $now - $checkedAt < self::FRESHNESS_SECONDS;
     }
 
+    /**
+     * Ask the provider, one caller per subject at a time.
+     *
+     * Without the lock, every worker that saw the same expired entry would ask at once,
+     * and a slow, older answer could overwrite a newer one. A caller that waited re-reads
+     * the entry first, so a burst costs one request; a fresh check always asks, but still
+     * in turn, so its newer answer is the one kept.
+     *
+     * @return array{generation: int|null, checked_at: int}
+     */
+    private function refresh(string $subject, bool $fresh): array
+    {
+        $ask = function () use ($subject, $fresh): array {
+            $observation = $fresh ? null : $this->cached($subject);
+            if ($observation !== null) {
+                return $observation;
+            }
+            $status = $this->client->status($subject);
+            $observation = ['generation' => $status?->credentialVersion, 'checked_at' => Carbon::now()->getTimestamp()];
+            $this->cache(fn (Repository $store) => $store->put($this->key($subject), $observation, self::FRESHNESS_SECONDS));
+
+            return $observation;
+        };
+
+        $store = $this->cache(fn (Repository $store) => $store);
+        if (! $store->getStore() instanceof LockProvider) {
+            return $ask();
+        }
+        try {
+            // Longer than one status request's own deadline, so a waiting caller normally
+            // gets the answer instead of timing out behind a request still in flight.
+            return $store->lock($this->key($subject).':refresh', 10)->block(6, $ask);
+        } catch (LockTimeoutException $exception) {
+            throw new ProviderStatusUnavailable('Provider status verification is busy. Please retry.', previous: $exception);
+        } catch (ProviderSessionExpired|ProviderStatusUnavailable $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            throw new ProviderStatusUnavailable('Provider status verification is unavailable.', previous: $exception);
+        }
+    }
+
+    /**
+     * Run a cache operation, reporting a failing store as unavailable verification: an
+     * outage of the shared store must refuse protected work retryably, never authorize it
+     * and never surface as an arbitrary error.
+     *
+     * @template T
+     *
+     * @param  \Closure(Repository): T  $operation
+     * @return T
+     */
+    private function cache(\Closure $operation): mixed
+    {
+        try {
+            return $operation($this->cache->store(config('bherila-auth.provider_identity.cache_store')));
+        } catch (\Throwable $exception) {
+            throw new ProviderStatusUnavailable('Provider status verification is unavailable.', previous: $exception);
+        }
+    }
+
     /** @return array{generation: int|null, checked_at: int}|null */
     private function cached(string $subject): ?array
     {
-        $value = $this->store()->get($this->key($subject));
+        $value = $this->cache(fn (Repository $store) => $store->get($this->key($subject)));
         if (! is_array($value) || ! array_key_exists('generation', $value)
             || ! (is_int($value['generation']) || $value['generation'] === null)
             || ! is_int($value['checked_at'] ?? null) || ! self::isFresh($value['checked_at'])) {
@@ -82,10 +140,5 @@ final readonly class ProviderIdentityPolicy
         // Pinned to the configured provider and client, so a configuration change
         // never reuses an answer obtained for a different one.
         return 'bherila_auth:provider_identity:'.$this->client->context().':'.hash('sha256', $subject);
-    }
-
-    private function store(): Repository
-    {
-        return $this->cache->store(config('bherila-auth.provider_identity.cache_store'));
     }
 }

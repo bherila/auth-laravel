@@ -17,10 +17,13 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Cache\ArrayStore;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Sleep;
 use PHPUnit\Framework\Attributes\DataProvider;
 
 class ProviderIdentityEnforcementTest extends TestCase
@@ -183,6 +186,44 @@ class ProviderIdentityEnforcementTest extends TestCase
         $this->policy()->verify('subject-example', 7);
 
         Http::assertSentCount(2);
+    }
+
+    public function test_one_caller_at_a_time_asks_and_a_busy_refresh_is_retryable_not_a_second_request(): void
+    {
+        Http::fake(fn () => Http::response($this->payload()));
+        Sleep::fake(syncWithCarbon: true);
+        $key = 'bherila_auth:provider_identity:'.app(ProviderIdentityStatusClient::class)->context()
+            .':'.hash('sha256', 'subject-example').':refresh';
+        $held = Cache::lock($key, 10);
+        $this->assertTrue($held->get(), 'Another worker is mid-refresh.');
+
+        try {
+            $this->policy()->verify('subject-example', 7);
+            $this->fail('A caller must not ask while another refresh for the subject is in flight.');
+        } catch (ProviderStatusUnavailable) {
+            Http::assertNothingSent();
+        }
+
+        $held->release();
+        $this->policy()->verify('subject-example', 7);
+        Http::assertSentCount(1);
+    }
+
+    public function test_a_failing_shared_store_refuses_retryably_instead_of_erroring(): void
+    {
+        Http::fake(fn () => Http::response($this->payload()));
+        config(['cache.stores.broken' => ['driver' => 'broken']]);
+        Cache::extend('broken', fn () => Cache::repository(new class extends ArrayStore
+        {
+            public function get($key): mixed
+            {
+                throw new \RuntimeException('The cache backend is down.');
+            }
+        }));
+        config(['bherila-auth.provider_identity.cache_store' => 'broken']);
+
+        $this->expectException(ProviderStatusUnavailable::class);
+        $this->policy()->verify('subject-example', 7);
     }
 
     public function test_a_session_keeps_the_observation_time_so_shared_answers_do_not_extend_it(): void
