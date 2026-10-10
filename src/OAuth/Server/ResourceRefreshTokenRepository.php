@@ -129,9 +129,12 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             : Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
         $tokens = app(ProviderIdentityTokens::class);
         if ($credential === null) {
-            return ProviderIdentityTokens::enabled();
+            return ProviderIdentityTokens::enabled() || app()->bound(\BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy::class);
         }
-        if ($tokens->revoked($credential, fresh: true)) {
+        $owner = $credential->getAttribute('user_id') ?? $credential->getAttribute(ProviderIdentityTokens::OWNER_COLUMN);
+        // Refused before the grant revokes anything, so a refused refresh token is not consumed.
+        if (app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->refused($owner)
+            || $tokens->revoked($credential, fresh: true)) {
             return true;
         }
         $tokens->carry($this->request(), $credential);

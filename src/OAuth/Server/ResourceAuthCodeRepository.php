@@ -77,6 +77,7 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
+        app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->assertMayHold($authCodeEntity->getUserIdentifier());
         $attributes += $this->providerIdentityStamp($model, $authCodeEntity->getUserIdentifier());
 
         $model->forceFill($attributes)->save();
@@ -149,7 +150,8 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
     private function providerIdentityRevoked(\Illuminate\Database\Eloquent\Model $code): bool
     {
         $tokens = app(ProviderIdentityTokens::class);
-        if ($tokens->revoked($code, remote: false)) {
+        if (app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->refused($code->getAttribute('user_id'))
+            || $tokens->revoked($code, remote: false)) {
             return true;
         }
         $tokens->carry($this->request(), $code);

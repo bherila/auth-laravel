@@ -36,6 +36,15 @@ the first entry here is in the git history.
   and `AssertsAgentOAuthContract::assertProtectedResourceChallenge()` follows it as a strict client does.
 - The consent step no longer assumes the default resource for a code requested for another one.
 
+### Credential-owner policy (opt-in)
+
+- `CredentialOwnerPolicy::mayHoldCredentials()`, bound by the application, is consulted when every
+  authorization code, access token and refresh token is issued, exchanged, refreshed and used. A
+  refused refresh does not consume the refresh token; issuance to a refused account answers 403
+  `access_denied`.
+- `OAuthCredentialOwners::revokeAll($owner)` revokes an account's codes, access and refresh tokens, for
+  a durable boundary when the application disables it.
+
 ### CORS for OAuth machine endpoints
 
 - `oauth_server.cors.allowed_origins` gives listed browser origins CORS (with preflights) on discovery,

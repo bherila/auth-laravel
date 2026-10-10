@@ -2,6 +2,7 @@
 
 namespace BWH\Auth\OAuth\Server;
 
+use BWH\Auth\OAuth\Credentials\OAuthCredentialOwners;
 use BWH\Auth\OAuth\Introspection\OAuthIntrospectionValidationContext;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Http\Request;
@@ -133,6 +134,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
+        app(OAuthCredentialOwners::class)->assertMayHold($userId);
         $attributes += $this->providerIdentityStamp($model, $userId);
 
         $model->forceFill($attributes)->save();
@@ -144,6 +146,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     /** Application policy may also wrap Passport-compatible unbound persistence. */
     protected function persistUnboundAccessToken(AccessTokenEntityInterface $accessTokenEntity): void
     {
+        app(OAuthCredentialOwners::class)->assertMayHold($accessTokenEntity->getUserIdentifier());
         // With the package's server off, Passport's own code and refresh repositories carry no
         // stamp to inherit; record one only if it is available, and never refuse the exchange
         // here. A bound owner's unstamped token is refused at use once enforcement is on.
@@ -226,7 +229,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
             // The row is already known to exist and be non-revoked. Preserve
             // Passport's normal unbound-token result without a second query.
             if (! $this->oauthServerEnabled()) {
-                return app(ProviderIdentityTokens::class)->revoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
+                return $this->ownerOrIdentityRevoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
             }
         }
 
@@ -241,7 +244,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         }
 
         if (! $bound) {
-            return app(ProviderIdentityTokens::class)->revoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
+            return $this->ownerOrIdentityRevoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
         }
 
         // A resource-bound token is valid only where application policy has
@@ -264,7 +267,14 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
             $request?->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $storedResource);
         }
 
-        return app(ProviderIdentityTokens::class)->revoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
+        return $this->ownerOrIdentityRevoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
+    }
+
+    /** The application's credential-owner policy, then the provider identity's status. */
+    private function ownerOrIdentityRevoked(\Illuminate\Database\Eloquent\Model $token): bool
+    {
+        return app(OAuthCredentialOwners::class)->refused($token->getAttribute('user_id'))
+            || app(ProviderIdentityTokens::class)->revoked($token);
     }
 
     /** Application-owned account, grant, or credential-version revocation policy. */
