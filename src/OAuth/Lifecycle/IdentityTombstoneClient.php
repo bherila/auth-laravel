@@ -108,7 +108,7 @@ final readonly class IdentityTombstoneClient
         $data = $this->guard(fn (): array => $this->transport->send(
             'PUT', self::PATH.'/'.$tombstone->id.'/acknowledgement', [], null,
             self::ACKNOWLEDGEMENT_BYTES, self::ACKNOWLEDGEMENT_SECONDS,
-        ));
+        ), acknowledging: true);
 
         $acknowledgement = $data['acknowledgement'] ?? null;
         if (($data['contract_version'] ?? null) !== 1 || ! is_array($acknowledgement)
@@ -187,7 +187,7 @@ final readonly class IdentityTombstoneClient
      * @param  \Closure(): T  $call
      * @return T
      */
-    private function guard(\Closure $call, bool $cursorSent = false): mixed
+    private function guard(\Closure $call, bool $cursorSent = false, bool $acknowledging = false): mixed
     {
         try {
             return $call();
@@ -200,6 +200,9 @@ final readonly class IdentityTombstoneClient
                 $failure->reason === ReconciliationFailure::INVALID => self::invalid(),
                 $failure->status === 429 => new IdentityTombstoneFeedUnavailable(
                     IdentityTombstoneFeedUnavailable::THROTTLED, 'The identity tombstone feed is throttled.', $failure->retryAfter),
+                // The provider answers 404 for a tombstone outside this client's assignments.
+                $acknowledging && $failure->status === 404 => new IdentityTombstoneFeedUnavailable(
+                    IdentityTombstoneFeedUnavailable::GONE, 'The identity tombstone is not assigned to this application.'),
                 // A cursor issued to another client, or one the provider no longer accepts.
                 $cursorSent && $failure->status === 422 => new IdentityTombstoneFeedUnavailable(
                     IdentityTombstoneFeedUnavailable::CURSOR_REJECTED, 'The identity tombstone feed refused the stored cursor.'),

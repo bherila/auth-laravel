@@ -43,6 +43,26 @@ class IdentityTombstoneCursorStoreTest extends TestCase
         $this->assertSame('kept', $this->store()->cursor('context-a'), 'Running it again, or rolling back, keeps the data');
     }
 
+    public function test_the_retry_migration_creates_its_table_on_the_configured_connection_once_and_keeps_it(): void
+    {
+        $migration = require dirname(self::MIGRATION).'/2026_10_10_110000_create_identity_tombstone_retries.php';
+        $retries = $this->app->make(\BWH\Auth\OAuth\Lifecycle\IdentityTombstoneRetryStore::class);
+        $this->assertFalse($retries->installed());
+
+        $migration->up();
+        $this->assertTrue(Schema::connection('lifecycle')->hasTable(\BWH\Auth\OAuth\Lifecycle\IdentityTombstoneRetryStore::DEFAULT_TABLE));
+        $this->assertFalse(Schema::connection('testing')->hasTable(\BWH\Auth\OAuth\Lifecycle\IdentityTombstoneRetryStore::DEFAULT_TABLE));
+        $at = new \DateTimeImmutable('2026-08-26T12:00:00Z');
+        $retries->record('context-a', new \BWH\Auth\OAuth\Lifecycle\IdentityTombstone('648B1F85-9192-4EB2-943D-734C5F5FD817', 'example-provider', '42', $at, $at->modify('+30 days'), null));
+        $retries->record('context-a', new \BWH\Auth\OAuth\Lifecycle\IdentityTombstone('648b1f85-9192-4eb2-943d-734c5f5fd817', 'example-provider', '42', $at, $at->modify('+30 days'), null));
+
+        $migration->up();
+        $migration->down();
+        $this->assertSame(2, $retries->attempts('context-a', '648b1f85-9192-4eb2-943d-734c5f5fd817'), 'One row per tombstone, whatever its case; kept through a re-run and rollback');
+        $this->assertSame('42', $retries->due('context-a', 10)[0]->subject);
+        $this->assertSame([], $retries->due('context-b', 10));
+    }
+
     public function test_the_migration_honours_a_configured_table_name(): void
     {
         config(['bherila-auth.identity_tombstones.table' => 'tombstone_cursors']);

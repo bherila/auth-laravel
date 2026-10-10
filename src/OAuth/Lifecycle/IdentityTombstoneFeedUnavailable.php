@@ -24,6 +24,9 @@ final class IdentityTombstoneFeedUnavailable extends \RuntimeException
 
     public const INVALID = 'invalid';
 
+    /** The provider no longer assigns this tombstone to this application (HTTP 404 on acknowledgement). */
+    public const GONE = 'gone';
+
     public function __construct(
         public readonly string $reason,
         string $message,

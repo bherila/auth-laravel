@@ -204,6 +204,8 @@ return [
         // that runs the command: it also holds the lease that keeps two runs from overlapping.
         'connection' => env('BHERILA_AUTH_IDENTITY_TOMBSTONE_CONNECTION'),
         'table' => 'bherila_auth_identity_tombstone_cursors',
+        // Tombstones whose handler failed, retried first on each run rather than when the feed drains.
+        'retry_table' => 'bherila_auth_identity_tombstone_retries',
         // Tombstones per page, 1 through 100 (the provider's maximum).
         'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
     ],

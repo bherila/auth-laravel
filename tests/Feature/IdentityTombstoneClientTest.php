@@ -310,6 +310,25 @@ class IdentityTombstoneClientTest extends TestCase
         ];
     }
 
+    public function test_an_acknowledgement_for_a_tombstone_no_longer_assigned_is_gone(): void
+    {
+        Http::fake(['*' => Http::response(['message' => 'Not Found.'], 404)]);
+
+        try {
+            $this->client()->acknowledge($this->tombstone());
+            $this->fail('A 404 acknowledgement must fail.');
+        } catch (IdentityTombstoneFeedUnavailable $exception) {
+            $this->assertSame(IdentityTombstoneFeedUnavailable::GONE, $exception->reason);
+        }
+
+        try {
+            $this->client()->page();
+            $this->fail('A 404 read must fail.');
+        } catch (IdentityTombstoneFeedUnavailable $exception) {
+            $this->assertSame(IdentityTombstoneFeedUnavailable::UNAVAILABLE, $exception->reason, 'Only an acknowledgement can be gone');
+        }
+    }
+
     public function test_an_id_that_is_not_a_uuid_is_never_sent(): void
     {
         Http::fake();

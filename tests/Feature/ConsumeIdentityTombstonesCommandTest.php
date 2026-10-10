@@ -5,6 +5,7 @@ namespace BWH\Auth\Tests\Feature;
 use BWH\Auth\OAuth\Lifecycle\IdentityTombstoneClient;
 use BWH\Auth\OAuth\Lifecycle\IdentityTombstoneCursorStore;
 use BWH\Auth\OAuth\Lifecycle\IdentityTombstoneHandler;
+use BWH\Auth\OAuth\Lifecycle\IdentityTombstoneRetryStore;
 use BWH\Auth\Tests\Fixtures\RecordingTombstoneHandler;
 use BWH\Auth\Tests\TestCase;
 use Illuminate\Http\Client\Request;
@@ -35,11 +36,15 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
             'client_id' => 'example-client',
             'client_secret' => 'example-secret',
         ]]);
-        (require __DIR__.'/../../database/identity-tombstone-migrations/2026_10_10_100000_create_identity_tombstone_cursors.php')->up();
+        foreach (glob(__DIR__.'/../../database/identity-tombstone-migrations/*.php') as $migration) {
+            (require $migration)->up();
+        }
         $this->handler = new RecordingTombstoneHandler;
         $this->app->instance(IdentityTombstoneHandler::class, $this->handler);
         Http::preventStrayRequests();
         Sleep::fake();
+        // Inside the fixtures' purge window (2026-08-26 to 2026-09-25).
+        $this->travelTo(new \DateTimeImmutable('2026-08-27T00:00:00Z'));
     }
 
     private static function id(int $n): string
@@ -101,6 +106,16 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         return $this->app->make(IdentityTombstoneCursorStore::class);
     }
 
+    private function retries(): IdentityTombstoneRetryStore
+    {
+        return $this->app->make(IdentityTombstoneRetryStore::class);
+    }
+
+    private function context(): string
+    {
+        return $this->app->make(IdentityTombstoneClient::class)->context();
+    }
+
     private function storedCursor(): ?string
     {
         return $this->store()->cursor($this->app->make(IdentityTombstoneClient::class)->context());
@@ -128,7 +143,7 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->assertStringEndsWith('/identity-tombstones?limit=100', $this->reads[0]->url());
         $this->assertStringEndsWith('/identity-tombstones?limit=100&cursor=cursor-1', $this->reads[1]->url());
         $this->assertNull($this->storedCursor(), 'The next cycle starts without a cursor');
-        $this->assertStringContainsString('Identity tombstones: 3 received, 3 acknowledged, 0 failed, 2 page(s) read.', $output);
+        $this->assertStringContainsString('Identity tombstones: 3 received, 0 retried, 3 acknowledged, 0 failed, 2 page(s) read.', $output);
         $this->assertStringNotContainsString('subject-secret', $output);
     }
 
@@ -168,7 +183,9 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->assertSame(1, $code);
         $this->assertSame([self::id(1), self::id(3), self::id(4)], $this->acknowledged);
         $this->assertNull($this->storedCursor(), 'The page was recorded, so the cursor advanced past it');
-        $this->assertStringContainsString('4 received, 3 acknowledged, 1 failed, 2 page(s) read.', $output);
+        $this->assertSame(1, $this->retries()->attempts($this->context(), self::id(2)), 'The failure is kept for a retry');
+        $this->assertNull($this->retries()->attempts($this->context(), self::id(1)));
+        $this->assertStringContainsString('4 received, 0 retried, 3 acknowledged, 1 failed, 2 page(s) read.', $output);
         $this->assertStringNotContainsString('subject-secret', $output);
         Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message, array $context): bool => $context === ['tombstone_id' => self::id(2), 'exception' => \RuntimeException::class]
             && ! str_contains($message.json_encode($context), 'subject-secret'));
@@ -191,11 +208,77 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->handler->failing = [];
         [$second, $output] = $this->run_();
         $this->assertSame(0, $second, $output);
-        $this->assertStringContainsString('0 received, 0 acknowledged, 0 failed, 1 page(s) read.', $output);
+        $this->assertStringContainsString('0 received, 1 retried, 1 acknowledged, 0 failed, 1 page(s) read.', $output);
 
         [$third, $output] = $this->run_();
         $this->assertSame(0, $third, 'Earlier throttle waits do not use up this run\'s budget: '.$output);
+        $this->assertSame([self::id(1), self::id(2)], $this->acknowledged);
+    }
+
+    public function test_a_failure_on_a_page_that_is_not_the_last_is_retried_first_on_the_next_run(): void
+    {
+        // A feed that never drains would otherwise leave tombstone 1 behind the cursor for good.
+        $this->handler->failing[self::id(1)] = true;
+        $this->provider([self::page([1, 2], 'cursor-1'), self::page([3], 'cursor-2')]);
+
+        [$code] = $this->run_(['--max-pages' => 1]);
+        $this->assertSame(1, $code);
+        $this->assertSame('cursor-1', $this->storedCursor());
+
+        $this->handler->failing = [];
+        [$code, $output] = $this->run_(['--max-pages' => 1]);
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame([self::id(2), self::id(1), self::id(3)], $this->acknowledged, 'Retried before the feed, without waiting for it to end');
+        $this->assertNull($this->retries()->attempts($this->context(), self::id(1)), 'Acknowledged, so no longer awaiting a retry');
+        $this->assertStringContainsString('1 received, 1 retried, 2 acknowledged, 0 failed, 1 page(s) read; more pending.', $output);
+    }
+
+    public function test_a_retry_that_fails_again_counts_an_attempt_and_is_not_handled_twice_in_one_run(): void
+    {
+        $this->handler->failing[self::id(1)] = true;
+        $this->provider([self::page([1]), self::page([1, 2])]);
+        $this->run_();
+        $calls = 0;
+        $this->handler->during = function ($tombstone) use (&$calls): void {
+            $calls += $tombstone->id === self::id(1) ? 1 : 0;
+        };
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(1, $code);
+        $this->assertSame(1, $calls, 'The feed delivered it again, but this run had already tried it');
+        $this->assertSame(2, $this->retries()->attempts($this->context(), self::id(1)));
         $this->assertSame([self::id(2)], $this->acknowledged);
+        $this->assertStringContainsString('2 received, 1 retried, 1 acknowledged, 1 failed, 1 page(s) read.', $output);
+    }
+
+    public function test_a_retry_the_provider_no_longer_assigns_is_dropped(): void
+    {
+        $this->handler->failing[self::id(1)] = true;
+        $this->provider([self::page([1]), self::page([])], [self::id(1) => Http::response(['message' => 'Not Found.'], 404)]);
+        $this->run_();
+        $this->handler->failing = [];
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(0, $code, $output);
+        $this->assertNull($this->retries()->attempts($this->context(), self::id(1)));
+    }
+
+    public function test_a_retry_past_the_providers_purge_window_is_dropped_without_calling_the_handler(): void
+    {
+        $this->handler->failing[self::id(1)] = true;
+        $this->provider([self::page([1]), self::page([])]);
+        $this->run_();
+        $this->handler->failing = [];
+        $this->travelTo(new \DateTimeImmutable('2026-09-25T12:00:01Z'));
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame([], $this->handler->handled, 'Not retried; the feed still delivers it when it cycles');
+        $this->assertNull($this->retries()->attempts($this->context(), self::id(1)));
     }
 
     public function test_an_unavailable_feed_fails_without_touching_the_cursor_or_the_handler(): void
@@ -237,7 +320,7 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->assertSame([self::id(1), self::id(2)], $this->handler->ids(), 'The rest of the page waits for the provider');
         $this->assertSame([self::id(1)], $this->acknowledged);
         $this->assertSame('cursor-0', $this->storedCursor(), 'An incompletely recorded page is read again');
-        $this->assertStringContainsString('3 received, 1 acknowledged, 1 failed, 0 page(s) read; stopped: an acknowledgement failed (unavailable).', $output);
+        $this->assertStringContainsString('3 received, 0 retried, 1 acknowledged, 1 failed, 0 page(s) read; stopped: an acknowledgement failed (unavailable).', $output);
         Log::shouldHaveReceived('warning')->once()->with('An identity tombstone could not be acknowledged.', ['tombstone_id' => self::id(2), 'reason' => 'unavailable']);
     }
 
@@ -364,7 +447,7 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         [$code, $output] = $this->run_();
 
         $this->assertSame(1, $code);
-        $this->assertStringContainsString('cursor table is not installed', $output);
+        $this->assertStringContainsString('tables are not installed', $output);
         Http::assertNothingSent();
     }
 

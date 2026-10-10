@@ -60,8 +60,10 @@ case-sensitively; never on email, and never by treating the subject as a number.
   on an outer transaction, queue a job and return, or return before the work is durable.
 - **Throwing** leaves the tombstone unacknowledged. The command logs the tombstone id and
   the exception class (not its message, which may name the person), carries on with the
-  next tombstone, and exits non-zero. The tombstone is delivered again once the feed
-  cycles back to it. Log any detail you need inside the handler, under your own policy.
+  next tombstone, and exits non-zero. The tombstone is recorded in the retry table and
+  retried first on every later run, so a failure never waits for the feed to drain and
+  never holds up newer tombstones. Log any detail you need inside the handler, under your
+  own policy.
 
 ### Idempotency
 
@@ -70,17 +72,20 @@ run that stopped before acknowledging, an acknowledgement the provider did not c
 page read again after an outage, or two deletions that resolve to one local record. Each
 call must be safe to repeat, and a subject with no local record must count as done.
 
-## 2. Install the cursor table
+## 2. Install the tables
 
 ```bash
 php artisan vendor:publish --tag=bherila-auth-identity-tombstone-migrations
 php artisan migrate
 ```
 
-The table holds the feed cursor per provider/client and the lease that keeps two runs
-from overlapping. It lives on `bherila-auth.identity_tombstones.connection` (the default
-connection unless set), which must be durable and shared by every server that runs the
-command. The migration does nothing if the table already exists and keeps it on rollback.
+The cursor table holds the feed cursor per provider/client and the lease that keeps two
+runs from overlapping. The retry table holds tombstones whose handler failed: the
+tombstone id, the opaque subject, the provider's timestamps, the number of attempts and
+the last attempt time. Both live on `bherila-auth.identity_tombstones.connection` (the
+default connection unless set), which must be durable and shared by every server that
+runs the command. Each migration does nothing if its table already exists and keeps it on
+rollback.
 
 ## 3. Schedule the command
 
@@ -96,14 +101,23 @@ secret over HTTPS (loopback HTTP only in `local`/`testing`) and never follows re
 Each run:
 
 1. takes the lease, or exits 0 with "skipped" while another run holds it;
-2. reads up to `--max-pages` (default 10) pages of `--limit` tombstones (default
+2. retries recorded failures, least recently attempted first (up to `--limit` of them),
+   acknowledging each one whose handler now succeeds;
+3. reads up to `--max-pages` (default 10) pages of `--limit` tombstones (default
    `identity_tombstones.page_limit`, at most 100), starting from the stored cursor;
-3. hands each tombstone to the handler and acknowledges it when the handler returns;
-4. stores the next cursor once every tombstone on the page has been handled or recorded
+4. hands each tombstone to the handler and acknowledges it when the handler returns, or
+   records it for a retry when the handler throws;
+5. stores the next cursor once every tombstone on the page has been handled or recorded
    as failed, and clears it when the provider reports no more pages, so the next cycle
-   starts from the oldest unacknowledged tombstone and picks up earlier failures.
+   starts from the oldest unacknowledged tombstone.
 
-It exits non-zero when no handler is bound, the cursor table is missing, the provider
+A retry row is removed when its tombstone is acknowledged, when the provider reports that
+the tombstone is no longer assigned to this application (HTTP 404 on acknowledgement), or
+once the tombstone's `purge_after` has passed. The provider still delivers a tombstone
+that was never acknowledged, so one dropped at the end of the purge window comes back
+when the feed cycles.
+
+It exits non-zero when no handler is bound, either table is missing, the provider
 settings are missing or untrusted, the feed is unavailable or malformed, an
 acknowledgement fails, or any handler call throws. The single summary line holds counts
 only, so scheduler output and alerts never contain subjects.
@@ -125,6 +139,7 @@ so a new client never sends an old client's cursor.
 'identity_tombstones' => [
     'connection' => env('BHERILA_AUTH_IDENTITY_TOMBSTONE_CONNECTION'),
     'table' => 'bherila_auth_identity_tombstone_cursors',
+    'retry_table' => 'bherila_auth_identity_tombstone_retries',
     'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
 ],
 ```
