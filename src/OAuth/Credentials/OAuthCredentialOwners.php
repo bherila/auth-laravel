@@ -48,10 +48,25 @@ final class OAuthCredentialOwners
     {
         $id = $owner->getAuthIdentifier();
         $tokenIds = Passport::token()->newQuery()->where('user_id', $id)->pluck('id');
-        Passport::refreshToken()->newQuery()->whereIn('access_token_id', $tokenIds)->update(['revoked' => true]);
+
+        // Refresh tokens by their access token, and by their own owner record, which outlives
+        // a purged access token.
+        $refreshTokens = Passport::refreshToken();
+        $refresh = $refreshTokens->newQuery()->whereIn('access_token_id', $tokenIds);
+        if ($refreshTokens->getConnection()->getSchemaBuilder()->hasColumn($refreshTokens->getTable(), \BWH\Auth\OAuth\Server\ProviderIdentityTokens::OWNER_COLUMN)) {
+            $refresh->orWhere(\BWH\Auth\OAuth\Server\ProviderIdentityTokens::OWNER_COLUMN, (string) $id);
+        }
+        $refresh->update(['revoked' => true]);
         Passport::authCode()->newQuery()->where('user_id', $id)->update(['revoked' => true]);
 
-        return Passport::token()->newQuery()->where('user_id', $id)->where('revoked', false)->update(['revoked' => true]);
+        // Through the repository, one token at a time, so revocation listeners hear of each.
+        $repository = app(\Laravel\Passport\Bridge\AccessTokenRepository::class);
+        $live = Passport::token()->newQuery()->where('user_id', $id)->where('revoked', false)->pluck('id');
+        foreach ($live as $tokenId) {
+            $repository->revokeAccessToken((string) $tokenId);
+        }
+
+        return $live->count();
     }
 
     private function users(): UserProvider
