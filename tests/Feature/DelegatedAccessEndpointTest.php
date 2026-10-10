@@ -442,6 +442,20 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->assertCount(1, $this->calls);
     }
 
+    public function test_a_stored_answer_is_replayed_after_writes_are_switched_off_and_only_new_writes_are_refused(): void
+    {
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $update = $this->update();
+        $first = $this->send($update)->assertOk();
+        config(['bherila-auth.delegated_access.writes_enabled' => false]);
+
+        $this->assertSame($first->getContent(), $this->send($update)->assertOk()->getContent(), 'A retry of an applied write reports what happened');
+        $this->send($update, 'another-actor')->assertStatus(403)->assertExactJson(['error' => 'not_authorized']);
+        $this->send([...$update, 'expected_revision' => 'r2'])->assertStatus(403)->assertExactJson(['error' => 'not_authorized']);
+        $this->send($this->update())->assertStatus(403)->assertExactJson(['error' => 'not_authorized']);
+        $this->assertCount(1, $this->calls);
+    }
+
     public function test_the_same_operation_id_on_another_request_or_from_another_actor_is_refused(): void
     {
         $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);

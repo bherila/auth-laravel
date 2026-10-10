@@ -108,14 +108,22 @@ final class DelegatedAccessController extends Controller
             $write = in_array($operation, DelegatedContract::WRITE_OPERATIONS, true);
             $operationId = $write ? (string) $payload['operation_id'] : null;
 
-            // An application that has not switched writes on refuses them here, before its adapter runs.
-            if ($write && ! $settings->writesEnabled()) {
-                throw new DelegatedAccessException('not_authorized', 403);
-            }
             // The operation id names the action across retries; the jti names this one request. A
             // provider that reuses one as the other would have every retry refused as a replay.
             if ($operationId !== null && hash_equals($verified->jti, $operationId)) {
                 throw new DelegatedAccessException('invalid_request', 422);
+            }
+            // An application that has not switched writes on refuses them here, before its adapter runs.
+            // A repeat of a write already answered is not a new write: it gets its stored answer, so
+            // switching writes off never changes what a retry reports about a change already made.
+            if ($operationId !== null && ! $settings->writesEnabled()) {
+                $hash = DatabaseReceiptStore::requestHash($verified->subject, $payload);
+                $held = $container->make(DatabaseReceiptStore::class)->find($application, $operationId);
+                if ($held !== null && ! $held->pending() && hash_equals($held->requestHash, $hash)) {
+                    return self::replay($held, $hash);
+                }
+
+                throw new DelegatedAccessException('not_authorized', 403);
             }
 
             // A write runs once per operation id. The claim is taken before the adapter, so a repeat,
