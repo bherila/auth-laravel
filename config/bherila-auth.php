@@ -41,6 +41,29 @@ return [
         'end_session_path' => '/oauth/end-session',
     ],
 
+    // Enforce the identity provider's account status on credentials this application
+    // holds for a provider-bound account: browser sessions (RequireActiveProviderSession)
+    // and, where wired, bearer tokens. Off by default; enable only after the login callback
+    // calls ProviderSession::establish(). See docs/provider-session-verification.md.
+    'provider_identity' => [
+        'enabled' => (bool) env('BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED', false),
+        // One status observation per provider subject is shared by every credential of that
+        // person. Null uses the default cache store; use a store shared by all web workers.
+        'cache_store' => env('BHERILA_AUTH_PROVIDER_IDENTITY_CACHE_STORE'),
+        // Columns the default ProviderBindingResolver reads. Bind your own resolver if the
+        // binding lives elsewhere.
+        'binding' => [
+            'provider_column' => 'oauth_provider',
+            'subject_column' => 'oauth_subject',
+        ],
+        // Where an ended browser session is sent (a route name). Null sends it to "/".
+        'expired_redirect_route' => null,
+        // Route names RequireActiveProviderSession lets through unchecked: sign-out routes, so a
+        // person can always end their local session, even while the provider is unavailable.
+        // Never list a route that does anything but end access.
+        'except_routes' => ['logout'],
+    ],
+
     // Optional OAuth authorization-server helpers for applications exposing an
     // MCP or other protected API through Laravel Passport. Routes remain owned
     // by the application so this package never enables an authorization server
