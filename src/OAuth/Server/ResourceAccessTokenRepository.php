@@ -137,7 +137,14 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     /** Application policy may also wrap Passport-compatible unbound persistence. */
     protected function persistUnboundAccessToken(AccessTokenEntityInterface $accessTokenEntity): void
     {
-        $stamp = $this->providerIdentityStamp(Passport::token(), $accessTokenEntity->getUserIdentifier());
+        // With the package's server off, Passport's own code and refresh repositories carry no
+        // stamp to inherit; record one only if it is available, and never refuse the exchange
+        // here. A bound owner's unstamped token is refused at use once enforcement is on.
+        try {
+            $stamp = $this->providerIdentityStamp(Passport::token(), $accessTokenEntity->getUserIdentifier());
+        } catch (RuntimeException) {
+            $stamp = [];
+        }
         parent::persistNewAccessToken($accessTokenEntity);
         if ($stamp !== []) {
             Passport::token()->newQuery()->whereKey($accessTokenEntity->getIdentifier())->update($stamp);

@@ -260,6 +260,17 @@ final class ProviderIdentityTokensTest extends TestCase
         $this->assertSame(0, Passport::authCode()->newQuery()->count());
     }
 
+    public function test_passport_exchanges_still_work_while_the_package_server_is_off(): void
+    {
+        config(['bherila-auth.oauth_server.enabled' => false]);
+        app(\Laravel\Passport\ClientRepository::class)->createPersonalAccessGrantClient('Personal', 'users');
+
+        $token = $this->user()->createToken('Outside the package server');
+
+        $this->assertNotEmpty($token->accessToken);
+        $this->assertNull(Passport::token()->newQuery()->sole()->provider_generation);
+    }
+
     public function test_unbound_accounts_are_left_to_the_application(): void
     {
         Http::fake();
