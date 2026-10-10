@@ -45,6 +45,12 @@ final readonly class RequireActiveProviderSession
         if (! config('bherila-auth.provider_identity.enabled', false)) {
             return $next($request);
         }
+        // Signing out must stay reachable while the provider or the shared store is down;
+        // it only ends local access, so letting it through grants nothing.
+        $except = config('bherila-auth.provider_identity.except_routes', ['logout']);
+        if (is_array($except) && $except !== [] && $request->routeIs(...$except)) {
+            return $next($request);
+        }
 
         foreach ($guards === [] ? [null] : $guards as $name) {
             $guard = $this->auth->guard($name);

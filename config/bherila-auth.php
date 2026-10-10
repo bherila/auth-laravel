@@ -58,6 +58,10 @@ return [
         ],
         // Where an ended browser session is sent (a route name). Null sends it to "/".
         'expired_redirect_route' => null,
+        // Route names RequireActiveProviderSession lets through unchecked: sign-out routes, so a
+        // person can always end their local session, even while the provider is unavailable.
+        // Never list a route that does anything but end access.
+        'except_routes' => ['logout'],
     ],
 
     // Optional OAuth authorization-server helpers for applications exposing an

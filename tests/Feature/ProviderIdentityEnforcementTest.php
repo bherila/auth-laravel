@@ -59,6 +59,11 @@ class ProviderIdentityEnforcementTest extends TestCase
         Route::middleware(['web', RequireActiveProviderSession::class])->group(function (): void {
             Route::get('/private', fn () => 'ok');
             Route::post('/private', fn () => 'written');
+            Route::post('/logout', function () {
+                Auth::guard('web')->logout();
+
+                return 'signed out';
+            })->name('logout');
         });
         Route::get('/signed-out', fn () => 'signed out')->name('signed-out');
     }
@@ -409,6 +414,15 @@ class ProviderIdentityEnforcementTest extends TestCase
         $this->actingAs($user)->withSession($this->sessionState())->postJson('/private')
             ->assertStatus(503)->assertHeader('Retry-After', '30');
         $this->assertAuthenticatedAs($user, 'web');
+    }
+
+    public function test_signing_out_stays_reachable_during_an_outage(): void
+    {
+        Http::fake(['*' => Http::response(null, 503)]);
+        $this->actingAs($this->user())->withSession($this->sessionState())->post('/logout')
+            ->assertOk()->assertSee('signed out');
+        $this->assertGuest('web');
+        Http::assertNothingSent();
     }
 
     public function test_unbound_accounts_are_left_to_the_application_policy(): void

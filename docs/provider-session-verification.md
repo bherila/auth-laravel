@@ -22,7 +22,11 @@ must be deployed before enabling enforcement.
    session-authenticated route (for example, append it to the `web` group, or
    use it alongside `auth`). Pass guard names as parameters if the route does
    not use the default guard. A session holds one provider login: guards that
-   share a session must be signed in as the same provider subject.
+   share a session must be signed in as the same provider subject. Sign-out routes
+   named in `provider_identity.except_routes` (default `logout`) are let through,
+   so a person can always end their session during an outage. The default
+   `ColumnProviderBindingResolver` reads Eloquent models; bind your own resolver
+   for guards whose users are not Eloquent models.
 3. If the account's binding does not live in `oauth_provider` / `oauth_subject`
    columns, bind your own `ProviderBindingResolver`, or rename the columns in
    `bherila-auth.provider_identity.binding`.
