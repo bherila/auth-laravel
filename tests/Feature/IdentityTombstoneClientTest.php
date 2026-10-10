@@ -294,6 +294,15 @@ class IdentityTombstoneClientTest extends TestCase
             && $request->header('Authorization') === ['Basic '.base64_encode('example-client:example-secret')]);
     }
 
+    public function test_an_acknowledgement_naming_the_same_tombstone_in_another_case_is_accepted(): void
+    {
+        Http::fake(['*' => Http::response(['contract_version' => 1, 'acknowledgement' => ['tombstone_id' => self::ID, 'acknowledged_at' => '2026-08-27T00:00:00Z']])]);
+
+        $this->client()->acknowledge($this->tombstone(strtoupper(self::ID)));
+
+        Http::assertSentCount(1);
+    }
+
     #[DataProvider('malformedAcknowledgements')]
     public function test_an_unconfirmed_acknowledgement_fails(array $payload): void
     {

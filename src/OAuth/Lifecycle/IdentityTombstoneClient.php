@@ -114,7 +114,9 @@ final readonly class IdentityTombstoneClient
         $acknowledgement = $data['acknowledgement'] ?? null;
         if (($data['contract_version'] ?? null) !== 1 || ! is_array($acknowledgement)
             || self::timestamp($acknowledgement['acknowledged_at'] ?? null) === null
-            || (array_key_exists('tombstone_id', $acknowledgement) && $acknowledgement['tombstone_id'] !== $tombstone->id)) {
+            // UUIDs are case-insensitive: a provider may echo the id in canonical lower case.
+            || (array_key_exists('tombstone_id', $acknowledgement) && (! is_string($acknowledgement['tombstone_id'])
+                || strtolower($acknowledgement['tombstone_id']) !== strtolower($tombstone->id)))) {
             throw self::invalid();
         }
     }
