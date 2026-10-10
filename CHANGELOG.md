@@ -4,6 +4,63 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.21.0 - Unreleased
+
+### Delegated access contract version 3 (breaking)
+
+**The endpoint now serves contract version 3 only.** A request in version 1 or 2 is refused with
+`invalid_request` (422), and adapter answers are validated as version 3. This is a coordinated
+upgrade: every application serving the endpoint upgrades and implements the additions below in one
+release, then the provider switches that application to version 3. A provider still on version 2
+can no longer reach an upgraded application.
+
+- **Search.** `subjects` and `workspaces` take an optional `query` (2 to 100 characters), matched
+  case-insensitively on the label and email within the actor's scope, with the same cursor
+  pagination. `DelegatedCursor::encode()` takes the query as a fourth argument and `after()` refuses
+  a cursor from another search with `invalid_cursor`, now also `DelegatedRefusal::INVALID_CURSOR`.
+- **Removal.** A new `remove` operation (`subject`, `expected_revision`, `operation_id`) strips the
+  actor's whole projection, the application administrator flag included, keeps the account, its
+  history and memberships outside the actor's view, refuses rather than removes part of it, and
+  keeps the revision when there is nothing to remove. The endpoint refuses to send a removal answer
+  that leaves anything in the projection. It is a write: `DELEGATED_ACCESS_WRITES_ENABLED` gates it.
+- **`allowed_edits.remove`** (required boolean in every version 3 state): whether a removal by this
+  actor would succeed now, a no-op included. False for an unprovisioned subject and whenever the
+  removal would be refused; the contract refuses one offered over a protected membership or an
+  administrator flag the actor may not change, and the conformance trait checks it both ways.
+- **Metadata.** A state and each `subjects[]` listing entry may carry `provisioned_at`,
+  `first_sign_in_at` and `last_seen_at` (ISO-8601 or null), and a workspace role a `description`.
+- **Operation ids and receipts.** `update` and `remove` require an `operation_id` (32 to 64
+  characters of `[A-Za-z0-9_-]`, case-sensitive, never the assertion `jti`). The endpoint claims each
+  write in the new `bherila_auth_delegated_receipts` table (keyed by a digest of the id, so a
+  case-insensitive collation cannot merge two ids) before the adapter runs, answers a repeat from the
+  stored receipt without calling the adapter, refuses the same id on a different request with
+  `invalid_request`, and answers a write still being decided with `operation_in_progress` (503). A
+  claim left unfinished (a request that died mid-write) stops blocking after ten minutes
+  (`DatabaseReceiptStore::PENDING_LEASE_SECONDS`): a repeat of the same request then claims it again
+  and the adapter's revision check decides afresh. The
+  new `receipt` operation returns the stored outcome or `unknown`. **Publish and run the
+  `bherila-auth-delegated-access-migrations` again before upgrading**: writes are refused with
+  `receipt_storage_unavailable` until the table exists. `DELEGATED_ACCESS_RECEIPT_CONNECTION`
+  (defaulting to the nonce connection) chooses its connection.
+- `bherila-auth:prune-delegated-nonces` also deletes receipts older than 30 days, when the receipts
+  table is installed (it still succeeds without it); schedule it daily.
+- `DelegatedRequestContext` carries the write's `operationId`.
+- `ApplicationAccessAdapter::handle()` keeps its signature; it now receives `remove` and searches.
+- `AssertsDelegatedAccessAdapter` drives version 3 and adds
+  `assertDelegatedSearchStaysInScope()`, `assertDelegatedRemoveStripsOnlyTheManagedProjection()`,
+  `assertDelegatedRemoveRefusedWithoutPartialChange()`, `assertDelegatedMetadataIsWellFormed()` and
+  `assertDelegatedReceiptsReplayThroughTheEndpoint()`, which goes through the real route.
+
+### Provider-side builders
+
+- `DelegatedContract::VERSION_3`: `request()` and `response()` build and validate every version 3
+  message, `receipt()` validates a receipt for the write it was asked about, and
+  `operationId()`, `validOperationId()` and `validQuery()` are new.
+- **Deprecated:** `DelegatedContract::VERSION_1` and `VERSION_2`, and the version 1 and 2 paths of
+  `request()` and `response()`. They remain only so a provider can talk to applications that have
+  not upgraded during the cutover, and are removed in the next release.
+- `adapterAnswer()` now wraps and validates a version 3 answer.
+
 ## v0.20.0 - 2026-10-09
 
 ### Delegated access: account-only applications

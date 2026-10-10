@@ -10,7 +10,8 @@ namespace BWH\Auth\OAuth\DelegatedAccess;
  * injection without a signature change: record `jti` with its transactional
  * audit to correlate the provider's attempt and result records, and resolve
  * `subject` only within `issuer`'s binding namespace. `jti` is a single-use
- * request nonce, not a stable identifier for retrying a mutation.
+ * request nonce, not a stable identifier for retrying a mutation; a write's
+ * `operationId` is that identifier, the same on every attempt of one action.
  */
 final readonly class DelegatedRequestContext
 {
@@ -21,10 +22,12 @@ final readonly class DelegatedRequestContext
         public string $jti,
         /** Null until the verified body has been parsed. */
         public ?string $operation,
+        /** A write's `operation_id`, stable across retries of one action; null for a read. */
+        public ?string $operationId = null,
     ) {}
 
-    public function withOperation(string $operation): self
+    public function withOperation(string $operation, ?string $operationId = null): self
     {
-        return new self($this->issuer, $this->subject, $this->application, $this->jti, $operation);
+        return new self($this->issuer, $this->subject, $this->application, $this->jti, $operation, $operationId);
     }
 }

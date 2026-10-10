@@ -972,7 +972,7 @@ No ordinary OAuth-token fallback is permitted on the adapter endpoint.
 
 `DelegatedContract::request()` validates operation input and builds its versioned
 envelope. `response()` validates an envelope; pass the expected target subject as
-its fourth argument for `read` and `update` to enforce exact subject echo.
+its fourth argument for `read`, `update` and `remove` to enforce exact subject echo.
 Consumers must separately enforce `MAX_REQUEST_BYTES`/`MAX_RESPONSE_BYTES`, JSON
 parsing, transport authentication, and operation authorization. The contract
 bounds subjects to 191 bytes, revisions to 128 bytes, cursors to 512 bytes,
@@ -982,6 +982,10 @@ An unprovisioned response carries null revision/access and no allowed edits.
 log assertions or private key material when handling it.
 
 ### Contract version 2
+
+> **Deprecated.** The endpoint serves [version 3](#contract-version-3) only. Versions 1 and 2 stay in
+> `DelegatedContract` so a provider can keep talking to an application that has not upgraded yet,
+> and are removed in the next release.
 
 Version 2 lets an application describe its own workspace roles, and lets a provider provision an
 account for a subject the application has not seen yet
@@ -1042,9 +1046,127 @@ The empty role list is the signal, rather than a separate flag such as `controls
   mistake is treated as account-only, and every state it reports with a membership fails
   `fitsCapabilities()`, which a provider checks before rendering it.
 
+### Contract version 3
+
+Version 3 is version 2 plus search, removal, read-only metadata and operation receipts. Everything
+version 2 says about roles, `editable`, `allowed_edits`, provisioning and account-only applications
+still holds. The endpoint serves version 3 only and refuses any other version as `invalid_request`
+(422). Pass `DelegatedContract::VERSION_3` as the last argument to `request()` and `response()`.
+
+| Operation | Request fields besides `operation` | Answer fields besides the envelope |
+|---|---|---|
+| `capabilities` | none | `controls` |
+| `subjects` | `limit`, `cursor`, `query` (each optional) | `subjects` (entries may add metadata), `next_cursor` |
+| `workspaces` | `limit`, `cursor`, `query` (each optional) | `workspaces`, `next_cursor` |
+| `read` | `subject` | a state |
+| `update` | `subject`, `expected_revision`, `access`, `display_name` (provisioning only), `operation_id` | a state |
+| `remove` | `subject`, `expected_revision`, `operation_id` | a state |
+| `receipt` | `operation_id` | `operation_id`, `status`, and when known `response_status`, `response` |
+
+A state is `subject`, `provisioned`, `revision`, `access`, `allowed_edits` as in version 2,
+optionally with the metadata below. `allowed_edits` gains a required boolean `remove`: whether a
+`remove` by this actor would succeed now, a no-op included. It is false whenever the removal would
+be refused (a protected membership, an administrator flag the actor may not change, the
+last-administrator rule, no permission), and always false for an unprovisioned subject. The
+contract refuses a state offering `remove` while it reports a membership `editable: false` or an
+administrator flag the actor may not change; the other reasons only the application knows.
+
+**Search.** `subjects` and `workspaces` take an optional `query`: 2 to 100 characters of valid
+UTF-8 without control characters (an absent query, never `null`, means none). The application
+matches it as a case-insensitive substring of the label and, where it stores one, the email. It is
+always limited to what the actor may see, exactly like the unfiltered listing, with the same cursor
+pagination and page bounds. A search must not reveal anything outside that scope, by an entry or
+by a cursor: a search that matches only what the actor may not see answers an empty page with
+`next_cursor: null`. `DelegatedCursor::encode($actor, $operation, $after, $query)` binds a cursor
+to its search, and `after()` refuses it with another one (`invalid_cursor`, 422).
+
+**Metadata.** Read-only observations, never authorization and never part of the revision:
+
+- a state may carry `provisioned_at`, `first_sign_in_at` and `last_seen_at`, each an ISO-8601 date
+  and time with seconds and an explicit offset (`2026-10-10T12:00:00Z`, `…+02:00`, fractions
+  allowed) or `null`, where the application knows them. An unprovisioned state carries none, or
+  only `null`s. Each `subjects[]` listing entry may carry the same three fields, held to the same
+  shape, so a provider can show them in a list without reading every subject;
+- each `capabilities.controls.workspace_roles[]` entry may carry a `description` (1 to 1024 bytes).
+  Omit it rather than send `null`.
+
+**Operation ids.** `update` and `remove` carry `operation_id`: 32 to 64 characters of
+`[A-Za-z0-9_-]`, chosen by the provider once per user action and kept across every retry of it
+(`DelegatedContract::operationId()` makes one). It is distinct from the assertion's `jti`, which
+stays single-use per HTTP request; the endpoint refuses an `operation_id` equal to the `jti`.
+
+**Removal.** `remove` takes away the subject's access to this application as far as the actor
+manages it, and nothing else:
+
+1. It removes every membership in the actor's projection and the application administrator flag.
+   Memberships in workspaces the actor cannot see are outside it and survive.
+2. If any membership in the projection is protected (reported `editable: false`), the
+   administrator flag is set and the actor may not change it, or removal would break the
+   last-administrator rule, it is refused (`protected_membership`, `not_authorized` or
+   `invalid_request`) and changes nothing. Never a partial removal.
+3. The account and its history stay. The answer is the new state, with `provisioned: true`, no
+   administrator flag, no memberships in the projection and `allowed_edits.remove: true` (removing
+   again is a no-op); the endpoint refuses to send any other.
+4. The revision is compared as for an update (`revision_conflict`, 409). Removing a subject with
+   nothing to remove changes nothing and answers the same revision. An unprovisioned subject is
+   refused as `not_provisioned` (404).
+5. Suspending, revoking admission and deleting data are separate operations, not this one.
+
+**Receipts.** The endpoint, not the adapter, keeps a receipt for every `update` and `remove`:
+
+- The write is claimed before the adapter runs, keyed by application and a SHA-256 of
+  `operation_id` (ids are case-sensitive, whatever the column collation), with a conflict-safe
+  insert that never aborts a surrounding transaction (on SQL Server, an insert in a savepoint). A repeat
+  of the same request (same actor, same canonical payload) is answered with the stored status and
+  body, byte for byte, without calling the adapter. The same `operation_id` on a different request,
+  or from another actor, is refused as `invalid_request` (422). One that is still being decided is
+  answered `operation_in_progress` (503): its outcome is not known yet.
+- A claim whose answer never arrives (the request died mid-write) blocks repeats for ten minutes
+  (`DatabaseReceiptStore::PENDING_LEASE_SECONDS`), and `receipt` reports it `unknown`. After that a
+  repeat of the same request (same actor and payload) claims it again and runs the adapter, whose
+  revision check decides afresh whether the first attempt changed anything; its 30 days of
+  retention start again then. A request that
+  outlived its lease can no longer store or release over the claim that replaced it.
+- A success and every refusal the adapter makes (4xx) are stored. A 5xx from the adapter, an
+  exception, or an answer outside the contract stores nothing, since nothing vouches for what
+  happened; a later attempt is decided afresh, against the revision.
+- `receipt` answers `{operation_id, status: "known", response_status, response}`, where `response`
+  is the stored body (a state on 200, `{error}` on a refusal), or `{operation_id, status: "unknown"}`
+  for one never stored, still pending or abandoned, pruned, or another actor's. It never reaches the adapter and
+  is answered whether or not writes are enabled.
+- Receipts are kept for 30 days.
+
+A provider that gets an uncertain answer to a write (a 5xx, a timeout or a transport error) asks
+for the receipt once and shows the real outcome; if it is still unknown, it says so. It never
+retries a write automatically.
+
+#### Provider-side builders
+
+The provider builds and checks every message with the same `DelegatedContract`:
+
+```php
+$contract = new DelegatedContract;
+$operationId = DelegatedContract::operationId();           // once per user action
+
+$write = $contract->request($application, [
+    'operation' => 'remove', 'subject' => $subject,
+    'expected_revision' => $revision, 'operation_id' => $operationId,
+], DelegatedContract::VERSION_3);
+$state = $contract->response($decoded, $application, 'remove', $subject, DelegatedContract::VERSION_3);
+
+// After an uncertain write: ask once, then check the answer is about that write.
+$ask = $contract->request($application, ['operation' => 'receipt', 'operation_id' => $operationId], DelegatedContract::VERSION_3);
+$receipt = $contract->receipt($decodedReceipt, $application, $write);
+```
+
+`receipt()` checks the shape, the `operation_id` echo, and that a stored success is for the same
+operation and subject. `response()` with `'receipt'` checks the shape alone. `validQuery()` and
+`validOperationId()` check single values. `fitsCapabilities()` covers a `remove` answer as it does
+`read` and `update`.
+
 ### Serving the endpoint
 
-The package serves `POST /application-access` for contract version 2. The application supplies
+The package serves `POST /application-access` for contract version 3. The application supplies
 only what is its own: an adapter deciding who may manage access and what they may see and change.
 
 1. Implement `BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter` and bind it in a service
@@ -1054,19 +1176,22 @@ only what is its own: an adapter deciding who may manage access and what they ma
    $this->app->bind(ApplicationAccessAdapter::class, MyApplicationAccessAdapter::class);
    ```
 
-2. Publish and apply the nonce migration (`bherila-auth-delegated-access-migrations`, above).
+2. Publish and apply the delegated access migrations (`bherila-auth-delegated-access-migrations`,
+   above): the nonce table and the operation receipts table (`bherila_auth_delegated_receipts`).
+   A write is refused with `receipt_storage_unavailable` (503) until the receipts table exists.
 3. Configure the deployment:
 
    | Variable | Meaning |
    |---|---|
    | `DELEGATED_ACCESS_ENABLED` | `true` to answer; the route answers 404 otherwise |
-   | `DELEGATED_ACCESS_WRITES_ENABLED` | `true` to accept `update`; default `false`, so a new deployment is read-only |
+   | `DELEGATED_ACCESS_WRITES_ENABLED` | `true` to accept `update` and `remove`; default `false`, so a new deployment is read-only |
    | `DELEGATED_ACCESS_ISSUER` | the provider's exact HTTPS issuer; must be the sign-in provider (`oauth_client.base_url`) |
    | `DELEGATED_ACCESS_ENDPOINT` | this endpoint's exact HTTPS URL, as the provider is configured to call it |
    | `DELEGATED_ACCESS_APPLICATION` | this application's key in the provider's registry |
    | `DELEGATED_ACCESS_PUBLIC_KEYS` | the provider's integration public keys, `key-id\|/path/to/public.pem`, comma-separated |
    | `OAUTH_PROVIDER` | must be set explicitly; it names the issuer local identity bindings are stored under |
    | `DELEGATED_ACCESS_NONCE_CONNECTION` | optional; the nonce table's connection, default connection otherwise |
+   | `DELEGATED_ACCESS_RECEIPT_CONNECTION` | optional; the receipts table's connection, the nonce connection otherwise. Durable and shared by every worker |
 
    `bherila-auth.delegated_access.path` (default `/application-access`) and `per_minute` (default
    120 per client IP) are config-only. The limit is applied inside the controller after the enabled
@@ -1079,26 +1204,30 @@ only what is its own: an adapter deciding who may manage access and what they ma
    with. To rotate, list both public
    keys, switch the provider to the new key id, then remove the old one.
 
-4. Schedule `bherila-auth:prune-delegated-nonces` if the table should not grow without bound. It
-   deletes expired nonces only.
+4. Schedule `bherila-auth:prune-delegated-nonces` daily. It deletes expired nonces only, and
+   receipts older than 30 days when the receipts table is installed.
 
 The controller refuses an oversize body (`MAX_REQUEST_BYTES`) and a missing bearer before
 verification. It verifies the assertion and consumes its nonce before parsing the body, then
-requires version 2 and this application's key. The adapter's `handle($actorSubject, $payload)`
-receives `operation` plus that operation's fields, and returns that operation's response fields.
-The controller adds `contract_version`, `application` and `operation`, validates the whole answer
-(including the subject echo for `read` and `update`), and sends it with `Cache-Control: no-store`.
-A `DelegatedAccessException` thrown by the adapter is sent as its outcome and status. An answer
-outside the contract is reported and becomes `internal_error` (500), never sent. Until
-`DELEGATED_ACCESS_WRITES_ENABLED` is set, an `update` is refused with `not_authorized` (403) after
-verification and before the adapter, so an application can stop accepting changes without
-touching the provider.
+requires version 3 and this application's key. The adapter's `handle($actorSubject, $payload)`
+receives `operation` plus that operation's fields, and returns that operation's response fields:
+`capabilities`, `subjects`, `workspaces` (both with an optional `query`), `read`, `update` and
+`remove`. The controller adds `contract_version`, `application` and `operation`, validates the whole
+answer (including the subject echo for `read`, `update` and `remove`), and sends it with
+`Cache-Control: no-store`. A `DelegatedAccessException` thrown by the adapter is sent as its
+outcome and status. An answer outside the contract is reported and becomes `internal_error` (500),
+never sent. Until `DELEGATED_ACCESS_WRITES_ENABLED` is set, `update` and `remove` are refused with
+`not_authorized` (403) after verification and before the adapter, so an application can stop
+accepting changes without touching the provider. Writes go through the receipts described under
+[contract version 3](#contract-version-3), so the adapter never sees the same `operation_id` twice;
+`receipt` is answered by the package and never reaches the adapter.
 
 While the adapter runs, the container holds a `DelegatedRequestContext` with the verified
-`issuer`, `subject`, `application`, `jti` and `operation`. Resolve it (or inject it into an adapter
-bound with `bind()`) to record `jti` with the application's own audit, correlating the provider's
-attempt and result records. `jti` is a single-use nonce: never key a retry on it. The binding is
-removed when the call returns.
+`issuer`, `subject`, `application`, `jti`, `operation` and, for a write, `operationId`. Resolve it
+(or inject it into an adapter bound with `bind()`) to record `jti` and `operationId` with the
+application's own audit, correlating the provider's attempt and result records. `jti` is a
+single-use nonce: never key a retry on it; `operationId` is the same on every attempt of one
+action. The binding is removed when the call returns.
 
 Laravel may read a JSON body in global middleware before any controller runs, so bound this
 route's body to the same 64 KiB at the web server where you can. Nothing in front may rewrite the
@@ -1108,17 +1237,20 @@ Helpers for adapters:
 
 - `DelegatedAccessSettings::bindingIssuer()` is the provider name to resolve actors and targets
   under, the same one sign-in binds.
-- `DelegatedCursor` encodes an encrypted keyset cursor bound to the actor and the operation:
-  `encode($actor, $operation, $lastKeyShown)`, and `after($actor, $operation, $payload)` returns
-  0 for a first page and refuses a foreign or tampered cursor with `invalid_cursor`. It stays within
-  the contract's 512-byte bound for any subject length.
+- `DelegatedCursor` encodes an encrypted keyset cursor bound to the actor, the operation and the
+  search: `encode($actor, $operation, $lastKeyShown, $payload['query'] ?? null)`, and
+  `after($actor, $operation, $payload)` returns 0 for a first page and refuses a foreign, tampered
+  or other-search cursor with `invalid_cursor` (`DelegatedRefusal::INVALID_CURSOR`). It stays within
+  the contract's 512-byte bound for any subject and query length.
 - `BWH\Auth\OAuth\PendingAccount::email($provider, $subject)` and `name($label, $subject)` give a
   provisioned account's placeholder contact details until first sign-in. The address is under
   `.invalid` and is never a linking key.
 
 An account-only adapter answers `capabilities` with `workspace_roles: []`, `workspaces` with
-`{"workspaces": [], "next_cursor": null}`, and every state with `workspaces: []` in `access` and
-`workspaces: false` in `allowed_edits`. It authorizes each of those operations exactly as a
+`{"workspaces": [], "next_cursor": null}` (searched or not), and every state with `workspaces: []`
+in `access` and `workspaces: false` in `allowed_edits`. Its `remove` clears the administrator flag
+and keeps the account, and `allowed_edits.remove` is false for the actor themselves and the last
+administrator. It authorizes each of those operations exactly as a
 workspace application does. The endpoint validates each answer on its own and cannot hold it to
 the capabilities; the conformance assertions below do.
 
@@ -1162,9 +1294,14 @@ The provider holds no authority of its own; whatever the adapter does not enforc
    application administrator flag is the whole of what an ordinary update changes. Its own rules,
    such as refusing self-demotion or demoting the last administrator, are reported as
    `allowed_edits.application_admin: false` for that target and still enforced.
+8. **A search is the unfiltered listing, filtered.** It finds nothing the actor could not list, and
+   says nothing about the rest: no entry, no cursor to a page that turns out empty.
+9. **A removal is all of the actor's projection or nothing.** It follows
+   [the removal rules](#contract-version-3): unseen memberships and the account survive, anything
+   protected refuses the whole removal, and removing nothing keeps the revision.
 
-`BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks rules 1 to 7 against an application's real
-adapter and tables. Implement `delegatedAccessTruth($subject)` by reading the tables directly and
+`BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks rules 1 to 9 against an application's real
+adapter and tables, and the receipts through the real endpoint. Implement `delegatedAccessTruth($subject)` by reading the tables directly and
 `delegatedAccessManager()`, seed a target with an editable membership, a protected one and one
 outside the manager's view, then call:
 
@@ -1179,6 +1316,25 @@ $this->assertDelegatedUpdateKeepsUnseenMemberships($manager, $target);
 
 Each refused attempt must leave `delegatedAccessTruth()` exactly as it was.
 
+For version 3, also seed a subject and a workspace outside the manager's view whose labels match a
+search, a target the manager may remove entirely (with a membership it cannot see), and known
+metadata, then:
+
+```php
+$this->assertDelegatedSearchStaysInScope($manager, 'subjects', 'Example', 'OnlyOutsideTheView');
+$this->assertDelegatedSearchStaysInScope($manager, 'workspaces', 'Example', 'OnlyOutsideTheView');
+$this->assertDelegatedRemoveRefusedWithoutPartialChange($manager, $target);   // has a protected membership
+$this->assertDelegatedRemoveStripsOnlyTheManagedProjection($manager, $removable);
+$this->assertDelegatedMetadataIsWellFormed($manager, $removable);
+$this->assertDelegatedReceiptsReplayThroughTheEndpoint($manager, $target);
+```
+
+`assertDelegatedReceiptsReplayThroughTheEndpoint()` posts signed requests to the real route. It
+needs the adapter bound in a service provider (so the route exists) and the receipts migration in
+the test database. It configures the endpoint for the test with a key of its own and an in-memory
+nonce store, and keeps the application's `oauth_client.provider`, which the adapter resolves
+bindings under. `delegatedAccessEndpoint($actor, $input)` sends any other request the same way.
+
 For an account-only application, `delegatedAccessTruth()` returns `workspaces: []` and the same
 calls apply. Omit the workspace argument to `assertDelegatedActorRefusedEverywhere()`. The
 membership checks return without checking anything (they never skip, which would end the test
@@ -1192,4 +1348,10 @@ $this->assertDelegatedApplicationAdminFollowsAllowedEdits($administrator, $admin
 $this->assertDelegatedStaleRevisionRefused($administrator, $target);
 $this->assertDelegatedUnadvertisedRoleRefused($administrator, $target);
 $this->assertDelegatedUpdateKeepsUnseenMemberships($administrator, $target);
+$this->assertDelegatedSearchStaysInScope($administrator, 'subjects', 'Example', 'OnlyOutsideTheView');
+$this->assertDelegatedRemoveRefusedWithoutPartialChange($administrator, $administrator);
+$this->assertDelegatedRemoveStripsOnlyTheManagedProjection($administrator, $anotherAdministrator);
+$this->assertDelegatedReceiptsReplayThroughTheEndpoint($administrator, $target);
 ```
+
+The workspaces search check only confirms an empty page for it.
