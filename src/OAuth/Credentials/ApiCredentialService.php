@@ -32,6 +32,13 @@ use Throwable;
  * Issue these only from a signed-in browser session, never through an API or
  * OAuth token, so no credential can mint another. Callers return each secret
  * once, in a no-store response body; nothing here stores it readable.
+ *
+ * Neither kind carries an MCP connection scope (`resource_required_scopes`)
+ * by default. An application may opt personal API tokens in, scope by scope,
+ * with `credentials.personal_token_connection_scopes`, for connectors that
+ * reach an MCP endpoint only with a static bearer key; such a token is held to
+ * `credentials.personal_token_connection_max_lifetime`. OAuth apps never are:
+ * they reach a connection through the authorization-code flow and its consent.
  */
 final class ApiCredentialService
 {
@@ -46,6 +53,87 @@ final class ApiCredentialService
     public function grantableScopes(): array
     {
         return $this->grantable->scopes();
+    }
+
+    /**
+     * The connection scopes a personal API token may carry, `identifier =>
+     * description`: empty unless the application opted in.
+     *
+     * Each is named in `credentials.personal_token_connection_scopes`, is one of
+     * `resource_required_scopes`, is in the scope catalog and is not in
+     * `credentials.excluded_scopes`. None is offered when no configured lifetime
+     * fits under the connection maximum, since no such token could be issued.
+     *
+     * @return array<string, string>
+     */
+    public function connectionScopes(): array
+    {
+        if ($this->connectionLifetimes() === []) {
+            return [];
+        }
+        $catalog = ConfiguredGrantableScopes::catalog();
+        $required = OAuthResourceIndicator::requiredScopes();
+        $excluded = ConfiguredGrantableScopes::excludedScopes();
+
+        $scopes = [];
+        foreach ($this->configuredConnectionScopes() as $id) {
+            if (in_array($id, $required, true) && array_key_exists($id, $catalog) && ! in_array($id, $excluded, true)) {
+                $scopes[$id] = $catalog[$id];
+            }
+        }
+
+        return $scopes;
+    }
+
+    /** Whether the application opted personal API tokens in to any connection scope. */
+    public function connectionScopesEnabled(): bool
+    {
+        return $this->configuredConnectionScopes() !== [];
+    }
+
+    /**
+     * Every scope a personal API token may carry: the grantable scopes, plus the
+     * opted-in connection scopes. OAuth apps are offered only the former.
+     *
+     * @return array<string, string>
+     */
+    public function tokenScopes(): array
+    {
+        return $this->grantableScopes() + $this->connectionScopes();
+    }
+
+    /**
+     * The offered lifetimes a token that opens a connection may have: those no
+     * longer than `credentials.personal_token_connection_max_lifetime`. Empty
+     * while the opt-in is off, and when the maximum is not a valid ISO-8601
+     * duration (fail closed).
+     *
+     * @return list<string>
+     */
+    public function connectionLifetimes(): array
+    {
+        $maximum = $this->connectionScopesEnabled() ? $this->connectionMaxLifetime() : null;
+        if ($maximum === null) {
+            return [];
+        }
+        $now = CarbonImmutable::instance(Date::now());
+        $limit = $now->add($maximum);
+
+        return array_values(array_filter(
+            $this->lifetimes(),
+            static fn (string $spec): bool => $now->add(new DateInterval($spec)) <= $limit,
+        ));
+    }
+
+    /**
+     * Whether these scopes open an MCP connection (any `resource_required_scopes`
+     * entry), however the scope came to be granted.
+     *
+     * @param  list<string>  $scopes
+     */
+    public function carriesConnectionScope(array $scopes): bool
+    {
+        return OAuthResourceIndicator::scopesRequireResource($scopes);
     }
 
     /**
@@ -74,9 +162,16 @@ final class ApiCredentialService
      */
     public function issueToken(Authenticatable $user, string $name, array $scopes, string $lifetime): array
     {
-        $this->assertGrantable($scopes);
+        $this->assertOffered($scopes, $this->tokenScopes());
         if (! in_array($lifetime, $this->lifetimes(), true)) {
             throw new DomainException('Choose one of the offered token lifetimes.');
+        }
+        // Once opted in, every connection-carrying token is capped - including
+        // one whose scope a custom GrantableScopes binding already offered.
+        if ($this->connectionScopesEnabled()
+            && $this->carriesConnectionScope($scopes)
+            && ! in_array($lifetime, $this->connectionLifetimes(), true)) {
+            throw new DomainException('A token that can open a connection must have a shorter lifetime.');
         }
         $owner = $this->owners->owner($user);
         $this->ensurePersonalClient();
@@ -152,7 +247,7 @@ final class ApiCredentialService
      */
     public function registerApp(Authenticatable $user, string $name, array $redirectUris, bool $confidential, array $scopes): array
     {
-        $this->assertGrantable($scopes);
+        $this->assertOffered($scopes, $this->grantableScopes());
         if ($redirectUris === []) {
             throw new DomainException('Give at least one redirect URI.');
         }
@@ -259,11 +354,42 @@ final class ApiCredentialService
             || ($scheme === 'http' && in_array($host, ['127.0.0.1', '::1', 'localhost'], true));
     }
 
-    /** @param list<string> $scopes */
-    private function assertGrantable(array $scopes): void
+    /**
+     * @param  list<string>  $scopes
+     * @param  array<string, string>  $offered
+     */
+    private function assertOffered(array $scopes, array $offered): void
     {
-        if ($scopes === [] || array_diff($scopes, array_keys($this->grantableScopes())) !== []) {
+        if ($scopes === [] || array_diff($scopes, array_keys($offered)) !== []) {
             throw new DomainException('Choose at least one of the offered permissions.');
+        }
+    }
+
+    /** @return list<string> */
+    private function configuredConnectionScopes(): array
+    {
+        $configured = config('bherila-auth.oauth_server.credentials.personal_token_connection_scopes', []);
+
+        $scopes = [];
+        foreach (is_array($configured) ? $configured : [] as $scope) {
+            if (is_string($scope) && trim($scope) !== '') {
+                $scopes[] = trim($scope);
+            }
+        }
+
+        return array_values(array_unique($scopes));
+    }
+
+    private function connectionMaxLifetime(): ?DateInterval
+    {
+        $spec = config('bherila-auth.oauth_server.credentials.personal_token_connection_max_lifetime', 'P30D');
+        if (! is_string($spec) || $spec === '') {
+            return null;
+        }
+        try {
+            return new DateInterval($spec);
+        } catch (Throwable) {
+            return null;
         }
     }
 

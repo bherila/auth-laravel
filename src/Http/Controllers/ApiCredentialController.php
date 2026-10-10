@@ -27,6 +27,9 @@ final class ApiCredentialController extends Controller
     {
         $user = $this->user($request);
         $issuing = (bool) config('bherila-auth.oauth_server.enabled', false);
+        // Only once the application opts personal tokens in to connection
+        // scopes; until then the payload is exactly what it always was.
+        $connections = $credentials->connectionScopesEnabled();
 
         return $this->noStore([
             'data' => [
@@ -36,11 +39,22 @@ final class ApiCredentialController extends Controller
                     array_values($credentials->grantableScopes()),
                 ),
                 'token_lifetimes' => $credentials->lifetimes(),
+                ...($connections ? [
+                    // Offered to personal API tokens only, never to OAuth apps.
+                    'token_connection_scopes' => array_map(
+                        static fn (string $id, string $description): array => ['id' => $id, 'description' => $description],
+                        array_keys($credentials->connectionScopes()),
+                        array_values($credentials->connectionScopes()),
+                    ),
+                    // The lifetimes a token carrying one of those may have.
+                    'connection_token_lifetimes' => $credentials->connectionLifetimes(),
+                ] : []),
                 // Null while the OAuth server is switched off: revocation stays available.
                 'issue_token_href' => $issuing ? route('bherila-auth.credentials.tokens.store', absolute: false) : null,
                 'register_app_href' => $issuing ? route('bherila-auth.credentials.apps.store', absolute: false) : null,
                 'tokens' => array_map(static fn (array $token): array => [
                     ...$token,
+                    ...($connections ? ['connection' => $credentials->carriesConnectionScope($token['scopes'])] : []),
                     'revoke_href' => route('bherila-auth.credentials.tokens.destroy', ['token' => $token['id']], absolute: false),
                 ], $credentials->tokens($user)),
                 'apps' => array_map(static fn (array $app): array => [
@@ -56,7 +70,7 @@ final class ApiCredentialController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
             'scopes' => ['required', 'array', 'min:1'],
-            'scopes.*' => ['string', 'distinct', Rule::in(array_keys($credentials->grantableScopes()))],
+            'scopes.*' => ['string', 'distinct', Rule::in(array_keys($credentials->tokenScopes()))],
             'lifetime' => ['required', 'string', Rule::in($credentials->lifetimes())],
         ]);
         $issued = $this->refusable(fn (): array => $credentials->issueToken(
