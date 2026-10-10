@@ -74,10 +74,10 @@ final readonly class IdentityTombstoneCursorStore
         return $this->held($context, $owner)->exists();
     }
 
-    /** The stored cursor; null to start from the oldest pending tombstone. */
+    /** The stored cursor, read from the writer; null to start from the oldest pending tombstone. */
     public function cursor(string $context): ?string
     {
-        $cursor = $this->connection()->table(self::table())->where('context', $context)->value('cursor');
+        $cursor = $this->connection()->table(self::table())->useWritePdo()->where('context', $context)->value('cursor');
 
         return is_string($cursor) && $cursor !== '' ? $cursor : null;
     }
@@ -95,9 +95,14 @@ final readonly class IdentityTombstoneCursorStore
         $this->held($context, $owner)->update(['lease_owner' => null, 'lease_expires_at' => 0, 'updated_at' => self::now()]);
     }
 
+    /**
+     * The row, if this run holds its lease. Read from the writer: on a read/write split a
+     * lagging replica would not yet show the lease or cursor this run just wrote, and a
+     * run would wrongly conclude it lost the lease or resume from an older cursor.
+     */
     private function held(string $context, string $owner): \Illuminate\Database\Query\Builder
     {
-        return $this->connection()->table(self::table())
+        return $this->connection()->table(self::table())->useWritePdo()
             ->where('context', $context)->where('lease_owner', $owner);
     }
 

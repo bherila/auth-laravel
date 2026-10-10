@@ -90,6 +90,39 @@ class IdentityTombstoneCursorStoreTest extends TestCase
         $store->release('context-b', $other);
     }
 
+    public function test_lease_and_cursor_reads_use_the_writer_on_a_read_write_split(): void
+    {
+        // Two files stand in for a primary and a replica that has not caught up: the replica has
+        // the table but none of the rows this run writes.
+        $primary = tempnam(sys_get_temp_dir(), 'tombstone-primary');
+        $replica = tempnam(sys_get_temp_dir(), 'tombstone-replica');
+        try {
+            config(['database.connections.split' => [
+                'driver' => 'sqlite', 'prefix' => '', 'foreign_key_constraints' => false,
+                'read' => ['database' => $replica], 'write' => ['database' => $primary],
+            ]]);
+            config(['bherila-auth.identity_tombstones.connection' => 'split']);
+            (require self::MIGRATION)->up();
+            config(['database.connections.replica' => ['driver' => 'sqlite', 'prefix' => '', 'database' => $replica]]);
+            config(['bherila-auth.identity_tombstones.connection' => 'replica']);
+            (require self::MIGRATION)->up();
+            config(['bherila-auth.identity_tombstones.connection' => 'split']);
+            $store = $this->store();
+
+            $owner = $store->acquire('context-a');
+            $this->assertIsString($owner);
+            $this->assertTrue($store->renew('context-a', $owner), 'A lagging replica must not look like a lost lease');
+            $this->assertTrue($store->advance('context-a', $owner, 'cursor-a'));
+            $this->assertSame('cursor-a', $store->cursor('context-a'), 'The cursor is the one this run wrote');
+            $this->assertSame(0, \Illuminate\Support\Facades\DB::connection('replica')->table(IdentityTombstoneCursorStore::DEFAULT_TABLE)->count(), 'The replica really is behind');
+        } finally {
+            \Illuminate\Support\Facades\DB::purge('split');
+            \Illuminate\Support\Facades\DB::purge('replica');
+            @unlink($primary);
+            @unlink($replica);
+        }
+    }
+
     public function test_cursors_are_kept_per_context_and_can_be_cleared(): void
     {
         (require self::MIGRATION)->up();
