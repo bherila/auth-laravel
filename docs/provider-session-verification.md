@@ -44,6 +44,36 @@ redirects (`expired_redirect_route`) or answers JSON 401; an unavailable provide
 answers 503 with `Retry-After` and keeps the session. Applications that need
 different responses can call `ProviderSession::assertActive()` themselves.
 
+## OAuth credentials (agent and personal tokens)
+
+With enforcement enabled, the package's OAuth repositories apply the same policy to
+the credentials the application issues:
+
+- **Issuance.** An authorization code, and a personal token issued from the credentials
+  screen, record the provider subject and the generation of the authorizing browser
+  session (`provider_subject`, `provider_generation`). A token minted by exchanging a
+  code or a refresh token inherits that stamp; it is never filled from a fresh status
+  lookup. A bound account without a verified session cannot be issued a credential.
+- **Use.** Every bearer request checks the token's stamp against the account's current
+  binding and the shared observation. An ended identity is refused (401); an unavailable
+  provider answers a retryable 503 (`ProviderStatusUnavailable` renders itself).
+- **Renewal.** A refresh checks the person freshly. An ended identity gets
+  `invalid_grant`; an unavailable provider answers 503 before the grant revokes anything,
+  so the refresh token is not consumed and the client can retry.
+- **Credentials issued before enforcement** have no stamp and are refused, not upgraded:
+  connectors authorize again once. Credentials issued while enforcement is still off are
+  stamped when the authorizing session has a baseline, so enabling it later keeps them.
+- **Privileged operations.** `ProviderIdentityTokens::verifyUser($user, $tokenId)` checks
+  freshly; call it before an operation that should not wait out the freshness window.
+- Unbound accounts and client-credential tokens are left to the application.
+- Under the agent profile, Passport's transient-token cookie route
+  (`POST /oauth/token/refresh`) is refused: its cookie authenticates API requests with
+  every scope outside both the session's and the bearer token's checks.
+
+Publish and run the package migrations to add the stamp columns
+(`2026_10_11_000000_add_provider_identity_to_oauth_credentials`). Set
+`provider_identity.bearer_guard` if the guard authenticating bearer tokens is not `api`.
+
 ## Shared observations
 
 `ProviderIdentityPolicy` holds one status observation per provider context and

@@ -30,6 +30,19 @@ the first entry here is in the git history.
 - `ProviderSession::assertActive()` now goes through the shared policy; its behaviour for a single
   session is unchanged.
 
+### Provider identity enforcement for OAuth credentials (opt-in, same switch)
+
+- Authorization codes and access tokens record the provider subject and generation they were
+  authorized under (new nullable columns, migration `add_provider_identity_to_oauth_credentials`);
+  exchanged and refreshed tokens inherit the stamp instead of fetching a new generation.
+- Bearer use is refused when the identity ended (401) and answers a retryable 503 when the provider
+  is unavailable; refresh checks freshly and never consumes the refresh token during an outage.
+- Credentials issued before enforcement have no stamp and are refused once it is enabled: connectors
+  authorize again once.
+- `ProviderIdentityTokens::verifyUser()` for a fresh check before privileged operations.
+- `ProviderSessionExpired` and `ProviderStatusUnavailable` render as 401 and 503 when uncaught.
+- The agent profile refuses Passport's transient-token cookie route.
+
 ### Identity tombstone consumer (opt-in)
 
 - New `bherila-auth:consume-identity-tombstones {--limit=} {--max-pages=4}` reads the identity

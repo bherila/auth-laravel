@@ -63,6 +63,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
+        $attributes += $this->providerIdentityStamp($model, $accessTokenId);
 
         $model->forceFill($attributes)->save();
 
@@ -91,7 +92,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         if (! $bound) {
             // A refresh request cannot add an audience that was absent from the
             // authorization-code grant.
-            return $hasRequestedResource || $this->isApplicationRefreshTokenRevoked($tokenId);
+            return $hasRequestedResource || $this->providerIdentityRevoked($refreshToken) || $this->isApplicationRefreshTokenRevoked($tokenId);
         }
 
         if ($storedResource === null
@@ -105,7 +106,59 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
 
         $request?->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $storedResource);
 
-        return $this->isApplicationRefreshTokenRevoked($tokenId);
+        return $this->providerIdentityRevoked($refreshToken) || $this->isApplicationRefreshTokenRevoked($tokenId);
+    }
+
+    /**
+     * Renewal checks the person freshly against the stamp of the access token this refresh
+     * token belongs to, and hands that stamp to the new token. An unavailable provider
+     * throws before the grant revokes anything, so the refresh token is not consumed.
+     */
+    private function providerIdentityRevoked(\Illuminate\Database\Eloquent\Model $refreshToken): bool
+    {
+        // The refresh token's own record, which outlives its access token (expired access
+        // tokens may be purged long before the refresh token expires).
+        $credential = $refreshToken->getAttribute(ProviderIdentityTokens::OWNER_COLUMN) !== null
+            ? $refreshToken
+            : Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
+        $tokens = app(ProviderIdentityTokens::class);
+        if ($credential === null) {
+            return ProviderIdentityTokens::enabled();
+        }
+        if ($tokens->revoked($credential, fresh: true)) {
+            return true;
+        }
+        $tokens->carry($this->request(), $credential);
+
+        return false;
+    }
+
+    /**
+     * The owner and stamp of the access token this refresh token was issued with, copied so
+     * the refresh token can be checked after that access token is gone.
+     *
+     * @return array<string, string|int>
+     */
+    private function providerIdentityStamp(\Illuminate\Database\Eloquent\Model $model, string $accessTokenId): array
+    {
+        $schema = $model->getConnection()->getSchemaBuilder();
+        if (! $schema->hasColumn($model->getTable(), ProviderIdentityTokens::OWNER_COLUMN)) {
+            if (ProviderIdentityTokens::enabled()) {
+                throw new RuntimeException("The {$model->getTable()} provider identity columns are required.");
+            }
+
+            return [];
+        }
+        $accessToken = Passport::token()->newQuery()->whereKey($accessTokenId)->first();
+        if ($accessToken === null || $accessToken->getAttribute('user_id') === null) {
+            return [];
+        }
+
+        return [
+            ProviderIdentityTokens::OWNER_COLUMN => (string) $accessToken->getAttribute('user_id'),
+            ProviderIdentityTokens::SUBJECT_COLUMN => $accessToken->getAttribute(ProviderIdentityTokens::SUBJECT_COLUMN),
+            ProviderIdentityTokens::GENERATION_COLUMN => $accessToken->getAttribute(ProviderIdentityTokens::GENERATION_COLUMN),
+        ];
     }
 
     /** Application-owned account, grant, or credential-version revocation policy. */

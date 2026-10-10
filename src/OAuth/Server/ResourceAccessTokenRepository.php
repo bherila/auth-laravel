@@ -126,6 +126,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
+        $attributes += $this->providerIdentityStamp($model, $userId);
 
         $model->forceFill($attributes)->save();
         $this->recordDynamicClientUse($clientId);
@@ -136,7 +137,41 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     /** Application policy may also wrap Passport-compatible unbound persistence. */
     protected function persistUnboundAccessToken(AccessTokenEntityInterface $accessTokenEntity): void
     {
+        // With the package's server off, Passport's own code and refresh repositories carry no
+        // stamp to inherit; record one only if it is available, and never refuse the exchange
+        // here. A bound owner's unstamped token is refused at use once enforcement is on.
+        try {
+            $stamp = $this->providerIdentityStamp(Passport::token(), $accessTokenEntity->getUserIdentifier());
+        } catch (RuntimeException) {
+            $stamp = [];
+        }
         parent::persistNewAccessToken($accessTokenEntity);
+        if ($stamp !== []) {
+            Passport::token()->newQuery()->whereKey($accessTokenEntity->getIdentifier())->update($stamp);
+        }
+    }
+
+    /**
+     * The provider generation this token inherits: from the code or refresh token it was
+     * exchanged for, or from the authorizing session for a personal token.
+     *
+     * @return array<string, string|int>
+     */
+    final protected function providerIdentityStamp(\Illuminate\Database\Eloquent\Model $model, string|int|null $userId): array
+    {
+        $stamp = app(ProviderIdentityTokens::class)->stampForIssue($this->request(), $userId);
+        if ($stamp === null) {
+            return [];
+        }
+        if (! $this->hasColumn($model->getTable(), ProviderIdentityTokens::GENERATION_COLUMN)) {
+            if (ProviderIdentityTokens::enabled()) {
+                throw new RuntimeException("The {$model->getTable()} provider identity columns are required.");
+            }
+
+            return [];
+        }
+
+        return ProviderIdentityTokens::attributes($stamp);
     }
 
     final public function revokeAccessToken(string $tokenId): void
@@ -184,7 +219,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
             // The row is already known to exist and be non-revoked. Preserve
             // Passport's normal unbound-token result without a second query.
             if (! $this->oauthServerEnabled()) {
-                return $this->isApplicationAccessTokenRevoked($tokenId);
+                return app(ProviderIdentityTokens::class)->revoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
             }
         }
 
@@ -199,7 +234,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         }
 
         if (! $bound) {
-            return $this->isApplicationAccessTokenRevoked($tokenId);
+            return app(ProviderIdentityTokens::class)->revoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
         }
 
         // A resource-bound token is valid only where application policy has
@@ -220,7 +255,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
             $request?->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $storedResource);
         }
 
-        return $this->isApplicationAccessTokenRevoked($tokenId);
+        return app(ProviderIdentityTokens::class)->revoked($model) || $this->isApplicationAccessTokenRevoked($tokenId);
     }
 
     /** Application-owned account, grant, or credential-version revocation policy. */

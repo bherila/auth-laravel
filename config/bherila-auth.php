@@ -62,6 +62,9 @@ return [
         // person can always end their local session, even while the provider is unavailable.
         // Never list a route that does anything but end access.
         'except_routes' => ['logout'],
+        // The guard that authenticates OAuth bearer tokens; its user provider resolves a
+        // token's owner for the provider binding check.
+        'bearer_guard' => 'api',
     ],
 
     // Optional OAuth authorization-server helpers for applications exposing an
