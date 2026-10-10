@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## v0.22.1 - Unreleased
+## v0.22.1 - 2026-10-10
 
 ### Personal API tokens may carry MCP connection scopes (opt-in)
 
