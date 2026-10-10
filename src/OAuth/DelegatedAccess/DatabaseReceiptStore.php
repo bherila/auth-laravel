@@ -84,7 +84,9 @@ final readonly class DatabaseReceiptStore
             $taken = $this->connection->table(self::TABLE)
                 ->where('application', $application)->where('operation_key', self::key($operationId))
                 ->whereNull('status')->where('request_hash', $requestHash)->where('claimed_at', $held->claimedAt)
-                ->update(['claimed_at' => $at]);
+                // Retention restarts with the claim, so a prune running now cannot delete the live claim
+                // by the abandoned one's age.
+                ->update(['claimed_at' => $at, 'created_at' => $at]);
         } catch (Throwable) {
             throw new DelegatedAccessException('receipt_storage_unavailable');
         }

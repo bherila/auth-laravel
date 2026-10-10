@@ -1124,7 +1124,8 @@ manages it, and nothing else:
 - A claim whose answer never arrives (the request died mid-write) blocks repeats for ten minutes
   (`DatabaseReceiptStore::PENDING_LEASE_SECONDS`), and `receipt` reports it `unknown`. After that a
   repeat of the same request (same actor and payload) claims it again and runs the adapter, whose
-  revision check decides afresh whether the first attempt changed anything. A request that
+  revision check decides afresh whether the first attempt changed anything; its 30 days of
+  retention start again then. A request that
   outlived its lease can no longer store or release over the claim that replaced it.
 - A success and every refusal the adapter makes (4xx) are stored. A 5xx from the adapter, an
   exception, or an answer outside the contract stores nothing, since nothing vouches for what

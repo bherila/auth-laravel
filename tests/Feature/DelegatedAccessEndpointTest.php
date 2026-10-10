@@ -777,6 +777,21 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->artisan('bherila-auth:prune-delegated-nonces')->expectsOutputToContain('Pruned 0 delegated access receipt(s)')->assertSuccessful();
     }
 
+    public function test_a_claim_taken_over_after_the_retention_period_survives_a_prune(): void
+    {
+        $this->freezeSecond();
+        $store = $this->app->make(DatabaseReceiptStore::class);
+        $operationId = DelegatedContract::operationId();
+        $actor = DatabaseReceiptStore::actor('actor-subject');
+        $abandoned = DatabaseReceiptStore::now() - (DatabaseReceiptStore::RETENTION_DAYS + 1) * 86400;
+        $this->assertNull($store->claim(self::APPLICATION, $operationId, $actor, str_repeat('h', 64), $abandoned));
+
+        $this->assertNull($store->claim(self::APPLICATION, $operationId, $actor, str_repeat('h', 64)), 'A repeat takes the abandoned claim over');
+        $this->assertSame(0, $store->pruneExpired());
+        $held = $store->find(self::APPLICATION, $operationId);
+        $this->assertTrue($held?->pending() && $held->claimedAt === DatabaseReceiptStore::now(), 'The live claim survives the prune');
+    }
+
     public function test_the_prune_command_leaves_a_store_other_than_the_database_store_alone(): void
     {
         $this->artisan('bherila-auth:prune-delegated-nonces')->expectsOutputToContain('nothing to prune')->assertSuccessful();
