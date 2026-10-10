@@ -456,6 +456,29 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->assertCount(1, $this->calls);
     }
 
+    public function test_operation_ids_differing_only_by_case_are_distinct_under_a_case_insensitive_collation(): void
+    {
+        $this->rebuildReceiptsCaseInsensitively();
+        $store = $this->app->make(DatabaseReceiptStore::class);
+        $upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ_01234';
+        $lower = strtolower($upper);
+        $actor = DatabaseReceiptStore::actor('actor-subject');
+
+        $this->assertNull($store->claim(self::APPLICATION, $upper, $actor, str_repeat('a', 64), 1000));
+        $this->assertNull($store->claim(self::APPLICATION, $lower, $actor, str_repeat('b', 64), 1000), 'Another case is another operation');
+        $store->complete(self::APPLICATION, $upper, 1000, 200, '{"which":"upper"}');
+        $store->complete(self::APPLICATION, $lower, 1000, 409, '{"error":"revision_conflict"}');
+        $this->assertSame('{"which":"upper"}', $store->find(self::APPLICATION, $upper)?->response);
+        $this->assertSame('{"error":"revision_conflict"}', $store->find(self::APPLICATION, $lower)?->response);
+
+        // Through the endpoint: the same payload under both ids is two operations, each run once.
+        $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
+        $id = strtoupper(DelegatedContract::operationId());
+        $this->send($this->update(['operation_id' => $id]))->assertOk();
+        $this->send($this->update(['operation_id' => strtolower($id)]))->assertOk();
+        $this->assertCount(2, $this->calls);
+    }
+
     public function test_the_same_operation_id_on_another_request_or_from_another_actor_is_refused(): void
     {
         $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);
@@ -629,7 +652,7 @@ class DelegatedAccessEndpointTest extends TestCase
     {
         $table = DB::table(DatabaseReceiptStore::TABLE);
         foreach (['old' => 31, 'recent' => 29] as $id => $days) {
-            $table->insert(['application' => self::APPLICATION, 'operation_id' => str_pad($id, 32, 'x'), 'actor' => str_repeat('a', 64),
+            $table->insert(['application' => self::APPLICATION, 'operation_key' => DatabaseReceiptStore::key(str_pad($id, 32, 'x')), 'operation_id' => str_pad($id, 32, 'x'), 'actor' => str_repeat('a', 64),
                 'request_hash' => str_repeat('h', 64), 'status' => 200, 'response' => '{}', 'claimed_at' => time() - $days * 86400, 'created_at' => time() - $days * 86400]);
         }
 
@@ -717,6 +740,22 @@ class DelegatedAccessEndpointTest extends TestCase
             'subject' => $subject, 'provisioned' => true, 'revision' => 'r2', 'access' => $access,
             'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true],
         ];
+    }
+
+    /**
+     * Rebuild the receipts table with every text column compared case-insensitively, as a
+     * MySQL or MariaDB default collation compares them, keeping its columns and primary key.
+     */
+    private function rebuildReceiptsCaseInsensitively(): void
+    {
+        $columns = DB::select('PRAGMA table_info('.DatabaseReceiptStore::TABLE.')');
+        $definitions = array_map(static fn (object $c): string => '"'.$c->name.'" '.$c->type.($c->notnull ? ' NOT NULL' : '')
+            .(preg_match('/char|text|clob/i', (string) $c->type) === 1 ? ' COLLATE NOCASE' : ''), $columns);
+        $key = array_filter($columns, static fn (object $c): bool => (int) $c->pk > 0);
+        usort($key, static fn (object $a, object $b): int => (int) $a->pk <=> (int) $b->pk);
+        DB::statement('DROP TABLE '.DatabaseReceiptStore::TABLE);
+        DB::statement('CREATE TABLE '.DatabaseReceiptStore::TABLE.' ('.implode(', ', $definitions)
+            .', PRIMARY KEY ('.implode(', ', array_map(static fn (object $c): string => '"'.$c->name.'"', $key)).'))');
     }
 
     /**

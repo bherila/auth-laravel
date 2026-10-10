@@ -15,6 +15,9 @@ return new class extends Migration
 
         Schema::create(DatabaseReceiptStore::TABLE, function (Blueprint $table) {
             $table->string('application', 191);
+            // The key is a digest of the operation id: ids are case-sensitive, and a case-insensitive
+            // collation (common on MySQL and MariaDB) would otherwise make `ABC…` and `abc…` one.
+            $table->string('operation_key', 64);
             $table->string('operation_id', 64);
             $table->string('actor', 64);
             $table->string('request_hash', 64);
@@ -26,7 +29,7 @@ return new class extends Migration
             $table->unsignedBigInteger('created_at')->index();
 
             // One request per operation reaches the adapter: this key is what decides which.
-            $table->primary(['application', 'operation_id']);
+            $table->primary(['application', 'operation_key']);
         });
     }
 

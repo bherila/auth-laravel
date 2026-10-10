@@ -30,8 +30,9 @@ can no longer reach an upgraded application.
 - **Metadata.** A state and each `subjects[]` listing entry may carry `provisioned_at`,
   `first_sign_in_at` and `last_seen_at` (ISO-8601 or null), and a workspace role a `description`.
 - **Operation ids and receipts.** `update` and `remove` require an `operation_id` (32 to 64
-  characters of `[A-Za-z0-9_-]`, never the assertion `jti`). The endpoint claims each write in the
-  new `bherila_auth_delegated_receipts` table before the adapter runs, answers a repeat from the
+  characters of `[A-Za-z0-9_-]`, case-sensitive, never the assertion `jti`). The endpoint claims each
+  write in the new `bherila_auth_delegated_receipts` table (keyed by a digest of the id, so a
+  case-insensitive collation cannot merge two ids) before the adapter runs, answers a repeat from the
   stored receipt without calling the adapter, refuses the same id on a different request with
   `invalid_request`, and answers a write still being decided with `operation_in_progress` (503). A
   claim left unfinished (a request that died mid-write) stops blocking after ten minutes

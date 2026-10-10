@@ -1114,7 +1114,8 @@ manages it, and nothing else:
 
 **Receipts.** The endpoint, not the adapter, keeps a receipt for every `update` and `remove`:
 
-- The write is claimed before the adapter runs, keyed by application and `operation_id`. A repeat
+- The write is claimed before the adapter runs, keyed by application and a SHA-256 of
+  `operation_id` (ids are case-sensitive, whatever the column collation). A repeat
   of the same request (same actor, same canonical payload) is answered with the stored status and
   body, byte for byte, without calling the adapter. The same `operation_id` on a different request,
   or from another actor, is refused as `invalid_request` (422). One that is still being decided is

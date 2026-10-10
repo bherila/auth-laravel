@@ -12,7 +12,7 @@ use Throwable;
  * Operation receipts: the endpoint's stored answer to every `update` and `remove`, by `operation_id`.
  *
  * A write is claimed before the adapter runs, by inserting its row; the primary key on
- * (application, operation_id) lets exactly one request claim it, so two requests carrying the same
+ * (application, a digest of operation_id) lets exactly one request claim it, so two requests carrying the same
  * operation can never both reach the adapter. The answer is stored when the adapter has given one.
  * A repeat of the same request is answered from the row; anything else carrying the same
  * operation id is refused. Receipts are kept for {@see RETENTION_DAYS} days.
@@ -54,6 +54,7 @@ final readonly class DatabaseReceiptStore
         try {
             $this->connection->table(self::TABLE)->insert([
                 'application' => $application,
+                'operation_key' => self::key($operationId),
                 'operation_id' => $operationId,
                 'actor' => $actor,
                 'request_hash' => $requestHash,
@@ -79,7 +80,7 @@ final readonly class DatabaseReceiptStore
         // for it, the conditional update lets exactly one through.
         try {
             $taken = $this->connection->table(self::TABLE)
-                ->where('application', $application)->where('operation_id', $operationId)
+                ->where('application', $application)->where('operation_key', self::key($operationId))
                 ->whereNull('status')->where('request_hash', $requestHash)->where('claimed_at', $held->claimedAt)
                 ->update(['claimed_at' => $at]);
         } catch (Throwable) {
@@ -100,7 +101,7 @@ final readonly class DatabaseReceiptStore
     public function complete(string $application, string $operationId, int $claimedAt, int $status, string $response): void
     {
         $this->connection->table(self::TABLE)
-            ->where('application', $application)->where('operation_id', $operationId)->whereNull('status')->where('claimed_at', $claimedAt)
+            ->where('application', $application)->where('operation_key', self::key($operationId))->whereNull('status')->where('claimed_at', $claimedAt)
             ->update(['status' => $status, 'response' => $response]);
     }
 
@@ -111,7 +112,7 @@ final readonly class DatabaseReceiptStore
     public function release(string $application, string $operationId, int $claimedAt): void
     {
         $this->connection->table(self::TABLE)
-            ->where('application', $application)->where('operation_id', $operationId)->whereNull('status')->where('claimed_at', $claimedAt)
+            ->where('application', $application)->where('operation_key', self::key($operationId))->whereNull('status')->where('claimed_at', $claimedAt)
             ->delete();
     }
 
@@ -122,7 +123,7 @@ final readonly class DatabaseReceiptStore
     {
         try {
             $row = $this->connection->table(self::TABLE)
-                ->where('application', $application)->where('operation_id', $operationId)->first();
+                ->where('application', $application)->where('operation_key', self::key($operationId))->first();
         } catch (Throwable) {
             throw new DelegatedAccessException('receipt_storage_unavailable');
         }
@@ -149,6 +150,15 @@ final readonly class DatabaseReceiptStore
     public static function now(): int
     {
         return Carbon::now()->getTimestamp();
+    }
+
+    /**
+     * The stored key for an operation id: its SHA-256, so the key compares exactly whatever the
+     * column's collation (operation ids are case-sensitive).
+     */
+    public static function key(string $operationId): string
+    {
+        return hash('sha256', $operationId);
     }
 
     /** Who sent a write, as stored: a digest of the verified actor subject. */
