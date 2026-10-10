@@ -1174,6 +1174,8 @@ only what is its own: an adapter deciding who may manage access and what they ma
 2. Publish and apply the delegated access migrations (`bherila-auth-delegated-access-migrations`,
    above): the nonce table and the operation receipts table (`bherila_auth_delegated_receipts`).
    A write is refused with `receipt_storage_unavailable` (503) until the receipts table exists.
+   The receipts migration creates its table on `DELEGATED_ACCESS_RECEIPT_CONNECTION` (below), so
+   set that before migrating.
 3. Configure the deployment:
 
    | Variable | Meaning |
