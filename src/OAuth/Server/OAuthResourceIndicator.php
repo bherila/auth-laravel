@@ -51,6 +51,10 @@ final class OAuthResourceIndicator
                 throw new RuntimeException('An OAuth protected resource is not configured correctly.');
             }
             $scopes = $definition['scopes'] ?? null;
+            if ($scopes !== null && ! is_array($scopes)) {
+                // An omitted ceiling admits the whole catalog; a malformed one must not.
+                throw new RuntimeException("The OAuth protected resource [{$name}] has an invalid scope list.");
+            }
             $resources[$name] = [
                 'uri' => $canonical,
                 'scopes' => is_array($scopes) ? self::scopeIdentifiers(array_is_list($scopes) ? $scopes : array_keys($scopes)) : null,

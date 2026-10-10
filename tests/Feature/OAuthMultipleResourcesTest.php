@@ -278,4 +278,11 @@ final class OAuthMultipleResourcesTest extends TestCase
         $this->expectExceptionMessage('share an identifier');
         OAuthResourceIndicator::resources();
     }
+
+    public function test_a_malformed_scope_ceiling_fails_instead_of_admitting_everything(): void
+    {
+        config(['bherila-auth.oauth_server.resources.mcp.scopes' => 'mcp:use']);
+        $this->expectExceptionMessage('invalid scope list');
+        OAuthResourceIndicator::resources();
+    }
 }
