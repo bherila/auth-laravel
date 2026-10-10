@@ -196,6 +196,18 @@ return [
         'per_minute' => 120,
     ],
 
+    'identity_tombstones' => [
+        // Consuming the identity provider's deletion tombstone feed
+        // (`bherila-auth:consume-identity-tombstones`). Off until the application binds
+        // BWH\Auth\OAuth\Lifecycle\IdentityTombstoneHandler; uses the oauth_client credential.
+        // The cursor table's connection; null for the default. Durable and shared by every server
+        // that runs the command: it also holds the lease that keeps two runs from overlapping.
+        'connection' => env('BHERILA_AUTH_IDENTITY_TOMBSTONE_CONNECTION'),
+        'table' => 'bherila_auth_identity_tombstone_cursors',
+        // Tombstones per page, 1 through 100 (the provider's maximum).
+        'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
+    ],
+
     'migrations' => [
         'drop_tables_on_rollback' => false,
     ],

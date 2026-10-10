@@ -90,6 +90,10 @@ class AuthServiceProvider extends ServiceProvider
         ], 'bherila-auth-delegated-access-migrations');
 
         $this->publishes([
+            __DIR__.'/../database/identity-tombstone-migrations' => database_path('migrations'),
+        ], 'bherila-auth-identity-tombstone-migrations');
+
+        $this->publishes([
             __DIR__.'/../resources/views' => resource_path('views/vendor/bherila-auth'),
         ], 'bherila-auth-views');
 
