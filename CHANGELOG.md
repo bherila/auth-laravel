@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## v0.21.0 - Unreleased
+## v0.21.0 - 2026-10-10
 
 ### Delegated access contract version 3 (breaking)
 
