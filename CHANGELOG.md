@@ -42,7 +42,8 @@ can no longer reach an upgraded application.
   `bherila-auth-delegated-access-migrations` again before upgrading**: writes are refused with
   `receipt_storage_unavailable` until the table exists. `DELEGATED_ACCESS_RECEIPT_CONNECTION`
   (defaulting to the nonce connection) chooses its connection.
-- `bherila-auth:prune-delegated-nonces` also deletes receipts older than 30 days; schedule it daily.
+- `bherila-auth:prune-delegated-nonces` also deletes receipts older than 30 days, when the receipts
+  table is installed (it still succeeds without it); schedule it daily.
 - `DelegatedRequestContext` carries the write's `operationId`.
 - `ApplicationAccessAdapter::handle()` keeps its signature; it now receives `remove` and searches.
 - `AssertsDelegatedAccessAdapter` drives version 3 and adds

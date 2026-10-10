@@ -1204,7 +1204,7 @@ only what is its own: an adapter deciding who may manage access and what they ma
    keys, switch the provider to the new key id, then remove the old one.
 
 4. Schedule `bherila-auth:prune-delegated-nonces` daily. It deletes expired nonces only, and
-   receipts older than 30 days.
+   receipts older than 30 days when the receipts table is installed.
 
 The controller refuses an oversize body (`MAX_REQUEST_BYTES`) and a missing bearer before
 verification. It verifies the assertion and consumes its nonce before parsing the body, then

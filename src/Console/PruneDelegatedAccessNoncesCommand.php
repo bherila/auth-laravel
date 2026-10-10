@@ -22,6 +22,13 @@ class PruneDelegatedAccessNoncesCommand extends Command
             $this->info('The bound nonce store is not the database store; nothing to prune.');
         }
 
+        // Receipts exist only where the receipts migration is installed; nonce pruning never depends on it.
+        if (! $receipts->installed()) {
+            $this->info('The delegated access receipts table is not installed; no receipts to prune.');
+
+            return self::SUCCESS;
+        }
+
         $count = $receipts->pruneExpired();
         $this->info("Pruned {$count} delegated access receipt(s) older than ".DatabaseReceiptStore::RETENTION_DAYS.' days.');
 

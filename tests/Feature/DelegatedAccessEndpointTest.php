@@ -762,6 +762,21 @@ class DelegatedAccessEndpointTest extends TestCase
         }
     }
 
+    public function test_the_prune_command_succeeds_without_the_receipts_table_and_prunes_it_once_installed(): void
+    {
+        Schema::drop(DatabaseReceiptStore::TABLE);
+        $this->assertFalse($this->app->make(DatabaseReceiptStore::class)->installed());
+
+        $this->artisan('bherila-auth:prune-delegated-nonces')
+            ->expectsOutputToContain('nothing to prune')
+            ->expectsOutputToContain('receipts table is not installed')
+            ->assertSuccessful();
+
+        (require __DIR__.'/../../database/delegated-access-migrations/2026_10_10_000000_create_delegated_access_receipts.php')->up();
+        $this->assertTrue($this->app->make(DatabaseReceiptStore::class)->installed());
+        $this->artisan('bherila-auth:prune-delegated-nonces')->expectsOutputToContain('Pruned 0 delegated access receipt(s)')->assertSuccessful();
+    }
+
     public function test_the_prune_command_leaves_a_store_other_than_the_database_store_alone(): void
     {
         $this->artisan('bherila-auth:prune-delegated-nonces')->expectsOutputToContain('nothing to prune')->assertSuccessful();

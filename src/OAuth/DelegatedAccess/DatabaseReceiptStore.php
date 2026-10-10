@@ -166,6 +166,15 @@ final readonly class DatabaseReceiptStore
         );
     }
 
+    /**
+     * Whether the receipts table exists on this store's connection. An application that does not
+     * serve version 3 writes may not have installed it.
+     */
+    public function installed(): bool
+    {
+        return $this->connection instanceof Connection && $this->connection->getSchemaBuilder()->hasTable(self::TABLE);
+    }
+
     /** Delete receipts older than {@see RETENTION_DAYS} days, stored or still pending. */
     public function pruneExpired(): int
     {
