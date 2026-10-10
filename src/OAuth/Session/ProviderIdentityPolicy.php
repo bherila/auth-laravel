@@ -88,7 +88,9 @@ final readonly class ProviderIdentityPolicy
 
         $store = $this->cache(fn (Repository $store) => $store);
         if (! $store->getStore() instanceof LockProvider) {
-            return $ask();
+            // Without a lock, concurrent refreshes return, and a late older answer could
+            // overwrite a disable for the whole window.
+            throw new ProviderStatusUnavailable('Provider identity enforcement needs a cache store that supports locks.');
         }
         try {
             // Longer than one status request's own deadline, so a waiting caller normally

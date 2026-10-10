@@ -209,6 +209,46 @@ class ProviderIdentityEnforcementTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_a_store_that_cannot_lock_refuses_rather_than_refreshing_unserialized(): void
+    {
+        Http::fake(fn () => Http::response($this->payload()));
+        config(['cache.stores.lockless' => ['driver' => 'lockless']]);
+        Cache::extend('lockless', fn () => Cache::repository(new class implements \Illuminate\Contracts\Cache\Store
+        {
+            private array $values = [];
+
+            public function get($key): mixed { return $this->values[$key] ?? null; }
+
+            public function many(array $keys): array { return array_map(fn ($k) => $this->get($k), array_combine($keys, $keys)); }
+
+            public function put($key, $value, $seconds): bool { $this->values[$key] = $value; return true; }
+
+            public function putMany(array $values, $seconds): bool { $this->values = [...$this->values, ...$values]; return true; }
+
+            public function increment($key, $value = 1): int|bool { return false; }
+
+            public function decrement($key, $value = 1): int|bool { return false; }
+
+            public function forever($key, $value): bool { return $this->put($key, $value, 0); }
+
+            public function touch($key, $seconds): bool { return true; }
+
+            public function forget($key): bool { unset($this->values[$key]); return true; }
+
+            public function flush(): bool { $this->values = []; return true; }
+
+            public function getPrefix(): string { return ''; }
+        }));
+        config(['bherila-auth.provider_identity.cache_store' => 'lockless']);
+
+        try {
+            $this->policy()->verify('subject-example', 7);
+            $this->fail('A refresh that cannot be serialized must not run.');
+        } catch (ProviderStatusUnavailable) {
+            Http::assertNothingSent();
+        }
+    }
+
     public function test_a_failing_shared_store_refuses_retryably_instead_of_erroring(): void
     {
         Http::fake(fn () => Http::response($this->payload()));
