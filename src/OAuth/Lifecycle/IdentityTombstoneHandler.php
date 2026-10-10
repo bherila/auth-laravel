@@ -19,6 +19,11 @@ namespace BWH\Auth\OAuth\Lifecycle;
  * implementation must be idempotent: a subject with no local record is already done.
  * Do not wrap this call in an outer database transaction, or "committed" is not true
  * when it returns.
+ *
+ * Finish well inside `identity_tombstones.handler_budget_seconds`: the run's lease cannot be
+ * renewed during this call, so only a call within that budget is guaranteed never to run
+ * concurrently with a later delivery of the same tombstone. A later, sequential retry must
+ * always be safe.
  */
 interface IdentityTombstoneHandler
 {

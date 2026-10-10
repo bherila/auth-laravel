@@ -72,6 +72,24 @@ run that stopped before acknowledging, an acknowledgement the provider did not c
 page read again after an outage, or two deletions that resolve to one local record. Each
 call must be safe to repeat, and a subject with no local record must count as done.
 
+### Time budget and overlap
+
+Runs never overlap while each handler call finishes inside
+`identity_tombstones.handler_budget_seconds` (default 300). A run holds a lease on the
+cursor row for `identity_tombstones.lease_seconds` (default 900, at least 60), and before
+each handler call it renews the lease if less than the budget remains. Nothing can renew
+the lease *during* the call: PHP runs the handler synchronously on the command's only
+thread, so there is no point at which a heartbeat could run without interrupting the
+handler's own work. A handler that overruns its budget can therefore outlive the lease,
+and a later run may then deliver the same tombstone while the first call is still
+running.
+
+So a handler must finish well inside its budget (do slow cascades in batches or hand
+them to the application's own durable job, committing what makes the person
+unreachable before returning), and it must be safe against a later retry of the same
+tombstone. The package guarantees retries are sequential only within that budget; raise
+both settings together if deletions legitimately take longer.
+
 ## 2. Install the tables
 
 ```bash
@@ -117,7 +135,7 @@ once the tombstone's `purge_after` has passed. The provider still delivers a tom
 that was never acknowledged, so one dropped at the end of the purge window comes back
 when the feed cycles.
 
-It exits non-zero when no handler is bound, either table is missing, the provider
+It exits 2 when `handler_budget_seconds` exceeds `lease_seconds`, and non-zero when no handler is bound, either table is missing, the provider
 settings are missing or untrusted, the feed is unavailable or malformed, an
 acknowledgement fails, or any handler call throws. The single summary line holds counts
 only, so scheduler output and alerts never contain subjects.
@@ -140,6 +158,8 @@ so a new client never sends an old client's cursor.
     'connection' => env('BHERILA_AUTH_IDENTITY_TOMBSTONE_CONNECTION'),
     'table' => 'bherila_auth_identity_tombstone_cursors',
     'retry_table' => 'bherila_auth_identity_tombstone_retries',
+    'lease_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_LEASE_SECONDS', 900),
+    'handler_budget_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_HANDLER_BUDGET_SECONDS', 300),
     'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
 ],
 ```

@@ -16,15 +16,24 @@ use Illuminate\Support\Facades\Date;
  * handler at once, so the lease is taken by a conditional update on this durable table
  * rather than through a cache an application may not share between servers.
  *
- * A run holds the lease for {@see LEASE_SECONDS} and renews it as it goes; a run that
+ * A run holds the lease for {@see leaseSeconds()} and renews it as it goes; a run that
  * died is replaced once its lease expires. Every write is conditioned on still holding
  * the lease, so a run that outlived it cannot move the cursor under its successor.
+ *
+ * Nothing can renew the lease while the application's handler is running: PHP runs it
+ * synchronously on this process's only thread, and a signal-driven timer would interrupt
+ * the handler's own I/O and database transaction to write from inside it. So the consumer
+ * instead makes sure, before each handler call, that at least a per-item budget of lease
+ * time remains ({@see ensure()}); a handler that finishes within that budget can never
+ * overlap with another run.
  */
 final readonly class IdentityTombstoneCursorStore
 {
     public const DEFAULT_TABLE = 'bherila_auth_identity_tombstone_cursors';
 
-    public const LEASE_SECONDS = 900;
+    public const DEFAULT_LEASE_SECONDS = 900;
+
+    public const MIN_LEASE_SECONDS = 60;
 
     public function __construct(private ConnectionResolverInterface $db) {}
 
@@ -33,6 +42,14 @@ final readonly class IdentityTombstoneCursorStore
         $table = config('bherila-auth.identity_tombstones.table');
 
         return is_string($table) && $table !== '' ? $table : self::DEFAULT_TABLE;
+    }
+
+    /** `bherila-auth.identity_tombstones.lease_seconds`, never below {@see MIN_LEASE_SECONDS}. */
+    public static function leaseSeconds(): int
+    {
+        $seconds = filter_var(config('bherila-auth.identity_tombstones.lease_seconds', self::DEFAULT_LEASE_SECONDS), FILTER_VALIDATE_INT);
+
+        return max(self::MIN_LEASE_SECONDS, $seconds === false ? self::DEFAULT_LEASE_SECONDS : $seconds);
     }
 
     public function installed(): bool
@@ -58,7 +75,7 @@ final readonly class IdentityTombstoneCursorStore
         $taken = $this->connection()->table(self::table())
             ->where('context', $context)
             ->where(fn ($query) => $query->whereNull('lease_owner')->orWhere('lease_expires_at', '<=', $now))
-            ->update(['lease_owner' => $owner, 'lease_expires_at' => $now + self::LEASE_SECONDS, 'updated_at' => $now]);
+            ->update(['lease_owner' => $owner, 'lease_expires_at' => $now + self::leaseSeconds(), 'updated_at' => $now]);
 
         return $taken === 1 ? $owner : null;
     }
@@ -67,11 +84,25 @@ final readonly class IdentityTombstoneCursorStore
     public function renew(string $context, string $owner): bool
     {
         $now = self::now();
-        $this->held($context, $owner)->update(['lease_expires_at' => $now + self::LEASE_SECONDS, 'updated_at' => $now]);
+        $this->held($context, $owner)->update(['lease_expires_at' => $now + self::leaseSeconds(), 'updated_at' => $now]);
 
         // Checked separately: MySQL reports an update that changes nothing (a renewal within
         // the same second) as zero affected rows.
         return $this->held($context, $owner)->exists();
+    }
+
+    /**
+     * Make sure at least $seconds of lease remain, renewing only when fewer do; false when the
+     * lease has passed to another run.
+     */
+    public function ensure(string $context, string $owner, int $seconds): bool
+    {
+        $expires = $this->held($context, $owner)->value('lease_expires_at');
+        if ($expires === null) {
+            return false;
+        }
+
+        return (int) $expires - self::now() >= $seconds || $this->renew($context, $owner);
     }
 
     /** The stored cursor, read from the writer; null to start from the oldest pending tombstone. */

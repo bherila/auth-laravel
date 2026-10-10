@@ -413,7 +413,7 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->handler->during = function () use ($context): void {
             // The handler outlives the lease and a second run takes over.
             $this->handler->during = null;
-            $this->travel(IdentityTombstoneCursorStore::LEASE_SECONDS + 1)->seconds();
+            $this->travel(IdentityTombstoneCursorStore::DEFAULT_LEASE_SECONDS + 1)->seconds();
             $this->assertIsString($this->store()->acquire($context));
         };
         $this->provider([self::page([1, 2], 'cursor-1')]);
@@ -424,6 +424,52 @@ class ConsumeIdentityTombstonesCommandTest extends TestCase
         $this->assertSame([self::id(1)], $this->handler->ids(), 'Two runs never handle tombstones at once');
         $this->assertSame('cursor-0', $this->storedCursor());
         $this->assertStringContainsString('stopped: another run took over the lease', $output);
+    }
+
+    public function test_the_lease_covers_the_handler_budget_before_every_call(): void
+    {
+        config(['bherila-auth.identity_tombstones.lease_seconds' => 100, 'bherila-auth.identity_tombstones.handler_budget_seconds' => 50]);
+        $context = $this->context();
+        $takeovers = [];
+        $this->handler->during = function ($tombstone) use ($context, &$takeovers): void {
+            // Each handler call takes most of its budget; a second run tries to start meanwhile.
+            $this->travel($tombstone->id === self::id(1) ? 60 : 45)->seconds();
+            $takeovers[] = $this->store()->acquire($context);
+        };
+        $this->provider([self::page([1, 2])]);
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(0, $code, $output);
+        $this->assertSame([null, null], $takeovers, 'With 40 seconds left the lease was renewed before the second call');
+        $this->assertSame([self::id(1), self::id(2)], $this->acknowledged);
+    }
+
+    public function test_a_configured_lease_longer_than_the_default_holds_through_a_long_handler(): void
+    {
+        config(['bherila-auth.identity_tombstones.lease_seconds' => 1800]);
+        $context = $this->context();
+        $takeover = 'not tried';
+        $this->handler->during = function () use ($context, &$takeover): void {
+            $this->travel(1000)->seconds();
+            $takeover = $this->store()->acquire($context);
+        };
+        $this->provider([self::page([1])]);
+
+        $this->assertSame(0, $this->run_()[0]);
+        $this->assertNull($takeover);
+    }
+
+    public function test_a_handler_budget_longer_than_the_lease_is_refused(): void
+    {
+        config(['bherila-auth.identity_tombstones.lease_seconds' => 120, 'bherila-auth.identity_tombstones.handler_budget_seconds' => 121]);
+        Http::fake();
+
+        [$code, $output] = $this->run_();
+
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('handler_budget_seconds must be from 1 through lease_seconds (120)', $output);
+        Http::assertNothingSent();
     }
 
     public function test_an_untrusted_provider_url_fails_before_anything_is_sent(): void

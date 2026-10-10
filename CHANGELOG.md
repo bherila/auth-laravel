@@ -15,7 +15,8 @@ the first entry here is in the git history.
   failure leaves that tombstone unacknowledged and records it in a retry table, so it is retried
   first on every later run; the run continues, and the command exits non-zero.
   The cursor advances only after a whole page is recorded and is kept per provider/client; a lease
-  in the cursor table keeps runs from overlapping. Output and logs carry counts and tombstone ids,
+  in the cursor table (`lease_seconds`, default 900) keeps runs from overlapping, renewed before
+  each handler call so that at least `handler_budget_seconds` (default 300) remain. Output and logs carry counts and tombstone ids,
   never subjects. See [docs/identity-tombstones.md](docs/identity-tombstones.md).
 - New `identity_tombstones` config section (`connection`, `table`, `retry_table`, `page_limit`) and
   a separately published migration group, `bherila-auth-identity-tombstone-migrations`, for the

@@ -206,6 +206,12 @@ return [
         'table' => 'bherila_auth_identity_tombstone_cursors',
         // Tombstones whose handler failed, retried first on each run rather than when the feed drains.
         'retry_table' => 'bherila_auth_identity_tombstone_retries',
+        // How long a run holds its lease before another may take over (seconds, at least 60).
+        'lease_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_LEASE_SECONDS', 900),
+        // The longest one handler call may take (seconds, at most lease_seconds). Before each call
+        // the run makes sure this much lease remains, so a handler finishing within it never
+        // overlaps another run. Nothing can renew the lease during the call itself.
+        'handler_budget_seconds' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_HANDLER_BUDGET_SECONDS', 300),
         // Tombstones per page, 1 through 100 (the provider's maximum).
         'page_limit' => (int) env('BHERILA_AUTH_IDENTITY_TOMBSTONE_PAGE_LIMIT', 100),
     ],

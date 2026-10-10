@@ -65,6 +65,8 @@ class ConsumeIdentityTombstonesCommand extends Command
 
     private string $owner;
 
+    private int $budget;
+
     public function handle(IdentityTombstoneClient $client, IdentityTombstoneCursorStore $store, IdentityTombstoneRetryStore $retries): int
     {
         // The application reuses one command object across Artisan calls in a process, so
@@ -88,6 +90,15 @@ class ConsumeIdentityTombstonesCommand extends Command
 
             return self::INVALID;
         }
+        // A handler can only be kept from overlapping another run if its budget fits in a lease.
+        $budget = filter_var(config('bherila-auth.identity_tombstones.handler_budget_seconds', 300), FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 1, 'max_range' => IdentityTombstoneCursorStore::leaseSeconds()]]);
+        if ($budget === false) {
+            $this->error('identity_tombstones.handler_budget_seconds must be from 1 through lease_seconds ('.IdentityTombstoneCursorStore::leaseSeconds().').');
+
+            return self::INVALID;
+        }
+        $this->budget = $budget;
 
         if (! $store->installed() || ! $retries->installed()) {
             $this->error('The identity tombstone tables are not installed; publish bherila-auth-identity-tombstone-migrations and migrate.');
@@ -215,7 +226,9 @@ class ConsumeIdentityTombstonesCommand extends Command
      */
     private function process(IdentityTombstone $tombstone): ?string
     {
-        if (! $this->store->renew($this->context, $this->owner)) {
+        // The lease cannot be renewed while the handler runs, so it must already cover the
+        // handler's budget when the call starts.
+        if (! $this->store->ensure($this->context, $this->owner, $this->budget)) {
             return 'another run took over the lease';
         }
         $this->attempted[strtolower($tombstone->id)] = true;

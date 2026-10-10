@@ -93,7 +93,7 @@ class IdentityTombstoneCursorStoreTest extends TestCase
         $this->assertIsString($other = $store->acquire('context-b'), 'Another client context has its own lease');
         $this->assertTrue($store->renew('context-a', $first));
 
-        $this->travel(IdentityTombstoneCursorStore::LEASE_SECONDS - 1)->seconds();
+        $this->travel(IdentityTombstoneCursorStore::DEFAULT_LEASE_SECONDS - 1)->seconds();
         $this->assertNull($store->acquire('context-a'), 'The lease holds until it lapses');
         $this->travel(2)->seconds();
 
@@ -141,6 +141,46 @@ class IdentityTombstoneCursorStoreTest extends TestCase
             @unlink($primary);
             @unlink($replica);
         }
+    }
+
+    public function test_the_lease_length_is_configurable_with_a_floor(): void
+    {
+        (require self::MIGRATION)->up();
+        $store = $this->store();
+
+        config(['bherila-auth.identity_tombstones.lease_seconds' => 1800]);
+        $store->acquire('context-a');
+        $this->travel(1000)->seconds();
+        $this->assertNull($store->acquire('context-a'), 'A longer lease holds past the default');
+        $this->travel(801)->seconds();
+        $this->assertIsString($store->acquire('context-b'));
+        $this->assertIsString($store->acquire('context-a'));
+
+        config(['bherila-auth.identity_tombstones.lease_seconds' => 5]);
+        $this->assertSame(IdentityTombstoneCursorStore::MIN_LEASE_SECONDS, IdentityTombstoneCursorStore::leaseSeconds());
+        $store->acquire('context-c');
+        $this->travel(30)->seconds();
+        $this->assertNull($store->acquire('context-c'), 'Never shorter than the floor');
+    }
+
+    public function test_ensure_renews_only_when_less_than_the_budget_remains(): void
+    {
+        (require self::MIGRATION)->up();
+        config(['bherila-auth.identity_tombstones.lease_seconds' => 100]);
+        $store = $this->store();
+        $owner = $store->acquire('context-a');
+        $expiry = fn () => (int) \Illuminate\Support\Facades\DB::connection('lifecycle')->table(IdentityTombstoneCursorStore::DEFAULT_TABLE)->value('lease_expires_at');
+        $first = $expiry();
+
+        $this->travel(40)->seconds();
+        $this->assertTrue($store->ensure('context-a', $owner, 50));
+        $this->assertSame($first, $expiry(), '60 seconds remain, enough for a 50-second budget');
+
+        $this->travel(20)->seconds();
+        $this->assertTrue($store->ensure('context-a', $owner, 50));
+        $this->assertSame($first + 60, $expiry(), '40 seconds remained, so the lease was renewed');
+
+        $this->assertFalse($store->ensure('context-a', 'someone-else', 50));
     }
 
     public function test_cursors_are_kept_per_context_and_can_be_cleared(): void
