@@ -204,9 +204,15 @@ final class OAuthProtectedResource
     private static function scopes(?array $supportedScopes = null, ?string $resource = null): array
     {
         if ($supportedScopes === null) {
-            $resource ??= OAuthResourceIndicator::defaultName();
-            $supportedScopes = OAuthResourceIndicator::resources()[$resource]['scopes']
-                ?? config('bherila-auth.oauth_server.protected_resource_scopes');
+            $resources = config('bherila-auth.oauth_server.resources');
+            if (is_array($resources) && $resources !== []) {
+                // A resource without a ceiling admits the whole catalog, and says so.
+                $resource ??= OAuthResourceIndicator::defaultName();
+                $supportedScopes = OAuthResourceIndicator::resources()[$resource]['scopes']
+                    ?? config('bherila-auth.oauth_server.scopes', []);
+            } else {
+                $supportedScopes = config('bherila-auth.oauth_server.protected_resource_scopes');
+            }
         }
         $scopes = $supportedScopes ?? config('bherila-auth.oauth_server.scopes', []);
         if (! is_array($scopes)) {

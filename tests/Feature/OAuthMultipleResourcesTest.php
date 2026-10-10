@@ -300,6 +300,15 @@ final class OAuthMultipleResourcesTest extends TestCase
         $this->assertSame(self::APP.'/.well-known/oauth-protected-resource', OAuthProtectedResource::metadataUrl('root'));
     }
 
+    public function test_a_resource_without_a_ceiling_publishes_the_whole_catalog(): void
+    {
+        config(['bherila-auth.oauth_server.protected_resource_scopes' => ['items:read']]);
+        config(['bherila-auth.oauth_server.resources.open' => ['path' => '/api/open']]);
+        config(['bherila-auth.oauth_server.resources.open.uri' => self::APP.'/api/open']);
+
+        $this->assertSame(['mcp:use', 'items:read', 'reports:read'], OAuthProtectedResource::metadata(null, 'open')['scopes_supported']);
+    }
+
     public function test_misconfigured_resources_fail_loudly(): void
     {
         config(['bherila-auth.oauth_server.resources' => [
