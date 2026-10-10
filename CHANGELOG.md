@@ -6,6 +6,41 @@ the first entry here is in the git history.
 
 ## Unreleased
 
+### Upgrade notes for 0.23.0
+
+- **No configuration change, no behaviour change for resources.** Without `oauth_server.resources`,
+  `oauth_server.resource` is the single protected resource as before; existing tokens keep their
+  binding and keep working, including MCP connectors using REST-bound tokens.
+- **Adopting per-endpoint resources** (`oauth_server.resources`, `ExpectOAuthResource:<name>`):
+  existing tokens are bound to the old single resource, which becomes the `rest` resource if it keeps
+  its URL. MCP connectors must authorize again once to get MCP-bound tokens. Tell users of connectors
+  before switching.
+- **Provider identity enforcement** stays off until `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED=true`.
+  Before enabling it: publish and run the package migrations (stamp columns on the Passport tables),
+  call `ProviderSession::establish()` in the login callback, add `RequireActiveProviderSession`, and
+  use a lock-capable shared cache store. Credentials issued before enforcement are refused once it is
+  on: connectors authorize again once.
+- **The agent profile now ignores Passport's transient-token cookie** (`laravel_token`) and refuses
+  `POST /oauth/token/refresh`. Applications that relied on that cookie for first-party API calls must
+  use the session or a bearer token instead.
+
+### Several protected resources, each its own audience
+
+- `oauth_server.resources` declares several protected resources (for example REST at `/api/v1` and MCP
+  at `/api/v1/mcp`, plus aliases), each with its own RFC 9728 document at its path-inserted URL naming
+  exactly that resource, and its own scope ceiling. A scope may be listed under several resources.
+- `assume_omitted_resource` may name the resource an omitted `resource` binds to.
+- A request naming several resources is refused (`invalid_target`).
+- `ExpectOAuthResource:<name>` sets a route's audience; an endpoint and its alias are separate audiences.
+- `OAuthProtectedResource::unauthenticated($request)` builds a route's 401 challenge from configuration,
+  and `AssertsAgentOAuthContract::assertProtectedResourceChallenge()` follows it as a strict client does.
+- The consent step no longer assumes the default resource for a code requested for another one.
+
+### CORS for OAuth machine endpoints
+
+- `oauth_server.cors.allowed_origins` gives listed browser origins CORS (with preflights) on discovery,
+  registration and the token endpoint; other origins get no CORS headers. Off when the list is empty.
+
 ### Provider identity enforcement for browser sessions (opt-in)
 
 - New `provider_identity` configuration section, off by default

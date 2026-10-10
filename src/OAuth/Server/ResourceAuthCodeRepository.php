@@ -21,7 +21,9 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         $resourceColumn = $this->resourceColumn();
         $hasResourceColumn = $this->hasColumn($model->getTable(), $resourceColumn);
         $request = $this->request();
-        $requestedResource = $request === null ? null : OAuthResourceIndicator::requestResource($request);
+        // The consent submission carries no resource of its own; the authorization request's
+        // validated resource is the one the code is for.
+        $requestedResource = $request?->exists('resource') ? OAuthResourceIndicator::requestResource($request) : null;
         if ($request?->exists('resource') && $requestedResource === null) {
             throw new RuntimeException('The requested OAuth resource is invalid.');
         }
@@ -130,9 +132,11 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         }
 
         if ($storedResource === null
-            || $storedResource !== OAuthResourceIndicator::configuredCanonical()
+            || ! OAuthResourceIndicator::isConfiguredResource($storedResource)
             || ! $hasRequestedResource
-            || $requestedResource !== $storedResource) {
+            || $requestedResource !== $storedResource
+            // A ceiling tightened since the code was granted applies to the token it mints.
+            || ! OAuthResourceIndicator::scopesAllowedFor($storedResource, $scopes)) {
             return true;
         }
 

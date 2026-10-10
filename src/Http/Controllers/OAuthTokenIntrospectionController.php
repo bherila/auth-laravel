@@ -35,7 +35,7 @@ final readonly class OAuthTokenIntrospectionController
         }
 
         $canonicalResource = OAuthResourceIndicator::canonicalize($resource);
-        if ($canonicalResource === null || $canonicalResource !== OAuthResourceIndicator::configuredCanonical()) {
+        if ($canonicalResource === null || ! OAuthResourceIndicator::isConfiguredResource($canonicalResource)) {
             return $this->inactive();
         }
 

@@ -99,7 +99,14 @@ final class ApiCredentialService
      */
     public function tokenScopes(): array
     {
-        return $this->grantableScopes() + $this->connectionScopes();
+        // Only scopes the personal-token resource admits, so every offered choice can be issued.
+        $resource = $this->credentialResource();
+
+        return array_filter(
+            $this->grantableScopes() + $this->connectionScopes(),
+            static fn (string $scope): bool => OAuthResourceIndicator::scopesAllowedFor($resource, [$scope]),
+            ARRAY_FILTER_USE_KEY,
+        );
     }
 
     /**
@@ -173,12 +180,16 @@ final class ApiCredentialService
             && ! in_array($lifetime, $this->connectionLifetimes(), true)) {
             throw new DomainException('A token that can open a connection must have a shorter lifetime.');
         }
+        if (! OAuthResourceIndicator::scopesAllowedFor($this->credentialResource(), $scopes)) {
+            throw new DomainException('A personal token cannot carry a scope its resource does not admit.');
+        }
         $owner = $this->owners->owner($user);
         $this->ensurePersonalClient();
         $expiresAt = CarbonImmutable::instance(Date::now())->add(new DateInterval($lifetime));
 
         $request = request();
-        $request->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, OAuthResourceIndicator::configuredCanonical());
+        $resource = $this->credentialResource();
+        $request->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $resource);
         $previous = Passport::$personalAccessTokensExpireIn;
         Passport::personalAccessTokensExpireIn($expiresAt);
         try {
@@ -195,7 +206,7 @@ final class ApiCredentialService
             ->whereKey($issued->accessTokenId)
             ->where('user_id', $owner->getAuthIdentifier())
             // The repository persists the canonical form of the configured resource.
-            ->where($this->resourceColumn(), OAuthResourceIndicator::configuredCanonical())
+            ->where($this->resourceColumn(), $resource)
             ->firstOrFail();
 
         return ['id' => (string) $issued->accessTokenId, 'token' => (string) $issued->accessToken, 'expires_at' => $expiresAt->toIso8601String()];
@@ -444,6 +455,17 @@ final class ApiCredentialService
         $column = config('bherila-auth.oauth_server.dynamic_clients.scopes_column', 'scopes');
 
         return is_string($column) && $column !== '' ? $column : 'scopes';
+    }
+
+    /**
+     * The resource personal tokens are bound to: `credentials.resource` names one, otherwise
+     * the default resource. Personal tokens are REST credentials.
+     */
+    private function credentialResource(): string
+    {
+        $name = config('bherila-auth.oauth_server.credentials.resource');
+
+        return OAuthResourceIndicator::resource(is_string($name) && $name !== '' ? $name : null);
     }
 
     private function resourceColumn(): string

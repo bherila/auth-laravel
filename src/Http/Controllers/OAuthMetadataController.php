@@ -2,9 +2,11 @@
 
 namespace BWH\Auth\Http\Controllers;
 
+use BWH\Auth\OAuth\Server\AgentOAuthServer;
 use BWH\Auth\OAuth\Server\OAuthProtectedResource;
 use BWH\Auth\OAuth\Server\OAuthResourceIndicator;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use RuntimeException;
 
 final class OAuthMetadataController
@@ -42,13 +44,15 @@ final class OAuthMetadataController
         return $this->publicJson($metadata);
     }
 
-    public function protectedResource(): JsonResponse
+    public function protectedResource(Request $request): JsonResponse
     {
         if (! $this->enabled()) {
             return $this->notFound();
         }
+        // Each resource's document is routed at that resource's own well-known path.
+        $resource = $request->route()?->defaults[AgentOAuthServer::RESOURCE_ROUTE_DEFAULT] ?? null;
 
-        return OAuthProtectedResource::metadataResponse();
+        return OAuthProtectedResource::metadataResponse(null, is_string($resource) ? $resource : null);
     }
 
     private function enabled(): bool

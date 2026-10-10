@@ -552,6 +552,39 @@ AgentOAuthServer::routes();
 
 Overrides merge recursively, and a list replaces the preset's list outright.
 
+#### Several protected resources (REST and MCP)
+
+RFC 9728 requires a protected-resource document's `resource` to be identical to the identifier the client used, both at the path-inserted well-known URL and when reached from a `WWW-Authenticate` challenge. An MCP endpoint at `/api/v1/mcp` is therefore a resource of its own, not part of `/api/v1`. Declare each endpoint (and each alias, such as `/mcp`) as its own resource:
+
+```php
+'oauth_server' => AgentOAuthServer::config($scopes, [
+    'resources' => [
+        'rest' => ['path' => '/api/v1', 'scopes' => [...$moduleScopes]],
+        'mcp' => ['path' => '/api/v1/mcp', 'scopes' => ['mcp:use', ...$moduleScopes]],
+        'mcp_alias' => ['path' => '/mcp', 'scopes' => ['mcp:use', ...$moduleScopes]],
+    ],
+    'assume_omitted_resource' => 'rest',   // clients that send no `resource` get REST tokens
+    'resource_required_scopes' => ['mcp:use'],
+]),
+```
+
+```php
+Route::middleware([ExpectOAuthResource::class.':rest', 'auth:api'])->group(...);       // /api/v1/...
+Route::post('/api/v1/mcp', ...)->middleware([ExpectOAuthResource::class.':mcp', 'auth:api']);
+Route::post('/mcp', ...)->middleware([ExpectOAuthResource::class.':mcp_alias', 'auth:api']);
+```
+
+- **Documents.** `AgentOAuthServer::routes()` serves one document per resource at its own path-inserted URL (`/.well-known/oauth-protected-resource/api/v1`, `.../api/v1/mcp`, `.../mcp`), each naming exactly that resource and its own `scopes_supported`.
+- **Binding.** An authorization or token request must name one configured resource; naming several is refused (`invalid_target`). An omitted `resource` binds to `assume_omitted_resource`. A token is accepted only on routes expecting its resource: an endpoint and its alias are separate audiences, so a connector authorizes again if it moves between them.
+- **Scope ceilings.** A resource admits only the scopes it lists. A scope may sit under several resources (module scopes on both REST and MCP); the ceiling keeps `mcp:use` off REST tokens and REST-only scopes off MCP tokens.
+- **Challenges.** In the exception handler, `OAuthProtectedResource::unauthenticated($request)` returns a 401 whose `resource_metadata` names the route's own resource, from configuration rather than the request host. Test each endpoint with `assertProtectedResourceChallenge('POST', '/api/v1/mcp', $mcpResource)` from `AssertsAgentOAuthContract`, which follows the challenge as a strict client does.
+- **Personal tokens** bind to `credentials.resource` (a resource name), or the default resource.
+- **Without `resources`**, `resource` is the single resource and nothing changes.
+
+#### Browser-based agents (CORS)
+
+`oauth_server.cors.allowed_origins` lists the origins (or `*`) allowed to call discovery, registration and the token endpoint from a browser. Listed origins get `Access-Control-Allow-Origin` (never credentials) and preflights; any other origin gets no CORS headers, and requests without an `Origin` are unaffected. An MCP endpoint's own origin policy remains the application's.
+
 ### Agent preset operations
 
 - **Prune stale self-registrations daily:** `Schedule::command('bherila-auth:prune-dynamic-clients')->daily();`. The retention window is `oauth_server.dynamic_clients.retention_days`, and `last_used_at_column` must be set for recent use to count.

@@ -81,7 +81,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
 
         if ($resource !== null) {
             $resource = OAuthResourceIndicator::canonicalize($resource);
-            if ($resource === null || $resource !== OAuthResourceIndicator::configuredCanonical()) {
+            if ($resource === null || ! OAuthResourceIndicator::isConfiguredResource($resource)) {
                 throw new RuntimeException('The access-token resource is not configured.');
             }
         }
@@ -93,6 +93,13 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
 
         if ($resource !== $requestResource) {
             throw new RuntimeException('The access-token resource does not match the validated request resource.');
+        }
+        // The last line for a grant whose original scopes are no longer known (a purged access
+        // token): a resource never receives a token with scopes outside its ceiling.
+        if ($resource !== null && ! OAuthResourceIndicator::scopesAllowedFor($resource, $accessTokenEntity->getScopes())) {
+            throw \League\OAuth2\Server\Exception\OAuthServerException::invalidScope(
+                implode(' ', OAuthResourceIndicator::scopeIdentifiers($accessTokenEntity->getScopes())),
+            );
         }
         if (OAuthResourceIndicator::scopesRequireResource($accessTokenEntity->getScopes()) && $resource === null) {
             throw new RuntimeException('A protected resource is required for the requested scope.');
@@ -224,7 +231,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         }
 
         try {
-            $configuredResource = OAuthResourceIndicator::configuredCanonical();
+            OAuthResourceIndicator::resources();
             $issuer = OAuthResourceIndicator::issuer();
         } catch (Throwable) {
             return true;
@@ -241,8 +248,10 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         // explicitly marked the current route with its expected audience.
         if ($expectedResource === null
             || $storedResource === null
-            || $storedResource !== $configuredResource
-            || $storedResource !== $expectedResource) {
+            || ! OAuthResourceIndicator::isConfiguredResource($storedResource)
+            || $storedResource !== $expectedResource
+            // A ceiling tightened after issuance applies to tokens already out, too.
+            || ! OAuthResourceIndicator::scopesAllowedFor($storedResource, $scopes)) {
             return true;
         }
 
@@ -271,7 +280,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         }
 
         $resource = OAuthResourceIndicator::requestResource($request);
-        if ($resource === null || $resource !== OAuthResourceIndicator::configuredCanonical()) {
+        if ($resource === null || ! OAuthResourceIndicator::isConfiguredResource($resource)) {
             throw new RuntimeException('The requested OAuth resource is invalid.');
         }
 

@@ -39,6 +39,15 @@ final class ApiCredentialController extends Controller
                     array_values($credentials->grantableScopes()),
                 ),
                 'token_lifetimes' => $credentials->lifetimes(),
+                // With several resources a personal token is held to its resource's ceiling, so
+                // its choices can be narrower than an OAuth app's; listed only then.
+                ...(is_array(config('bherila-auth.oauth_server.resources')) && config('bherila-auth.oauth_server.resources') !== [] ? [
+                    'token_scopes' => array_map(
+                        static fn (string $id, string $description): array => ['id' => $id, 'description' => $description],
+                        array_keys($credentials->tokenScopes()),
+                        array_values($credentials->tokenScopes()),
+                    ),
+                ] : []),
                 ...($connections ? [
                     // Offered to personal API tokens only, never to OAuth apps.
                     'token_connection_scopes' => array_map(

@@ -31,13 +31,13 @@ final class EnforceOAuthResourceIndicator
         }
 
         if ($request->routeIs('passport.token') && OAuthResourceIndicator::requestNamesResource($request)) {
-            if (! OAuthResourceIndicator::isConfiguredResource(OAuthResourceIndicator::requestResource($request))) {
+            $resource = OAuthResourceIndicator::requestResource($request);
+            if (! OAuthResourceIndicator::isConfiguredResource($resource)) {
                 return $this->invalidResource();
             }
-            $request->attributes->set(
-                OAuthResourceIndicator::REQUEST_ATTRIBUTE,
-                OAuthResourceIndicator::configuredCanonical(),
-            );
+            // The resource this request names; the code or refresh token being exchanged
+            // must have been granted for exactly this one.
+            $request->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, OAuthResourceIndicator::canonicalize($resource));
         }
 
         return $next($request);
@@ -71,18 +71,18 @@ final class EnforceOAuthResourceIndicator
         // An omitted resource stands for the configured one only when the
         // application opted in; otherwise it stays omitted.
         $hasResource = $request->query->has('resource') || OAuthResourceIndicator::assumesOmittedResource();
-        $resource = $request->query->has('resource')
-            ? $request->query('resource')
-            : ($hasResource ? OAuthResourceIndicator::configuredCanonical() : null);
+        $resource = $hasResource ? OAuthResourceIndicator::requestResource($request) : null;
         if (($hasResource && ! OAuthResourceIndicator::isConfiguredResource($resource))
             || (! $hasResource && OAuthResourceIndicator::scopesRequireResource($scopes))) {
             return $this->invalidResource($request);
         }
-        if ($hasResource) {
-            $request->attributes->set(
-                OAuthResourceIndicator::REQUEST_ATTRIBUTE,
-                OAuthResourceIndicator::configuredCanonical(),
-            );
+        // Each resource admits only the scopes it lists, so a credential for one endpoint
+        // cannot carry another's (an MCP connection scope on a REST token, for example).
+        if ($resource !== null && ! OAuthResourceIndicator::scopesAllowedFor($resource, $scopes)) {
+            return $this->invalidScope($request);
+        }
+        if ($resource !== null) {
+            $request->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $resource);
         }
 
         $previousAuthToken = $this->authorizationState->currentApprovalToken();
@@ -103,10 +103,7 @@ final class EnforceOAuthResourceIndicator
         if (is_string($authToken)
             && ($previousAuthToken === null || ! hash_equals($previousAuthToken, $authToken))
             && $resource !== null) {
-            $this->authorizationState->rememberResource(
-                $authToken,
-                OAuthResourceIndicator::configuredCanonical(),
-            );
+            $this->authorizationState->rememberResource($authToken, $resource);
         }
         if ($previousAuthToken !== null
             && ($authToken === null || ! hash_equals($previousAuthToken, $authToken))) {
