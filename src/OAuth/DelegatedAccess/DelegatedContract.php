@@ -3,19 +3,14 @@
 namespace BWH\Auth\OAuth\DelegatedAccess;
 
 /**
- * Validates delegated application access envelopes in every contract version this package speaks.
+ * Validates delegated application access envelopes: contract version 3, the only version.
  *
- * Version 1 describes access as `application_admin` plus per-workspace `read`/`write`. Version 2
- * lets an application advertise its own workspace roles, mark individual memberships editable or
- * not, and accept provisioning of a subject it has not seen (bherila/auth-laravel#42). Version 3
- * adds search on the listings, the `remove` and `receipt` operations, an `operation_id` on every
- * write, and read-only metadata. Version 1 is the default for every method, so an existing caller
- * validates exactly what it did before.
+ * An application advertises its own workspace roles, marks individual memberships editable or not,
+ * and may accept provisioning of a subject it has not seen. Listings take a search query; writes
+ * (`update`, `remove`) carry an `operation_id` the endpoint keeps receipts by; states may carry
+ * read-only metadata.
  *
- * The endpoint serves version 3 only. Versions 1 and 2 remain here so a provider can keep talking
- * to applications that have not moved yet; they are deprecated and removed in the next release.
- *
- * A version 2 application that advertises no workspace roles is account-only: it has accounts, an
+ * An application that advertises no workspace roles is account-only: it has accounts, an
  * application administrator flag and provisioning, and no workspaces. Every access value it sends
  * or accepts carries `workspaces: []`. The shape validators see one message at a time, so that rule
  * is checked against the capabilities response with {@see rolesAreAdvertised()} for access a
@@ -30,12 +25,7 @@ final class DelegatedContract
 
     public const MAX_RESPONSE_BYTES = 262144;
 
-    /** @deprecated Only for a provider talking to an application that has not moved to version 3; removed in the next release. */
-    public const VERSION_1 = 1;
-
-    /** @deprecated Only for a provider talking to an application that has not moved to version 3; removed in the next release. */
-    public const VERSION_2 = 2;
-
+    /** The contract version, and the only one: any other is `unsupported_contract_version`. */
     public const VERSION_3 = 3;
 
     public const MAX_WORKSPACE_ROLES = 16;
@@ -50,13 +40,13 @@ final class DelegatedContract
     /** A write's `operation_id`: chosen by the provider once per user action and kept across retries. */
     public const OPERATION_ID_PATTERN = '/^[A-Za-z0-9_-]{32,64}$/D';
 
-    /** Read-only observations a version 3 state and `subjects` entry may carry: ISO-8601 timestamps or null. */
+    /** Read-only observations a state and a `subjects` entry may carry: ISO-8601 timestamps or null. */
     public const STATE_METADATA = ['provisioned_at', 'first_sign_in_at', 'last_seen_at'];
 
-    /** The operations that change something, each carrying an `operation_id` in version 3. */
+    /** The operations that change something, each carrying an `operation_id`. */
     public const WRITE_OPERATIONS = ['update', 'remove'];
 
-    /** The top-level fields each version 3 operation's answer carries besides the envelope, exactly. */
+    /** The top-level fields each operation's answer carries besides the envelope, exactly. */
     public const ADAPTER_FIELDS = [
         'capabilities' => ['controls'],
         'subjects' => ['subjects', 'next_cursor'],
@@ -66,7 +56,7 @@ final class DelegatedContract
         'remove' => ['subject', 'provisioned', 'revision', 'access', 'allowed_edits'],
     ];
 
-    /** The top-level fields a version 3 answer may add to {@see ADAPTER_FIELDS}. */
+    /** The top-level fields an answer may add to {@see ADAPTER_FIELDS}. */
     public const ADAPTER_OPTIONAL_FIELDS = [
         'read' => self::STATE_METADATA,
         'update' => self::STATE_METADATA,
@@ -74,31 +64,25 @@ final class DelegatedContract
     ];
 
     /**
-     * Validate an operation's input and wrap it in the versioned envelope.
+     * Validate an operation's input and wrap it in the envelope.
      *
      * @param  array<string, mixed>  $input  `operation` plus that operation's fields
      * @return array<string, mixed>
      *
      * @throws DelegatedAccessException `invalid_request` (422), or `unsupported_contract_version` (500)
      */
-    public function request(string $application, array $input, int $version = self::VERSION_1): array
+    public function request(string $application, array $input, int $version = self::VERSION_3): array
     {
         $this->assertSupported($version);
 
         $operation = $input['operation'] ?? null;
         $fields = match ($operation) {
             'capabilities' => ['operation'],
-            'subjects', 'workspaces' => $version === self::VERSION_3
-                ? ['operation', 'cursor', 'limit', 'query']
-                : ['operation', 'cursor', 'limit'],
+            'subjects', 'workspaces' => ['operation', 'cursor', 'limit', 'query'],
             'read' => ['operation', 'subject'],
-            'update' => match ($version) {
-                self::VERSION_3 => ['operation', 'subject', 'expected_revision', 'access', 'display_name', 'operation_id'],
-                self::VERSION_2 => ['operation', 'subject', 'expected_revision', 'access', 'display_name'],
-                default => ['operation', 'subject', 'expected_revision', 'access'],
-            },
-            'remove' => $version === self::VERSION_3 ? ['operation', 'subject', 'expected_revision', 'operation_id'] : [],
-            'receipt' => $version === self::VERSION_3 ? ['operation', 'operation_id'] : [],
+            'update' => ['operation', 'subject', 'expected_revision', 'access', 'display_name', 'operation_id'],
+            'remove' => ['operation', 'subject', 'expected_revision', 'operation_id'],
+            'receipt' => ['operation', 'operation_id'],
             default => [],
         };
         if ($fields === [] || array_diff(array_keys($input), $fields) !== []) {
@@ -113,19 +97,12 @@ final class DelegatedContract
         if (in_array($operation, ['read', 'update', 'remove'], true) && ! $this->boundedString($input['subject'] ?? null, 191)) {
             throw new DelegatedAccessException('invalid_request', 422);
         }
-        // Every version 3 write and receipt names its operation, which is required, never defaulted.
-        if ($version === self::VERSION_3 && in_array($operation, ['update', 'remove', 'receipt'], true)
-            && ! self::validOperationId($input['operation_id'] ?? null)) {
+        // Every write and receipt names its operation, which is required, never defaulted.
+        if (in_array($operation, ['update', 'remove', 'receipt'], true) && ! self::validOperationId($input['operation_id'] ?? null)) {
             throw new DelegatedAccessException('invalid_request', 422);
         }
-        if ($operation === 'update') {
-            $valid = $version === self::VERSION_1
-                ? $this->boundedString($input['expected_revision'] ?? null, 128) && $this->access($input['access'] ?? null)
-                : $this->updateV2($input);
-
-            if (! $valid) {
-                throw new DelegatedAccessException('invalid_request', 422);
-            }
+        if ($operation === 'update' && ! $this->update($input)) {
+            throw new DelegatedAccessException('invalid_request', 422);
         }
         // Removal always compares against a revision: there is no account to provision away.
         if ($operation === 'remove' && ! $this->boundedString($input['expected_revision'] ?? null, 128)) {
@@ -140,14 +117,14 @@ final class DelegatedContract
      * operation's own fields. Pass the target subject for `read`, `update` and `remove`, whose answer
      * must echo it exactly.
      *
-     * A version 3 `receipt` answer is checked for its shape here; {@see receipt()} also checks that it
+     * A `receipt` answer is checked for its shape here; {@see receipt()} also checks that it
      * is about the write it was asked for.
      *
      * @return array<string, mixed>
      *
      * @throws DelegatedAccessException `invalid_response`, or `unsupported_contract_version` (500)
      */
-    public function response(mixed $response, string $application, string $operation, ?string $subject = null, int $version = self::VERSION_1): array
+    public function response(mixed $response, string $application, string $operation, ?string $subject = null, int $version = self::VERSION_3): array
     {
         $this->assertSupported($version);
 
@@ -155,23 +132,12 @@ final class DelegatedContract
             && ($response['application'] ?? null) === $application && ($response['operation'] ?? null) === $operation;
         if ($valid) {
             $valid = match ($operation) {
-                'capabilities' => match ($version) {
-                    self::VERSION_3 => $this->controlsV2($response['controls'] ?? null, true),
-                    self::VERSION_2 => $this->controlsV2($response['controls'] ?? null, false),
-                    default => is_array($response['controls'] ?? null)
-                        && is_bool($response['controls']['application_admin'] ?? null)
-                        && $this->permissions($response['controls']['workspace_permissions'] ?? null),
-                },
-                'subjects', 'workspaces' => $this->page($response, $operation, $version),
-                'read', 'update' => $subject !== null && ($response['subject'] ?? null) === $subject
-                    && match ($version) {
-                        self::VERSION_3 => $this->stateV3($response),
-                        self::VERSION_2 => $this->stateV2($response),
-                        default => $this->state($response),
-                    },
-                'remove' => $version === self::VERSION_3 && $subject !== null && ($response['subject'] ?? null) === $subject
-                    && $this->stateV3($response) && $this->removed($response),
-                'receipt' => $version === self::VERSION_3 && $this->receiptShape($response, $application),
+                'capabilities' => $this->controls($response['controls'] ?? null),
+                'subjects', 'workspaces' => $this->page($response, $operation),
+                'read', 'update' => $subject !== null && ($response['subject'] ?? null) === $subject && $this->state($response),
+                'remove' => $subject !== null && ($response['subject'] ?? null) === $subject
+                    && $this->state($response) && $this->removed($response),
+                'receipt' => $this->receiptShape($response, $application),
                 default => false,
             };
         }
@@ -183,7 +149,7 @@ final class DelegatedContract
     }
 
     /**
-     * Validate a version 3 `receipt` answer for the write it was asked about.
+     * Validate a `receipt` answer for the write it was asked about.
      *
      * A provider asks for a receipt after a write whose outcome it does not know: a 5xx, a timeout or
      * a transport error. `$write` is that write as {@see request()} built it. The answer must have the
@@ -243,7 +209,7 @@ final class DelegatedContract
     }
 
     /**
-     * Wrap an application adapter's answer in the version 3 envelope and validate all of it.
+     * Wrap an application adapter's answer in the envelope and validate all of it.
      *
      * Stricter than {@see response()} on its own: the answer carries exactly the operation's fields
      * (and, for a state, only the optional metadata besides), and page entries exactly an identifier
@@ -262,8 +228,8 @@ final class DelegatedContract
             throw new DelegatedAccessException('invalid_response');
         }
 
-        // Page entries share version 1's validator, which allows extra keys. A subject entry may add
-        // the state metadata, and nothing else.
+        // response() allows extra keys in page entries; an adapter's may carry exactly an identifier
+        // and a label, and a subject entry the state metadata besides.
         if ($operation === 'subjects' || $operation === 'workspaces') {
             $entryKeys = [$operation === 'subjects' ? 'subject' : 'id', 'label'];
             foreach (is_array($fields[$operation]) ? $fields[$operation] : [] as $entry) {
@@ -281,7 +247,7 @@ final class DelegatedContract
     }
 
     /**
-     * The role ids a version 2 `capabilities` response advertised, in its order.
+     * The role ids a `capabilities` response advertised, in its order.
      *
      * @return list<string>
      */
@@ -303,7 +269,7 @@ final class DelegatedContract
     }
 
     /**
-     * Whether a version 2 `capabilities` response describes an account-only application: one that
+     * Whether a `capabilities` response describes an account-only application: one that
      * advertises no workspace roles, so no membership can name a role and every access value it
      * sends or accepts has `workspaces: []`.
      *
@@ -316,7 +282,7 @@ final class DelegatedContract
     }
 
     /**
-     * Whether every membership in a version 2 access value names a role the application advertised.
+     * Whether every membership in an access value names a role the application advertised.
      *
      * The shape validators cannot know the advertised roles, so a provider checks an access value
      * it is about to send, or has received, against the capabilities response it holds. An
@@ -341,15 +307,15 @@ final class DelegatedContract
     }
 
     /**
-     * Whether a validated version 2 or 3 answer is consistent with the application's capabilities.
+     * Whether a validated answer is consistent with the application's capabilities.
      *
      * For a workspace application this is always true: its answers are checked by shape alone, and a
      * read may report a role the application has since retired. For an account-only application a
      * `workspaces` page is empty, and a `read`, `update` or `remove` state reports no memberships and
      * does not offer workspace edits. Any other answer is accepted as it is.
      *
-     * @param  array<string, mixed>  $capabilities  a validated version 2 capabilities response
-     * @param  array<string, mixed>  $response  a validated version 2 response from the same application
+     * @param  array<string, mixed>  $capabilities  a validated capabilities response
+     * @param  array<string, mixed>  $response  a validated response from the same application
      */
     public function fitsCapabilities(array $capabilities, array $response): bool
     {
@@ -367,27 +333,20 @@ final class DelegatedContract
 
     private function assertSupported(int $version): void
     {
-        if (! in_array($version, [self::VERSION_1, self::VERSION_2, self::VERSION_3], true)) {
+        if ($version !== self::VERSION_3) {
             // A deployment configured for a version this package does not implement. Not a refusal
             // of any request: nothing should be sent or accepted until the configuration is fixed.
             throw new DelegatedAccessException('unsupported_contract_version', 500);
         }
     }
 
-    private function permissions(mixed $permissions): bool
-    {
-        return is_array($permissions) && array_is_list($permissions) && count($permissions) <= 2
-            && count(array_unique($permissions, SORT_REGULAR)) === count($permissions)
-            && array_all($permissions, fn ($permission): bool => in_array($permission, ['read', 'write'], true));
-    }
-
     /**
-     * A page of entries, each an identifier and a label. In version 3 a `subjects` entry may also
-     * carry the state metadata, held to the same shape as in a state.
+     * A page of entries, each an identifier and a label. A `subjects` entry may also carry the state
+     * metadata, held to the same shape as in a state.
      *
      * @param  array<string, mixed>  $response
      */
-    private function page(array $response, string $operation, int $version): bool
+    private function page(array $response, string $operation): bool
     {
         $items = $response[$operation] ?? null;
         if (! is_array($items) || ! array_is_list($items) || count($items) > 50
@@ -398,57 +357,21 @@ final class DelegatedContract
         foreach ($items as $item) {
             if (! is_array($item) || ! $this->boundedString($item[$operation === 'subjects' ? 'subject' : 'id'] ?? null, 191)
                 || ! $this->boundedString($item['label'] ?? null, 255)
-                || ($version === self::VERSION_3 && $operation === 'subjects' && ! $this->metadata($item, true))) {
+                || ($operation === 'subjects' && ! $this->metadata($item, true))) {
                 return false;
             }
-        }
-
-        return true;
-    }
-
-    private function state(array $response): bool
-    {
-        if (! is_bool($response['provisioned'] ?? null)
-            || ! is_array($response['allowed_edits'] ?? null)
-            || ! is_bool($response['allowed_edits']['application_admin'] ?? null)
-            || ! is_bool($response['allowed_edits']['workspaces'] ?? null)) {
-            return false;
-        }
-        if (! $response['provisioned']) {
-            return array_key_exists('revision', $response) && $response['revision'] === null
-                && array_key_exists('access', $response) && $response['access'] === null
-                && $response['allowed_edits']['application_admin'] === false && $response['allowed_edits']['workspaces'] === false;
-        }
-
-        return $this->boundedString($response['revision'] ?? null, 128) && $this->access($response['access'] ?? null);
-    }
-
-    private function access(mixed $access): bool
-    {
-        if (! is_array($access) || array_diff(array_keys($access), ['application_admin', 'workspaces']) !== []
-            || ! is_bool($access['application_admin'] ?? null) || ! is_array($access['workspaces'] ?? null)
-            || ! array_is_list($access['workspaces']) || count($access['workspaces']) > 100) {
-            return false;
-        }
-        $ids = [];
-        foreach ($access['workspaces'] as $workspace) {
-            if (! is_array($workspace) || array_diff(array_keys($workspace), ['id', 'permission']) !== []
-                || ! $this->boundedString($workspace['id'] ?? null, 191)
-                || ! in_array($workspace['permission'] ?? null, ['read', 'write'], true)
-                || in_array($workspace['id'], $ids, true)) {
-                return false;
-            }
-            $ids[] = $workspace['id'];
         }
 
         return true;
     }
 
     /**
-     * A version 2 update: a revision to compare against, or null to provision; a display name only
-     * when provisioning; and memberships that name roles.
+     * An update: a revision to compare against, or null to provision; a display name only when
+     * provisioning; and memberships that name roles.
+     *
+     * @param  array<string, mixed>  $input
      */
-    private function updateV2(array $input): bool
+    private function update(array $input): bool
     {
         // A missing revision is not a null one. Provisioning has to be asked for.
         if (! array_key_exists('expected_revision', $input)) {
@@ -463,13 +386,14 @@ final class DelegatedContract
             return false;
         }
 
-        return $this->accessV2($input['access'] ?? null, false);
+        return $this->access($input['access'] ?? null, false);
     }
 
     /**
-     * Version 2 controls; version 3 lets each role carry a `description` as well.
+     * `{application_admin, workspace_roles, provisioning}`; each role `{id, label}` and optionally a
+     * `description`.
      */
-    private function controlsV2(mixed $controls, bool $descriptions): bool
+    private function controls(mixed $controls): bool
     {
         if (! is_array($controls) || ! $this->hasExactKeys($controls, ['application_admin', 'workspace_roles', 'provisioning'])
             || ! is_bool($controls['application_admin']) || ! is_bool($controls['provisioning'])) {
@@ -484,7 +408,7 @@ final class DelegatedContract
 
         $ids = [];
         foreach ($roles as $role) {
-            $keys = $descriptions && is_array($role) && array_key_exists('description', $role) ? ['id', 'label', 'description'] : ['id', 'label'];
+            $keys = is_array($role) && array_key_exists('description', $role) ? ['id', 'label', 'description'] : ['id', 'label'];
             if (! is_array($role) || ! $this->hasExactKeys($role, $keys)
                 || ! $this->boundedString($role['id'], 64) || ! $this->boundedString($role['label'], 255)
                 || (isset($keys[2]) && ! $this->boundedString($role['description'], self::MAX_ROLE_DESCRIPTION_BYTES))
@@ -498,53 +422,41 @@ final class DelegatedContract
     }
 
     /**
-     * A version 2 state. Version 3 adds `allowed_edits.remove`: whether a `remove` by this actor
-     * would succeed now, including as a no-op. Nothing exists to remove from an unprovisioned subject.
+     * A state: whether the subject is provisioned, its revision and access, what this actor may edit,
+     * and optionally read-only metadata. `allowed_edits.remove` says whether a `remove` by this actor
+     * would succeed now, including as a no-op. Nothing exists to edit or remove for an unprovisioned
+     * subject, which may only be offered provisioning, and has no observations.
+     *
+     * @param  array<string, mixed>  $response
      */
-    private function stateV2(array $response, bool $removal = false): bool
+    private function state(array $response): bool
     {
         $edits = $response['allowed_edits'] ?? null;
-        $keys = $removal ? ['application_admin', 'workspaces', 'provision', 'remove'] : ['application_admin', 'workspaces', 'provision'];
         if (! is_bool($response['provisioned'] ?? null)
-            || ! is_array($edits) || ! $this->hasExactKeys($edits, $keys)
+            || ! is_array($edits) || ! $this->hasExactKeys($edits, ['application_admin', 'workspaces', 'provision', 'remove'])
             || ! is_bool($edits['application_admin']) || ! is_bool($edits['workspaces']) || ! is_bool($edits['provision'])
-            || ($removal && ! is_bool($edits['remove']))
+            || ! is_bool($edits['remove'])
             || ! array_key_exists('revision', $response) || ! array_key_exists('access', $response)) {
             return false;
         }
         if (! $response['provisioned']) {
-            // Nothing exists to edit; the only thing that can be offered is creating it.
             return $response['revision'] === null && $response['access'] === null
-                && $edits['application_admin'] === false && $edits['workspaces'] === false
-                && (! $removal || $edits['remove'] === false);
+                && $edits['application_admin'] === false && $edits['workspaces'] === false && $edits['remove'] === false
+                && $this->metadata($response, false);
         }
-
-        return $edits['provision'] === false
-            && $this->boundedString($response['revision'], 128)
-            && $this->accessV2($response['access'], true);
-    }
-
-    /**
-     * A version 3 state: a version 2 state that may also carry read-only metadata. Each observation
-     * is an ISO-8601 timestamp or null, and an account that does not exist has none.
-     *
-     * @param  array<string, mixed>  $response
-     */
-    private function stateV3(array $response): bool
-    {
-        if (! $this->stateV2($response, true)) {
+        if ($edits['provision'] !== false || ! $this->boundedString($response['revision'], 128) || ! $this->access($response['access'], true)) {
             return false;
         }
         // A removal is refused whole when anything in the projection is protected, so a state reporting
         // such a thing cannot offer one. Other refusals (permission, last administrator) are the
         // application's to report as false.
-        if ($response['provisioned'] && $response['allowed_edits']['remove']
+        if ($edits['remove']
             && (($response['access']['application_admin'] && ! $response['allowed_edits']['application_admin'])
                 || array_filter($response['access']['workspaces'], static fn (array $m): bool => $m['editable'] === false) !== [])) {
             return false;
         }
 
-        return $this->metadata($response, $response['provisioned']);
+        return $this->metadata($response, true);
     }
 
     /**
@@ -572,7 +484,7 @@ final class DelegatedContract
      * in the actor's projection, and a further removal offered as the no-op it would be. Memberships
      * outside the projection are not reported, and survive.
      *
-     * @param  array<string, mixed>  $response  a valid version 3 state
+     * @param  array<string, mixed>  $response  a valid state
      */
     private function removed(array $response): bool
     {
@@ -584,8 +496,8 @@ final class DelegatedContract
     /**
      * `{operation_id, status: "known", response_status, response}` or `{operation_id, status: "unknown"}`.
      *
-     * A known receipt holds the application's answer to an `update` or `remove`: a whole version 3
-     * response on 200, or the `{error}` body of a 4xx refusal.
+     * A known receipt holds the application's answer to an `update` or `remove`: a whole response on
+     * 200, or the `{error}` body of a 4xx refusal.
      *
      * @param  array<string, mixed>  $response
      */
@@ -636,10 +548,10 @@ final class DelegatedContract
     }
 
     /**
-     * Version 2 access: memberships name a role, and a response also says whether each is editable.
-     * Role ids are bounded here; whether they were advertised is {@see rolesAreAdvertised()}.
+     * Access: memberships name a role, and a response also says whether each is editable. Role ids
+     * are bounded here; whether they were advertised is {@see rolesAreAdvertised()}.
      */
-    private function accessV2(mixed $access, bool $reported): bool
+    private function access(mixed $access, bool $reported): bool
     {
         if (! is_array($access) || ! $this->hasExactKeys($access, ['application_admin', 'workspaces'])
             || ! is_bool($access['application_admin']) || ! is_array($access['workspaces'])

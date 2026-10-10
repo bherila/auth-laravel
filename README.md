@@ -970,7 +970,7 @@ targets separately; verification does not authorize them, provision users, or
 replace application-owned tenant, last-administrator, revision, or audit rules.
 No ordinary OAuth-token fallback is permitted on the adapter endpoint.
 
-`DelegatedContract::request()` validates operation input and builds its versioned
+`DelegatedContract::request()` validates operation input and builds its
 envelope. `response()` validates an envelope; pass the expected target subject as
 its fourth argument for `read`, `update` and `remove` to enforce exact subject echo.
 Consumers must separately enforce `MAX_REQUEST_BYTES`/`MAX_RESPONSE_BYTES`, JSON
@@ -981,35 +981,32 @@ An unprovisioned response carries null revision/access and no allowed edits.
 `DelegatedAccessException` exposes a generic `outcome` and HTTP `status`; do not
 log assertions or private key material when handling it.
 
-### Contract version 2
+### The contract
 
-> **Deprecated.** The endpoint serves [version 3](#contract-version-3) only. Versions 1 and 2 stay in
-> `DelegatedContract` so a provider can keep talking to an application that has not upgraded yet,
-> and are removed in the next release.
+The contract has one version, 3 (`DelegatedContract::VERSION_3`, the default for `request()` and
+`response()`). Versions 1 and 2 were removed in 0.22.0; the endpoint refuses a request in either as
+`invalid_request` (422), and asking `DelegatedContract` for any version but 3 is a configuration
+error (`unsupported_contract_version`, status 500), not a refusal of any request.
 
-Version 2 lets an application describe its own workspace roles, and lets a provider provision an
-account for a subject the application has not seen yet
-([#42](https://github.com/bherila/auth-laravel/issues/42)). Version 1 is unchanged and stays the
-default: pass the version both sides agreed on as the last argument to `request()` and
-`response()`.
+An application describes its own workspace roles, and a provider may provision an account for a
+subject the application has not seen yet ([#42](https://github.com/bherila/auth-laravel/issues/42)).
 
 - `capabilities.controls` is exactly `{application_admin, workspace_roles, provisioning}`.
-  `workspace_roles` lists up to 16 `{id, label}` entries, ids up to 64 bytes and labels up to 255,
-  most senior first. An empty list makes the application account-only (below).
+  `workspace_roles` lists up to 16 `{id, label}` entries (each may add a `description`), ids up to
+  64 bytes and labels up to 255, most senior first. An empty list makes the application
+  account-only (below).
 - `access.workspaces[]` is `{id, role}` in an update and `{id, role, editable}` in a read or
   update response. A membership reported `editable: false` must be sent back unchanged, and the
   application refuses an update that changes it. `rolesAreAdvertised($capabilities, $access)`
   checks an access value against the roles a capabilities response advertised;
   `advertisedRoleIds()` lists them.
-- `allowed_edits` is exactly `{application_admin, workspaces, provision}`. An unprovisioned response
-  still carries null revision and access and no administrator or workspace edits, but may set
-  `provision: true`. A provisioned response always sets it false.
+- `allowed_edits` is exactly `{application_admin, workspaces, provision, remove}`. An unprovisioned
+  response still carries null revision and access, no administrator or workspace edits and no
+  removal, but may set `provision: true`. A provisioned response always sets it false.
 - An `update` whose `expected_revision` is `null` provisions an unprovisioned subject, and only
   that update may carry `display_name` (up to 255 bytes): contact data for the new account, never
   an identity key. The application still binds the account to the verified issuer and the exact
   subject, and answers 409 when the subject is already provisioned.
-- A version this package does not implement is a configuration error
-  (`unsupported_contract_version`, status 500), not a refusal of any request.
 
 #### Account-only applications
 
@@ -1018,7 +1015,7 @@ account-only: what can be managed is whether a person has an account, through pr
 the application administrator flag.
 
 - Every access value carries `workspaces: []`: an `update` and a provisioning `update` send it, and
-  a `read` or `update` state reports it. A state never offers `allowed_edits.workspaces`. The
+  a `read`, `update` or `remove` state reports it. A state never offers `allowed_edits.workspaces`. The
   application answers `workspaces` with an empty page and refuses an update naming any membership
   (`invalid_request` or `role_not_grantable`).
 - Provisioning sends `application_admin` as the actor chose it. A provider asks for that choice
@@ -1046,12 +1043,10 @@ The empty role list is the signal, rather than a separate flag such as `controls
   mistake is treated as account-only, and every state it reports with a membership fails
   `fitsCapabilities()`, which a provider checks before rendering it.
 
-### Contract version 3
+### Operations, search, removal, metadata and receipts
 
-Version 3 is version 2 plus search, removal, read-only metadata and operation receipts. Everything
-version 2 says about roles, `editable`, `allowed_edits`, provisioning and account-only applications
-still holds. The endpoint serves version 3 only and refuses any other version as `invalid_request`
-(422). Pass `DelegatedContract::VERSION_3` as the last argument to `request()` and `response()`.
+Everything above about roles, `editable`, `allowed_edits`, provisioning and account-only
+applications applies to every operation.
 
 | Operation | Request fields besides `operation` | Answer fields besides the envelope |
 |---|---|---|
@@ -1063,8 +1058,8 @@ still holds. The endpoint serves version 3 only and refuses any other version as
 | `remove` | `subject`, `expected_revision`, `operation_id` | a state |
 | `receipt` | `operation_id` | `operation_id`, `status`, and when known `response_status`, `response` |
 
-A state is `subject`, `provisioned`, `revision`, `access`, `allowed_edits` as in version 2,
-optionally with the metadata below. `allowed_edits` gains a required boolean `remove`: whether a
+A state is `subject`, `provisioned`, `revision`, `access`, `allowed_edits`, optionally with the
+metadata below. `allowed_edits.remove` is a required boolean: whether a
 `remove` by this actor would succeed now, a no-op included. It is false whenever the removal would
 be refused (a protected membership, an administrator flag the actor may not change, the
 last-administrator rule, no permission), and always false for an unprovisioned subject. The
@@ -1219,7 +1214,7 @@ outcome and status. An answer outside the contract is reported and becomes `inte
 never sent. Until `DELEGATED_ACCESS_WRITES_ENABLED` is set, `update` and `remove` are refused with
 `not_authorized` (403) after verification and before the adapter, so an application can stop
 accepting changes without touching the provider. Writes go through the receipts described under
-[contract version 3](#contract-version-3), so the adapter never sees the same `operation_id` twice;
+[contract version 3](#operations-search-removal-metadata-and-receipts), so the adapter never sees the same `operation_id` twice;
 `receipt` is answered by the package and never reaches the adapter.
 
 While the adapter runs, the container holds a `DelegatedRequestContext` with the verified
@@ -1297,7 +1292,7 @@ The provider holds no authority of its own; whatever the adapter does not enforc
 8. **A search is the unfiltered listing, filtered.** It finds nothing the actor could not list, and
    says nothing about the rest: no entry, no cursor to a page that turns out empty.
 9. **A removal is all of the actor's projection or nothing.** It follows
-   [the removal rules](#contract-version-3): unseen memberships and the account survive, anything
+   [the removal rules](#operations-search-removal-metadata-and-receipts): unseen memberships and the account survive, anything
    protected refuses the whole removal, and removing nothing keeps the revision.
 
 `BWH\Auth\Testing\AssertsDelegatedAccessAdapter` checks rules 1 to 9 against an application's real
