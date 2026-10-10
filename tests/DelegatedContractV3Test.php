@@ -206,10 +206,26 @@ class DelegatedContractV3Test extends TestCase
             'an undefined field' => [[...$fields, 'email' => 'person@example.test'], 'read'],
             'metadata on a page' => [['subjects' => [], 'next_cursor' => null, 'last_seen_at' => null], 'subjects'],
             'metadata on capabilities' => [['controls' => $this->capabilities()['controls'], 'provisioned_at' => null], 'capabilities'],
-            'metadata in a page entry' => [['subjects' => [['subject' => 's', 'label' => 'S', 'last_seen_at' => null]], 'next_cursor' => null], 'subjects'],
+            'metadata in a workspace entry' => [['workspaces' => [['id' => 'w1', 'label' => 'W', 'last_seen_at' => null]], 'next_cursor' => null], 'workspaces'],
+            'an undefined field in a subject entry' => [['subjects' => [['subject' => 's', 'label' => 'S', 'email' => 'person@example.test']], 'next_cursor' => null], 'subjects'],
             'a receipt, which is the endpoint\'s own' => [['operation_id' => self::OPERATION, 'status' => 'unknown'], 'receipt'],
         ] as $label => [$answerFields, $operation]) {
             $this->refused(fn () => $contract->adapterAnswer($answerFields, self::APP, $operation, $operation === 'read' ? 'subject-example' : null), 503, $label);
+        }
+    }
+
+    public function test_a_subject_entry_may_carry_the_same_metadata_held_to_the_same_shape(): void
+    {
+        $contract = new DelegatedContract;
+        $entry = ['subject' => 's1', 'label' => 'Example Person', 'provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => null, 'last_seen_at' => '2026-10-09T17:45:00+02:00'];
+
+        $page = $contract->adapterAnswer(['subjects' => [$entry, ['subject' => 's2', 'label' => 'Other']], 'next_cursor' => null], self::APP, 'subjects', null);
+        $this->assertSame($entry, $page['subjects'][0]);
+
+        foreach (['2026-10-10', '2026-02-30T12:00:00Z', 1760097600, ''] as $value) {
+            $bad = ['contract_version' => 3, 'application' => self::APP, 'operation' => 'subjects', 'subjects' => [[...$entry, 'last_seen_at' => $value]], 'next_cursor' => null];
+            $this->refused(fn () => $contract->response($bad, self::APP, 'subjects', null, 3), 503, 'entry metadata '.var_export($value, true));
+            $this->refused(fn () => $contract->adapterAnswer(array_slice($bad, 3, null, true), self::APP, 'subjects', null), 503, 'adapter entry metadata '.var_export($value, true));
         }
     }
 

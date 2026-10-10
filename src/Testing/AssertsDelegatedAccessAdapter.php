@@ -369,22 +369,41 @@ trait AssertsDelegatedAccessAdapter
 
     /**
      * Metadata is an observation of the past: each timestamp present is no later than now, and the
-     * last time a person was seen is not before their first sign-in. The contract has already held
-     * each to its shape. Pass a target whose metadata the application knows, to exercise it.
+     * last time a person was seen is not before their first sign-in. That holds for the target's
+     * state and for every entry in the actor's `subjects` listing. The contract has already held each
+     * to its shape. Pass a target whose metadata the application knows, to exercise it.
      */
     protected function assertDelegatedMetadataIsWellFormed(string $actor, string $target): void
     {
-        $state = $this->delegatedAccessRead($actor, $target);
+        $this->assertDelegatedObservations($this->delegatedAccessRead($actor, $target), "{$target}'s state");
+
+        $cursor = null;
+        $pages = 0;
+        do {
+            $page = $this->delegatedAccessCall($actor, ['operation' => 'subjects', 'limit' => 50] + ($cursor === null ? [] : ['cursor' => $cursor]));
+            foreach ($page['subjects'] as $entry) {
+                $this->assertDelegatedObservations($entry, "the listing entry for {$entry['subject']}");
+            }
+            $cursor = $page['next_cursor'];
+            $this->assertLessThan(1000, ++$pages, 'A subjects listing ends');
+        } while ($cursor !== null);
+    }
+
+    /**
+     * @param  array<string, mixed>  $value  a state or a `subjects` entry
+     */
+    private function assertDelegatedObservations(array $value, string $where): void
+    {
         $now = new DateTimeImmutable('+5 minutes');
         $times = [];
         foreach (DelegatedContract::STATE_METADATA as $field) {
-            if (is_string($state[$field] ?? null)) {
-                $times[$field] = new DateTimeImmutable($state[$field]);
-                $this->assertLessThanOrEqual($now, $times[$field], "{$field} is an observation, so it is not in the future");
+            if (is_string($value[$field] ?? null)) {
+                $times[$field] = new DateTimeImmutable($value[$field]);
+                $this->assertLessThanOrEqual($now, $times[$field], "{$field} in {$where} is an observation, so it is not in the future");
             }
         }
         if (isset($times['first_sign_in_at'], $times['last_seen_at'])) {
-            $this->assertGreaterThanOrEqual($times['first_sign_in_at'], $times['last_seen_at'], 'last_seen_at is not before first_sign_in_at');
+            $this->assertGreaterThanOrEqual($times['first_sign_in_at'], $times['last_seen_at'], "last_seen_at in {$where} is not before first_sign_in_at");
         }
     }
 

@@ -1056,7 +1056,7 @@ still holds. The endpoint serves version 3 only and refuses any other version as
 | Operation | Request fields besides `operation` | Answer fields besides the envelope |
 |---|---|---|
 | `capabilities` | none | `controls` |
-| `subjects` | `limit`, `cursor`, `query` (each optional) | `subjects`, `next_cursor` |
+| `subjects` | `limit`, `cursor`, `query` (each optional) | `subjects` (entries may add metadata), `next_cursor` |
 | `workspaces` | `limit`, `cursor`, `query` (each optional) | `workspaces`, `next_cursor` |
 | `read` | `subject` | a state |
 | `update` | `subject`, `expected_revision`, `access`, `display_name` (provisioning only), `operation_id` | a state |
@@ -1080,7 +1080,8 @@ to its search, and `after()` refuses it with another one (`invalid_cursor`, 422)
 - a state may carry `provisioned_at`, `first_sign_in_at` and `last_seen_at`, each an ISO-8601 date
   and time with seconds and an explicit offset (`2026-10-10T12:00:00Z`, `…+02:00`, fractions
   allowed) or `null`, where the application knows them. An unprovisioned state carries none, or
-  only `null`s;
+  only `null`s. Each `subjects[]` listing entry may carry the same three fields, held to the same
+  shape, so a provider can show them in a list without reading every subject;
 - each `capabilities.controls.workspace_roles[]` entry may carry a `description` (1 to 1024 bytes).
   Omit it rather than send `null`.
 

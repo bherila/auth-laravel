@@ -72,6 +72,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertDelegatedSearchStaysInScope('manager', 'subjects', 'example.test', 'Outsider');
         $this->assertDelegatedSearchStaysInScope('manager', 'workspaces', 'Workspace', 'w3');
         $this->assertDelegatedMetadataIsWellFormed('manager', 'removable');
+        $this->assertSame('2026-10-09T17:45:00Z', $this->delegatedAccessCall('manager', ['operation' => 'subjects', 'query' => 'Removable'])['subjects'][0]['last_seen_at']);
         $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'target');
         $this->assertDelegatedReceiptsReplayThroughTheEndpoint('manager', 'target');
         $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'removable');
@@ -153,6 +154,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'a removal deleting the account' => ['remove_the_account', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'an empty removal changing the revision' => ['bump_revision_on_an_empty_removal', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'metadata from the future' => ['metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'removable']],
+            'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
         ];
     }
 

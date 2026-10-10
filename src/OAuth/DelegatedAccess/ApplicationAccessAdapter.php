@@ -20,7 +20,7 @@ namespace BWH\Auth\OAuth\DelegatedAccess;
  *  - `subjects`, `workspaces` → a page. The payload may carry `query`: match it case-insensitively
  *    as a substring of the label (and of the email, where the application stores one), only within
  *    what the actor may see, with the same cursor pagination ({@see DelegatedCursor}, passing the
- *    query to `encode()`).
+ *    query to `encode()`). A `subjects` entry may add the same metadata as a state.
  *  - `read`, `update` → a state. A state may add `provisioned_at`, `first_sign_in_at` and
  *    `last_seen_at`: ISO-8601 timestamps or null, observations only, never part of the revision.
  *  - `remove` → the state after removing every membership and the administrator flag in the actor's

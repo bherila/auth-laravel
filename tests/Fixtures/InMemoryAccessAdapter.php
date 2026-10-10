@@ -70,6 +70,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'keep_application_admin_on_removal' => false,
         'bump_revision_on_an_empty_removal' => false,
         'metadata_from_the_future' => false,
+        'listing_metadata_from_the_future' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -113,7 +114,11 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         foreach (array_keys($this->memberships) as $key => $subject) {
             $visible = array_intersect(array_keys($this->memberships[$subject]), $managed) !== [];
             $label = $this->labels[$subject] ?? $subject;
-            $entries[$key + 1] = ['subject' => $subject, 'label' => $label, 'visible' => $visible, 'matches' => [$label, $this->emails[$subject] ?? '']];
+            $metadata = $this->metadata[$subject] ?? [];
+            if ($this->broken['listing_metadata_from_the_future']) {
+                $metadata['last_seen_at'] = gmdate('Y-m-d\TH:i:s\Z', time() + 86400);
+            }
+            $entries[$key + 1] = ['subject' => $subject, 'label' => $label, ...$metadata, 'visible' => $visible, 'matches' => [$label, $this->emails[$subject] ?? '']];
         }
 
         return $this->page($actor, 'subjects', $entries, $payload);

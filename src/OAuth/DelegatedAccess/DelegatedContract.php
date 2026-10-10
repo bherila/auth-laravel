@@ -50,7 +50,7 @@ final class DelegatedContract
     /** A write's `operation_id`: chosen by the provider once per user action and kept across retries. */
     public const OPERATION_ID_PATTERN = '/^[A-Za-z0-9_-]{32,64}$/D';
 
-    /** Read-only observations a version 3 subject state may carry: ISO-8601 timestamps or null. */
+    /** Read-only observations a version 3 state and `subjects` entry may carry: ISO-8601 timestamps or null. */
     public const STATE_METADATA = ['provisioned_at', 'first_sign_in_at', 'last_seen_at'];
 
     /** The operations that change something, each carrying an `operation_id` in version 3. */
@@ -162,7 +162,7 @@ final class DelegatedContract
                         && is_bool($response['controls']['application_admin'] ?? null)
                         && $this->permissions($response['controls']['workspace_permissions'] ?? null),
                 },
-                'subjects', 'workspaces' => $this->page($response, $operation),
+                'subjects', 'workspaces' => $this->page($response, $operation, $version),
                 'read', 'update' => $subject !== null && ($response['subject'] ?? null) === $subject
                     && match ($version) {
                         self::VERSION_3 => $this->stateV3($response),
@@ -262,11 +262,14 @@ final class DelegatedContract
             throw new DelegatedAccessException('invalid_response');
         }
 
-        // Page entries share version 1's validator, which allows extra keys.
+        // Page entries share version 1's validator, which allows extra keys. A subject entry may add
+        // the state metadata, and nothing else.
         if ($operation === 'subjects' || $operation === 'workspaces') {
             $entryKeys = [$operation === 'subjects' ? 'subject' : 'id', 'label'];
             foreach (is_array($fields[$operation]) ? $fields[$operation] : [] as $entry) {
-                if (! is_array($entry) || ! $this->hasExactKeys($entry, $entryKeys)) {
+                $optional = $operation === 'subjects' && is_array($entry)
+                    ? array_intersect(array_map('strval', array_keys($entry)), self::STATE_METADATA) : [];
+                if (! is_array($entry) || ! $this->hasExactKeys($entry, [...$entryKeys, ...$optional])) {
                     throw new DelegatedAccessException('invalid_response');
                 }
             }
@@ -378,7 +381,13 @@ final class DelegatedContract
             && array_all($permissions, fn ($permission): bool => in_array($permission, ['read', 'write'], true));
     }
 
-    private function page(array $response, string $operation): bool
+    /**
+     * A page of entries, each an identifier and a label. In version 3 a `subjects` entry may also
+     * carry the state metadata, held to the same shape as in a state.
+     *
+     * @param  array<string, mixed>  $response
+     */
+    private function page(array $response, string $operation, int $version): bool
     {
         $items = $response[$operation] ?? null;
         if (! is_array($items) || ! array_is_list($items) || count($items) > 50
@@ -388,7 +397,8 @@ final class DelegatedContract
         }
         foreach ($items as $item) {
             if (! is_array($item) || ! $this->boundedString($item[$operation === 'subjects' ? 'subject' : 'id'] ?? null, 191)
-                || ! $this->boundedString($item['label'] ?? null, 255)) {
+                || ! $this->boundedString($item['label'] ?? null, 255)
+                || ($version === self::VERSION_3 && $operation === 'subjects' && ! $this->metadata($item, true))) {
                 return false;
             }
         }
@@ -519,11 +529,22 @@ final class DelegatedContract
             return false;
         }
 
+        return $this->metadata($response, $response['provisioned']);
+    }
+
+    /**
+     * Each metadata field present is null or an ISO-8601 timestamp; an account that does not exist
+     * has no observations at all.
+     *
+     * @param  array<array-key, mixed>  $value  a state or a `subjects` entry
+     */
+    private function metadata(array $value, bool $exists): bool
+    {
         foreach (self::STATE_METADATA as $field) {
-            if (! array_key_exists($field, $response) || $response[$field] === null) {
+            if (! array_key_exists($field, $value) || $value[$field] === null) {
                 continue;
             }
-            if (! $response['provisioned'] || ! self::timestamp($response[$field])) {
+            if (! $exists || ! self::timestamp($value[$field])) {
                 return false;
             }
         }
