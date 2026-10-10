@@ -3,6 +3,7 @@
 namespace BWH\Auth\Tests\Feature;
 
 use BWH\Auth\OAuth\DelegatedAccess\ApplicationAccessAdapter;
+use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
 use BWH\Auth\Testing\AssertsDelegatedAccessAdapter;
 use BWH\Auth\Tests\Fixtures\AccountOnlyAccessAdapter;
 use BWH\Auth\Tests\TestCase;
@@ -19,13 +20,29 @@ class AccountOnlyAdapterConformanceTest extends TestCase
 
     private AccountOnlyAccessAdapter $adapter;
 
+    protected function defineEnvironment($app): void
+    {
+        parent::defineEnvironment($app);
+
+        // Bound before the provider boots, as an application binds it, so the endpoint route exists.
+        $app->bind(ApplicationAccessAdapter::class, fn (): ApplicationAccessAdapter => $this->adapter);
+    }
+
+    protected function defineDatabaseMigrations(): void
+    {
+        parent::defineDatabaseMigrations();
+        $this->loadMigrationsFrom(__DIR__.'/../../database/delegated-access-migrations');
+    }
+
     protected function setUp(): void
     {
-        parent::setUp();
         $this->adapter = new AccountOnlyAccessAdapter;
-        // manager and other are administrators; target is an ordinary account.
-        $this->adapter->accounts = ['manager' => true, 'other' => true, 'target' => false];
-        $this->app->instance(ApplicationAccessAdapter::class, $this->adapter);
+        // manager and other are administrators; target is an ordinary account; service accounts are
+        // never shown to anybody.
+        $this->adapter->accounts = ['manager' => true, 'other' => true, 'target' => false, 'service-target' => false];
+        $this->adapter->metadata['target'] = ['provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => null, 'last_seen_at' => null];
+
+        parent::setUp();
     }
 
     protected function delegatedAccessTruth(string $subject): array
@@ -50,9 +67,25 @@ class AccountOnlyAdapterConformanceTest extends TestCase
         $this->assertDelegatedStaleRevisionRefused('manager', 'target');
         $this->assertDelegatedUnadvertisedRoleRefused('manager', 'target');
         $this->assertDelegatedUpdateKeepsUnseenMemberships('manager', 'target');
+        $this->assertDelegatedSearchStaysInScope('manager', 'subjects', 'target', 'service');
+        $this->assertDelegatedSearchStaysInScope('manager', 'workspaces', 'anything', 'nothing');
+        $this->assertDelegatedMetadataIsWellFormed('manager', 'target');
+        $this->assertDelegatedReceiptsReplayThroughTheEndpoint('manager', 'target');
+        // Removal is refused for the actor themselves, and is a no-op for an ordinary account.
+        $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'manager');
+        $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'target');
 
         // Every assertion ran to the end and changed nothing.
-        $this->assertSame(['manager' => true, 'other' => true, 'target' => false], $this->adapter->accounts);
+        $this->assertSame(['manager' => true, 'other' => true, 'target' => false, 'service-target' => false], $this->adapter->accounts);
+
+        // Removing another administrator clears the flag and keeps the account.
+        $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'other');
+        $this->assertSame(['manager' => true, 'other' => false, 'target' => false, 'service-target' => false], $this->adapter->accounts);
+
+        // Now manager is the last administrator, which nobody may remove.
+        $this->assertFalse($this->delegatedAccessRead('manager', 'manager')['allowed_edits']['application_admin']);
+        $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'manager');
+        $this->assertTrue($this->adapter->accounts['manager']);
     }
 
     public function test_the_last_administrator_cannot_be_demoted(): void
@@ -71,7 +104,7 @@ class AccountOnlyAdapterConformanceTest extends TestCase
         $this->assertTrue($unprovisioned['allowed_edits']['provision']);
 
         $created = $this->delegatedAccessCall('manager', ['operation' => 'update', 'subject' => 'newcomer', 'expected_revision' => null,
-            'display_name' => 'Example Newcomer', 'access' => ['application_admin' => true, 'workspaces' => []]]);
+            'display_name' => 'Example Newcomer', 'access' => ['application_admin' => true, 'workspaces' => []], 'operation_id' => DelegatedContract::operationId()]);
         $this->assertSame(['application_admin' => true, 'workspaces' => []], $created['access']);
         $this->assertTrue($this->adapter->accounts['newcomer']);
     }
@@ -87,6 +120,10 @@ class AccountOnlyAdapterConformanceTest extends TestCase
             'self-demotion allowed' => ['allow_self_demotion', 'assertDelegatedApplicationAdminFollowsAllowedEdits', ['manager', 'manager']],
             'a read reporting a membership' => ['report_workspaces', 'assertDelegatedStaleRevisionRefused', ['manager', 'target']],
             'revisions not compared' => ['ignore_revision', 'assertDelegatedStaleRevisionRefused', ['manager', 'target']],
+            'a search showing hidden accounts' => ['search_service_accounts', 'assertDelegatedSearchStaysInScope', ['manager', 'subjects', 'target', 'service']],
+            'self-removal allowed' => ['allow_self_removal', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'manager']],
+            'a removal deleting the account' => ['remove_the_account', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'other']],
+            'revisions not compared on removal' => ['ignore_revision', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'other']],
         ];
     }
 

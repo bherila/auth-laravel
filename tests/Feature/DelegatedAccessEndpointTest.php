@@ -123,7 +123,12 @@ class DelegatedAccessEndpointTest extends TestCase
         parent::tearDown();
     }
 
-    /** @internal Called by the bound adapter. */
+    /**
+     * @internal Called by the bound adapter.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
     public function answer(string $actorSubject, array $payload): array
     {
         $this->calls[] = [$actorSubject, $payload];
@@ -664,7 +669,10 @@ class DelegatedAccessEndpointTest extends TestCase
         return (string) json_encode(['contract_version' => 3, 'application' => self::APPLICATION, ...$input], JSON_UNESCAPED_SLASHES);
     }
 
-    /** @param array<string, mixed> $input */
+    /**
+     * @param  array<string, mixed>  $input
+     * @return TestResponse<\Symfony\Component\HttpFoundation\Response>
+     */
     private function send(array $input, string $subject = 'actor-subject', ?string $token = null, ?string $body = null): TestResponse
     {
         $body ??= $this->body($input);
