@@ -91,7 +91,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         if (! $bound) {
             // A refresh request cannot add an audience that was absent from the
             // authorization-code grant.
-            return $hasRequestedResource || $this->isApplicationRefreshTokenRevoked($tokenId);
+            return $hasRequestedResource || $this->providerIdentityRevoked($refreshToken) || $this->isApplicationRefreshTokenRevoked($tokenId);
         }
 
         if ($storedResource === null
@@ -105,7 +105,27 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
 
         $request?->attributes->set(OAuthResourceIndicator::REQUEST_ATTRIBUTE, $storedResource);
 
-        return $this->isApplicationRefreshTokenRevoked($tokenId);
+        return $this->providerIdentityRevoked($refreshToken) || $this->isApplicationRefreshTokenRevoked($tokenId);
+    }
+
+    /**
+     * Renewal checks the person freshly against the stamp of the access token this refresh
+     * token belongs to, and hands that stamp to the new token. An unavailable provider
+     * throws before the grant revokes anything, so the refresh token is not consumed.
+     */
+    private function providerIdentityRevoked(\Illuminate\Database\Eloquent\Model $refreshToken): bool
+    {
+        $accessToken = Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
+        $tokens = app(ProviderIdentityTokens::class);
+        if ($accessToken === null) {
+            return ProviderIdentityTokens::enabled();
+        }
+        if ($tokens->revoked($accessToken, fresh: true)) {
+            return true;
+        }
+        $tokens->carry($this->request(), $accessToken);
+
+        return false;
     }
 
     /** Application-owned account, grant, or credential-version revocation policy. */

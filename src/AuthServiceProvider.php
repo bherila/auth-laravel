@@ -146,6 +146,14 @@ class AuthServiceProvider extends ServiceProvider
             }
         }
 
+        if ($this->oauthServerEnabled() && \BWH\Auth\OAuth\Server\AgentOAuthServer::active()) {
+            $this->app->booted(function (): void {
+                Route::getRoutes()->getByName('passport.token.refresh')?->middleware(
+                    \BWH\Auth\Http\Middleware\RefuseTransientTokens::class,
+                );
+            });
+        }
+
         if ($this->oauthServerEnabled()
             && config('bherila-auth.oauth_server.authorization_response_issuer.enabled', false)) {
             $this->app->booted(function (): void {

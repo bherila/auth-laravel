@@ -109,6 +109,22 @@ final readonly class ProviderSession
             credentialVersion: $state['generation']);
     }
 
+    /**
+     * The login generation remembered for this binding, without checking the provider.
+     * For recording on credentials issued while enforcement is off; never an authorization.
+     */
+    public function baseline(Request $request, string $provider, string $subject): ?int
+    {
+        $state = $request->hasSession() ? $request->session()->get(self::KEY) : null;
+        if (! is_array($state) || ($state['context'] ?? null) !== $this->client->context()
+            || ($state['provider'] ?? null) !== $provider || ($state['subject'] ?? null) !== $subject
+            || ! is_int($state['generation'] ?? null) || $state['generation'] < 0) {
+            return null;
+        }
+
+        return $state['generation'];
+    }
+
     private function expire(Request $request): never
     {
         $request->session()->forget(self::KEY);
