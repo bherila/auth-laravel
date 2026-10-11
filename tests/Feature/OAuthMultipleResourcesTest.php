@@ -188,6 +188,11 @@ final class OAuthMultipleResourcesTest extends TestCase
         $this->bearer('POST', '/api/v1/mcp', $refreshed['access_token'])->assertOk();
     }
 
+    public function test_the_conformance_assertion_covers_an_omitted_resource_connection(): void
+    {
+        $this->assertOmittedResourceConnection($this->user, 'mcp:use items:read', 'POST', '/api/v1/mcp');
+    }
+
     public function test_an_endpoint_and_its_alias_are_separate_audiences(): void
     {
         $mcp = $this->connect('mcp:use items:read', self::APP.'/api/v1/mcp')['tokens']['access_token'];

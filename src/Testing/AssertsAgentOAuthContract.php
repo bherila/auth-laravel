@@ -65,6 +65,42 @@ trait AssertsAgentOAuthContract
     }
 
     /**
+     * Connect as a client that never sends RFC 8707 parameters: no `resource` at authorization,
+     * exchange or refresh. Asserts the token reaches `$protectedPath` (the endpoint `$scope`
+     * belongs to) and that refreshing keeps it there. Run it with the MCP connection scope and
+     * the MCP endpoint whenever `assume_omitted_resource` is set alongside several resources,
+     * and especially if the application overrides the package's token repositories.
+     *
+     * @return array<string, mixed> the refreshed token response
+     */
+    protected function assertOmittedResourceConnection(Authenticatable $user, string $scope, string $method, string $protectedPath, string $redirectUri = 'http://127.0.0.1:3210/callback'): array
+    {
+        $clientId = (string) $this->postJson('/oauth/register', [
+            'client_name' => 'Omitted-resource contract client',
+            'redirect_uris' => [$redirectUri],
+            'grant_types' => ['authorization_code', 'refresh_token'],
+            'response_types' => ['code'],
+            'token_endpoint_auth_method' => 'none',
+            'scope' => $scope,
+        ])->assertCreated()->json('client_id');
+
+        $tokens = $this->agentOAuthCodeFlow($user, $clientId, $scope, $redirectUri)->assertOk()->json();
+        $this->app['auth']->forgetGuards();
+        $this->json($method, $protectedPath, [], ['Authorization' => 'Bearer '.$tokens['access_token']])->assertSuccessful();
+
+        $this->app['auth']->forgetGuards();
+        $refreshed = $this->post('/oauth/token', [
+            'grant_type' => 'refresh_token',
+            'client_id' => $clientId,
+            'refresh_token' => $tokens['refresh_token'],
+        ], ['Accept' => 'application/json'])->assertOk()->json();
+        $this->app['auth']->forgetGuards();
+        $this->json($method, $protectedPath, [], ['Authorization' => 'Bearer '.$refreshed['access_token']])->assertSuccessful();
+
+        return $refreshed;
+    }
+
+    /**
      * Follow a protected endpoint's own bearer challenge to its metadata, as a strict
      * RFC 9728 client does, and assert the document describes exactly that endpoint's
      * resource. Run it for every endpoint and alias an agent can be pointed at.

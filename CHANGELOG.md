@@ -15,6 +15,11 @@ the first entry here is in the git history.
   before its aliases).
 - Under the same assumption, an exchange or refresh that omits `resource` is for the resource its grant
   was made for, instead of the default. Strict mode (no assumption) still requires the parameter.
+- **Upgrade note:** an application whose own code or refresh-token repositories check the requested
+  resource must call `OAuthResourceIndicator::exchangeResource($request, $storedResource)` instead of
+  `requestResource($request)`; otherwise the authorization binds to the right resource but the exchange
+  fails with `invalid_grant`. `AssertsAgentOAuthContract::assertOmittedResourceConnection()` tests the
+  whole flow.
 
 ## v0.23.0 - 2026-10-10
 
