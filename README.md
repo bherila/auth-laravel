@@ -1201,6 +1201,12 @@ provider can show it before the actor confirms:
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
   the cascade (see **Removal** below for what it may take); the revision is what keeps the
   confirmation honest.
+- **Per membership, never summed.** A provider shows each membership's effects with that membership,
+  for a `remove` and for an `update` dropping it alike. It does not add them up across memberships:
+  a kind is unique only within one membership, and two memberships may count overlapping records or
+  label the same kind differently. An effect that happens only when several memberships go together
+  (the last of a person's assignments for one client, say) belongs to none of them, so the
+  application does not offer those memberships as editable.
 - **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
   exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
   disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
