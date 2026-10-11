@@ -45,11 +45,19 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         // Only in a workspace the manager does not manage.
         $this->adapter->memberships['outsider'] = ['w3' => 'member'];
         // Removable by the manager, with a membership in w4, which the manager may come to manage.
-        $this->adapter->memberships['colleague'] = ['w1' => 'member', 'w2' => 'member', 'w4' => 'member'];
+        $this->adapter->memberships['colleague'] = ['w1' => 'member', 'w4' => 'member'];
+        // Each fresh write has its own target, with one disclosing membership and unseen records.
+        foreach (['remove', 'drop', 'role'] as $write) {
+            $this->adapter->memberships['write-'.$write] = ['w1' => 'member', 'w3' => 'member'];
+            $this->adapter->assignments['write-'.$write] = ['w1' => ['p1', 'p2'], 'w3' => ['p9']];
+        }
+        // A drop must preserve exact records even when retained effects keep the same count.
+        $this->adapter->memberships['retained'] = ['w1' => 'member', 'w2' => 'member', 'w3' => 'member'];
+        $this->adapter->assignments['retained'] = ['w1' => ['p1', 'p2'], 'w2' => ['p5'], 'w3' => ['p9']];
         $this->adapter->labels = ['target' => 'Example Target', 'removable' => 'Removable Person', 'outsider' => 'Example Outsider'];
         $this->adapter->emails = ['removable' => 'removable@example.test'];
         $this->adapter->assignments['target'] = ['w1' => ['p1', 'p2']];
-        $this->adapter->assignments['colleague'] = ['w1' => ['p1', 'p2'], 'w2' => ['p5'], 'w4' => ['p9']];
+        $this->adapter->assignments['colleague'] = ['w1' => ['p1', 'p2'], 'w4' => ['p9']];
         $this->adapter->removalNotice = 'Client portal access is unchanged.';
         $this->adapter->metadata['removable'] = ['provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => '2026-09-02T08:15:00+02:00', 'last_seen_at' => '2026-10-09T17:45:00Z'];
 
@@ -92,7 +100,12 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertSame('2026-10-09T17:45:00Z', $this->delegatedAccessCall('manager', ['operation' => 'subjects', 'query' => 'Removable'])['subjects'][0]['last_seen_at']);
         $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'target');
         $this->assertDelegatedReceiptsReplayThroughTheEndpoint('manager', 'target');
-        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'colleague', $this->swapAnAssignment(...), fn (): array => $this->adapter->assignments['colleague'] ?? [], ['w4' => ['p9']]);
+        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'colleague', $this->swapAnAssignment(...), fn (): array => $this->adapter->assignments['colleague'] ?? []);
+        foreach (['remove', 'drop', 'role'] as $write) {
+            $target = 'write-'.$write;
+            $expected = $write === 'role' ? $this->adapter->assignments[$target] : ['w3' => ['p9']];
+            $this->assertDelegatedWriteTakesExactlyWhatItDisclosed('manager', $target, $write, fn (): array => $this->adapter->assignments[$target] ?? [], $expected);
+        }
         $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'removable');
         $this->assertDelegatedUpdateKeepsUnseenMemberships('manager', 'target');
 
@@ -101,13 +114,59 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertEquals(['w2' => 'owner', 'w3' => 'member'], $this->adapter->memberships['target']);
         $this->assertSame(['w3' => 'owner'], $this->adapter->memberships['removable']);
         $this->assertSame(['w3' => 'member'], $this->adapter->memberships['outsider']);
-        $this->assertSame(['w4' => 'member'], $this->adapter->memberships['colleague']);
+        $this->assertSame(['w1' => 'member', 'w4' => 'member'], $this->adapter->memberships['colleague']);
+    }
+
+    public function test_a_drop_preserves_the_exact_records_of_retained_memberships(): void
+    {
+        $this->assertDelegatedWriteTakesExactlyWhatItDisclosed('manager', 'retained', 'drop', fn (): array => $this->adapter->assignments['retained'], ['w2' => ['p5'], 'w3' => ['p9']]);
+    }
+
+    public function test_effect_checks_accept_targets_with_only_one_membership(): void
+    {
+        $this->adapter->memberships['colleague'] = ['w1' => 'member'];
+        $this->adapter->assignments['colleague'] = ['w1' => ['p1', 'p2']];
+        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'colleague', $this->swapAnAssignment(...), fn (): array => $this->adapter->assignments['colleague']);
+
+        foreach (['remove', 'drop', 'role'] as $write) {
+            $target = 'write-'.$write;
+            $this->adapter->memberships[$target] = ['w1' => 'member'];
+            $this->adapter->assignments[$target] = ['w1' => ['p1', 'p2']];
+            $expected = $write === 'role' ? $this->adapter->assignments[$target] : [];
+            $this->assertDelegatedWriteTakesExactlyWhatItDisclosed('manager', $target, $write, fn (): array => $this->adapter->assignments[$target], $expected);
+        }
+    }
+
+    public function test_an_unknown_fresh_write_is_refused_before_it_changes_anything(): void
+    {
+        $before = [$this->adapter->memberships, $this->adapter->assignments];
+        try {
+            $this->assertDelegatedWriteTakesExactlyWhatItDisclosed('manager', 'write-drop', 'unknown', fn (): array => $this->adapter->assignments['write-drop'], []);
+            $this->fail('An unknown write must be refused');
+        } catch (\InvalidArgumentException $caught) {
+            $this->assertSame('Unknown delegated write: unknown', $caught->getMessage());
+        }
+        $this->assertSame($before, [$this->adapter->memberships, $this->adapter->assignments]);
+    }
+
+    public function test_a_role_check_requires_a_grantable_alternative(): void
+    {
+        // This workspace must keep its member, so neither alternative is permitted.
+        $this->adapter->keepsAMember = ['w1'];
+        $before = [$this->adapter->memberships['write-role'], $this->adapter->assignments['write-role']];
+        try {
+            $this->assertDelegatedWriteTakesExactlyWhatItDisclosed('manager', 'write-role', 'role', fn (): array => $this->adapter->assignments['write-role'], $before[1]);
+            $this->fail('A role check needs a grantable alternative');
+        } catch (AssertionFailedError $caught) {
+            $this->assertStringContainsString('Seed a disclosing membership with another advertised role the actor may grant', $caught->getMessage());
+        }
+        $this->assertSame($before, [$this->adapter->memberships['write-role'], $this->adapter->assignments['write-role']]);
     }
 
     public function test_a_confirmation_does_not_outlive_a_change_in_the_actors_reach(): void
     {
         $this->assertDelegatedRevisionCoversTheActorsReach('manager', 'colleague', $this->widenTheManager(...));
-        $this->assertSame(['w1' => 'member', 'w2' => 'member', 'w4' => 'member'], $this->adapter->memberships['colleague']);
+        $this->assertSame(['w1' => 'member', 'w4' => 'member'], $this->adapter->memberships['colleague']);
     }
 
     public function test_removal_clears_an_application_administrator_the_actor_may_change(): void
@@ -192,10 +251,12 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'a removal offered that is refused' => ['offer_a_removal_it_refuses', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'target']],
             'a removal allowed but not offered' => ['hide_a_removal_it_allows', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
-            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
-            'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
-            'a removal cascading beyond what it disclosed' => ['cascade_beyond_the_projection', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
-            'an update leaving what it disclosed' => ['update_leaves_its_cascade', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
+            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments']],
+            'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments']],
+            'a removal cascading beyond what it disclosed' => ['cascade_beyond_the_projection', 'assertDelegatedWriteTakesExactlyWhatItDisclosed', ['manager', 'write-remove', 'remove', 'write-assignments', 'write-remaining']],
+            'an update leaving what it disclosed' => ['update_leaves_its_cascade', 'assertDelegatedWriteTakesExactlyWhatItDisclosed', ['manager', 'write-drop', 'drop', 'write-assignments', 'write-remaining']],
+            'a role change cascading' => ['role_change_cascades', 'assertDelegatedWriteTakesExactlyWhatItDisclosed', ['manager', 'write-role', 'role', 'write-assignments', 'write-unchanged']],
+            'an update replacing a retained record without changing its count' => ['update_replaces_retained_assignment', 'assertDelegatedWriteTakesExactlyWhatItDisclosed', ['manager', 'retained', 'drop', 'write-assignments', 'retained-remaining']],
             'a revision blind to the actor\'s reach' => ['revision_ignores_the_actor_scope', 'assertDelegatedRevisionCoversTheActorsReach', ['manager', 'colleague', 'widen']],
         ];
     }
@@ -211,7 +272,10 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'swap' => $this->swapAnAssignment(...),
             'widen' => $this->widenTheManager(...),
             'assignments' => fn (): array => $this->adapter->assignments['colleague'] ?? [],
-            'remaining' => ['w4' => ['p9']],
+            'write-assignments' => fn (): array => $this->adapter->assignments[$arguments[1]] ?? [],
+            'write-remaining' => ['w3' => ['p9']],
+            'write-unchanged' => $this->adapter->assignments[$arguments[1]],
+            'retained-remaining' => ['w2' => ['p5'], 'w3' => ['p9']],
             default => $argument,
         }, $arguments);
 

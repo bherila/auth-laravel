@@ -11,6 +11,7 @@ use BWH\Auth\OAuth\DelegatedAccess\NonceStore;
 use DateTimeImmutable;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Testing\TestResponse;
+use InvalidArgumentException;
 use Lcobucci\JWT\Encoding\ChainedFormatter;
 use Lcobucci\JWT\Encoding\JoseEncoder;
 use Lcobucci\JWT\Signer\Key\InMemory;
@@ -40,8 +41,10 @@ use Symfony\Component\HttpFoundation\Response;
  * {@see assertDelegatedSearchStaysInScope()}, {@see assertDelegatedRemoveStripsOnlyTheManagedProjection()},
  * {@see assertDelegatedRemoveRefusedWithoutPartialChange()}, {@see assertDelegatedMetadataIsWellFormed()}
  * and {@see assertDelegatedReceiptsReplayThroughTheEndpoint()}, which drives the real endpoint. An
- * adapter disclosing `removal_effects` also runs {@see assertDelegatedRemovalEffectsAreInTheRevision()},
- * and every workspace application {@see assertDelegatedRevisionCoversTheActorsReach()}.
+ * adapter disclosing `removal_effects` also runs {@see assertDelegatedRemovalEffectsAreInTheRevision()}
+ * for stale writes and {@see assertDelegatedWriteTakesExactlyWhatItDisclosed()} on separate targets
+ * for fresh removal, membership drop and role change. Every workspace application runs
+ * {@see assertDelegatedRevisionCoversTheActorsReach()}.
  *
  * @mixin TestCase
  */
@@ -379,28 +382,23 @@ trait AssertsDelegatedAccessAdapter
      * every count is the same, and the write must be refused as a revision conflict: a `remove`, and
      * an `update` dropping the disclosing membership alike.
      *
-     * Then, against fresh reads, an update dropping one disclosing membership takes its records and
-     * keeps the others' effects, and a removal takes the rest: exactly what was disclosed.
-     *
-     * Seed a target the actor may remove entirely, with two editable memberships that disclose
-     * `removal_effects` and, better, records of the same kind outside the actor's view. Pass `$swap`, a
-     * change to what one effect stands for that keeps every count (replace one assigned item with
-     * another). It runs between the read and the writes. `$disclosed` reads the records the effects
-     * stand for from the application's own tables, like {@see delegatedAccessTruth()}: a refused write
-     * must leave them exactly as they were, not only the memberships. `$remaining` is what
-     * `$disclosed` must return after the fresh update and removal: every disclosed record gone,
-     * everything outside the projection kept. Not for an account-only application, which has no memberships to disclose
-     * effects on.
+     * Seed a target the actor may remove entirely, with at least one editable membership that
+     * discloses `removal_effects`. Pass `$swap`, a change to what one effect stands for that keeps
+     * every count (replace one assigned item with another). It runs between the read and the writes.
+     * `$disclosed` reads the records the effects stand for from the application's own tables, like
+     * {@see delegatedAccessTruth()}: a refused write must leave them exactly as they were, not only
+     * the memberships. Not for an account-only application, which has no memberships to disclose
+     * effects on. Fresh writes use {@see assertDelegatedWriteTakesExactlyWhatItDisclosed()} instead.
      *
      * @param  callable(): void  $swap
      * @param  callable(): mixed  $disclosed
      */
-    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap, callable $disclosed, mixed $remaining): void
+    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap, callable $disclosed): void
     {
         $effects = static fn (array $state): array => array_column(array_filter($state['access']['workspaces'], static fn (array $m): bool => isset($m['removal_effects'])), 'removal_effects', 'id');
         $state = $this->delegatedAccessRead($actor, $target);
         $shown = $effects($state);
-        $this->assertGreaterThanOrEqual(2, count($shown), 'Seed a target with two memberships that disclose removal_effects: an update drops one, the removal takes the rest');
+        $this->assertNotSame([], $shown, 'Seed a target with a membership that discloses removal_effects');
         $this->assertTrue($state['allowed_edits']['remove'], 'Seed a target the actor may remove entirely, so only the revision refuses the stale removal');
 
         $swap();
@@ -418,17 +416,70 @@ trait AssertsDelegatedAccessAdapter
         $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, $state['revision'], $kept, $state['access']['application_admin']),
             'an update dropping a disclosing membership, confirmed before');
         $this->assertSame($before, [$this->delegatedAccessRecord($target), $disclosed()], 'A stale update changes nothing, not even what it would have cascaded to');
+    }
 
-        $fresh = $this->delegatedAccessRead($actor, $target);
-        $kept = array_values(array_filter($fresh['access']['workspaces'], static fn (array $m): bool => $m['id'] !== $dropped));
-        $updated = $this->delegatedAccessCall($actor, $this->delegatedUpdatePayload($target, $fresh['revision'], $kept, $fresh['access']['application_admin']));
-        $this->assertNotContains($dropped, array_column($updated['access']['workspaces'], 'id'), 'An update confirmed against a fresh read drops the membership');
-        $this->assertNotSame($before[1], $disclosed(), 'An update dropping a disclosing membership takes what it disclosed');
-        $this->assertSame(array_diff_key($effects($fresh), [$dropped => true]), $effects($updated), 'An update dropping one membership leaves the others\' effects as they were');
+    /**
+     * A fresh write takes exactly the disclosed records, never anything else.
+     *
+     * Seed a separate target per call with at least one editable membership disclosing
+     * `removal_effects`, and preferably records outside the actor's view. `$disclosed` reads the
+     * application's own records, including any that must survive; `$expected` is their exact value
+     * after this one write. One disclosing membership suffices.
+     *
+     * `remove` removes the target's managed projection; `drop` omits its first disclosing membership
+     * and keeps every other membership and its effects; `role` changes that membership to another
+     * advertised role the actor may grant, leaving every dependent record unchanged. For `role`,
+     * seed a grantable alternative and pass the unchanged records as `$expected`.
+     *
+     * @param  callable(): mixed  $disclosed
+     */
+    protected function assertDelegatedWriteTakesExactlyWhatItDisclosed(string $actor, string $target, string $write, callable $disclosed, mixed $expected): void
+    {
+        if (! in_array($write, ['remove', 'drop', 'role'], true)) {
+            throw new InvalidArgumentException('Unknown delegated write: '.$write);
+        }
 
-        $removed = $this->delegatedAccessCall($actor, $this->delegatedRemovePayload($target, $updated['revision']));
-        $this->assertSame([], $removed['access']['workspaces'], 'A removal confirmed against a fresh read succeeds');
-        $this->assertSame($remaining, $disclosed(), 'A removal takes exactly what it disclosed, and nothing outside the actor\'s projection');
+        $effects = static fn (array $state): array => array_column(array_filter($state['access']['workspaces'], static fn (array $m): bool => isset($m['removal_effects'])), 'removal_effects', 'id');
+        $state = $this->delegatedAccessRead($actor, $target);
+        $shown = $effects($state);
+        $this->assertNotSame([], $shown, 'Seed a target with a membership that discloses removal_effects');
+        $first = (string) array_key_first($shown);
+        $memberships = $state['access']['workspaces'];
+        $membership = array_values(array_filter($memberships, static fn (array $m): bool => $m['id'] === $first))[0];
+        $this->assertTrue($membership['editable'], 'Seed a disclosing membership the actor may change');
+
+        if ($write === 'remove') {
+            $this->assertTrue($state['allowed_edits']['remove'], 'Seed a target the actor may remove entirely');
+            $answer = $this->delegatedAccessCall($actor, $this->delegatedRemovePayload($target, $state['revision']));
+            $this->assertSame([], $answer['access']['workspaces'], 'A removal confirmed against a fresh read succeeds');
+        } elseif ($write === 'drop') {
+            $kept = array_values(array_filter($memberships, static fn (array $m): bool => $m['id'] !== $first));
+            $answer = $this->delegatedAccessUpdate($actor, $target, $state['revision'], $kept, $state['access']['application_admin']);
+            $this->assertEquals(array_column($kept, 'role', 'id'), array_column($answer['access']['workspaces'], 'role', 'id'), 'An update drops only the first disclosing membership and keeps the rest unchanged');
+            $this->assertSame(array_diff_key($shown, [$first => true]), $effects($answer), 'An update dropping one membership leaves the others\' effects as they were');
+        } else {
+            $before = [$this->delegatedAccessRecord($target), $disclosed()];
+            $capabilities = $this->delegatedAccessCall($actor, ['operation' => 'capabilities']);
+            $answer = null;
+            foreach (array_diff(array_column($capabilities['controls']['workspace_roles'], 'id'), [$membership['role']]) as $role) {
+                $changed = array_map(static fn (array $m): array => $m['id'] === $first ? ['role' => $role] + $m : $m, $memberships);
+                try {
+                    $answer = $this->delegatedAccessUpdate($actor, $target, $state['revision'], $changed, $state['access']['application_admin']);
+                } catch (DelegatedAccessException $refusal) {
+                    $this->assertContains($refusal->outcome, [DelegatedRefusal::ROLE_NOT_GRANTABLE, DelegatedRefusal::INVALID_REQUEST, DelegatedRefusal::NOT_AUTHORIZED, DelegatedRefusal::PROTECTED_MEMBERSHIP], 'An unavailable role change is refused with an expected outcome');
+                    $this->assertSame($before, [$this->delegatedAccessRecord($target), $disclosed()], 'A refused role change leaves memberships and dependent records unchanged');
+
+                    continue;
+                }
+                $this->assertEquals(array_column($changed, 'role', 'id'), array_column($answer['access']['workspaces'], 'role', 'id'), 'A fresh role change changes only the first disclosing membership\'s role');
+
+                break;
+            }
+            $this->assertNotNull($answer, 'Seed a disclosing membership with another advertised role the actor may grant');
+            $this->assertSame($shown, $effects($answer), 'A role change leaves every membership\'s removal effects unchanged');
+        }
+
+        $this->assertSame($expected, $disclosed(), 'A fresh '.$write.' takes exactly what it disclosed and preserves every other record');
     }
 
     /**

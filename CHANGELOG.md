@@ -13,9 +13,12 @@ the first entry here is in the git history.
   dropped membership also takes before the actor confirms. Additive: contract version 3 is unchanged,
   and applications that send neither are unaffected.
 - The revision must cover what the effects stand for, read from one snapshot with the cascade rules'
-  version in it. `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed, $remaining)`
-  checks it on a target the actor may remove, including that a removal against a fresh read takes
-  exactly what it disclosed.
+  version in it. `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)`
+  checks stale removal and membership-drop refusals; its unreleased `$remaining` parameter is removed.
+  `assertDelegatedWriteTakesExactlyWhatItDisclosed($actor, $target, $write, $disclosed, $expected)`
+  checks the exact records after one fresh `remove`, `drop` or `role` write per separately seeded
+  target. A role change leaves dependent records unchanged. Each helper needs only one disclosing
+  membership.
 - One state carries at most 100 effect entries (`MAX_REMOVAL_EFFECTS_PER_STATE`), so every valid state
   fits `MAX_RESPONSE_BYTES`. Labels and the notice must contain something visible beyond
   default-ignorable characters and bare combining marks.

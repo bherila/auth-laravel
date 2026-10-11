@@ -1192,11 +1192,14 @@ before the actor confirms:
   take part in the same locking or versioning. When what a removal takes changes with a deploy
   (cascading something new, or no longer), the revisions change with it: put a version of the cascade
   rules in them, so a confirmation made under the old rules is refused under the new ones.
-  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed, $remaining)`
-  checks it for an adapter, with a target the actor may remove entirely and two disclosing memberships:
-  a stale write is refused and leaves the disclosed records (read by `$disclosed`) untouched; then,
-  against fresh reads, an update dropping one membership takes its records and a removal takes the
-  rest, leaving exactly `$remaining`. It runs in one process, so it cannot race the
+  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)`
+  checks stale removal and membership-drop writes on a removable target with at least one disclosing
+  membership; each refusal leaves access and the records read by `$disclosed` untouched.
+  `assertDelegatedWriteTakesExactlyWhatItDisclosed($actor, $target, $write, $disclosed, $expected)`
+  checks one fresh write per separately seeded target: `remove`, `drop` of the first disclosing
+  membership, or `role` changing it to another advertised role the actor may grant. It compares the
+  exact resulting records with `$expected`; a role change leaves them unchanged. One disclosing
+  membership suffices for each helper. They run in one process, so they cannot race the
   database; an application's own adapter tests should also insert or reassign a dependent record
   concurrently with a removal.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
@@ -1469,7 +1472,14 @@ Each refused attempt must leave `delegatedAccessTruth()` exactly as it was.
 For version 3, also seed a subject and a workspace outside the manager's view whose labels match a
 search, a target the manager may remove entirely (with a membership it cannot see), and known
 metadata. For the revision's reach, seed a removable target with a membership in a workspace the
-manager does not manage yet, and a `$widen` closure that grants the manager that workspace. Then:
+manager does not manage yet, and a `$widen` closure that grants the manager that workspace.
+If the adapter discloses removal effects, also seed a removable `$effectsTarget` with one disclosing
+membership, a `$swap` that replaces a dependent record without changing any count, and a
+`$disclosedEffects` reader of its own records. Seed separate `$removeTarget`, `$dropTarget` and
+`$roleTarget` for fresh writes, each with at least one disclosing membership. Their record readers
+include records outside the actor's projection that must survive. `$afterRemove` and `$afterDrop`
+are the exact expected records after those writes; `$beforeRole` is the unchanged record set, and
+`$roleTarget` has another advertised role the actor may grant. Then:
 
 ```php
 $this->assertDelegatedSearchStaysInScope($manager, 'subjects', 'Example', 'OnlyOutsideTheView');
@@ -1479,6 +1489,11 @@ $this->assertDelegatedRemoveStripsOnlyTheManagedProjection($manager, $removable)
 $this->assertDelegatedMetadataIsWellFormed($manager, $removable);
 $this->assertDelegatedReceiptsReplayThroughTheEndpoint($manager, $target);
 $this->assertDelegatedRevisionCoversTheActorsReach($manager, $colleague, $widen);   // widens the manager
+// For adapters disclosing removal_effects:
+$this->assertDelegatedRemovalEffectsAreInTheRevision($manager, $effectsTarget, $swap, $disclosedEffects);
+$this->assertDelegatedWriteTakesExactlyWhatItDisclosed($manager, $removeTarget, 'remove', $disclosedRemove, $afterRemove);
+$this->assertDelegatedWriteTakesExactlyWhatItDisclosed($manager, $dropTarget, 'drop', $disclosedDrop, $afterDrop);
+$this->assertDelegatedWriteTakesExactlyWhatItDisclosed($manager, $roleTarget, 'role', $disclosedRole, $beforeRole);
 ```
 
 `assertDelegatedReceiptsReplayThroughTheEndpoint()` posts signed requests to the real route. It
