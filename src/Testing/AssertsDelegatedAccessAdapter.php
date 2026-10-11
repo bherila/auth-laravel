@@ -380,29 +380,36 @@ trait AssertsDelegatedAccessAdapter
      *
      * Seed a target with an editable membership that discloses `removal_effects`, and pass `$swap`, a
      * change to what one effect stands for that keeps every count (replace one assigned item with
-     * another). It runs between the read and the writes. Not for an account-only application, which has
-     * no memberships to disclose effects on.
+     * another). It runs between the read and the writes. `$disclosed` reads the records the effects
+     * stand for from the application's own tables, like {@see delegatedAccessTruth()}: a refused write
+     * must leave them exactly as they were, not only the memberships. Not for an account-only
+     * application, which has no memberships to disclose effects on.
+     *
+     * @param  callable(): void  $swap
+     * @param  callable(): mixed  $disclosed
      */
-    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap): void
+    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap, callable $disclosed): void
     {
         $effects = static fn (array $state): array => array_column(array_filter($state['access']['workspaces'], static fn (array $m): bool => isset($m['removal_effects'])), 'removal_effects', 'id');
         $state = $this->delegatedAccessRead($actor, $target);
-        $disclosed = $effects($state);
-        $this->assertNotSame([], $disclosed, 'Seed a target with a membership that discloses removal_effects');
+        $shown = $effects($state);
+        $this->assertNotSame([], $shown, 'Seed a target with a membership that discloses removal_effects');
 
         $swap();
         $after = $this->delegatedAccessRead($actor, $target);
-        $this->assertSame($disclosed, $effects($after), 'Seed a $swap that keeps every disclosed effect and count, so only the revision can tell');
+        $this->assertSame($shown, $effects($after), 'Seed a $swap that keeps every disclosed effect and count, so only the revision can tell');
         $this->assertNotSame($state['revision'], $after['revision'], 'Changing what a removal would take changes the revision');
 
-        $before = $this->delegatedAccessRecord($target);
+        $before = [$this->delegatedAccessRecord($target), $disclosed()];
         $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedRemovePayload($target, $state['revision']),
             'a removal confirmed against what it would have taken before');
-        $dropped = (string) array_key_first($disclosed);
+        $this->assertSame($before, [$this->delegatedAccessRecord($target), $disclosed()], 'A stale removal changes nothing, not even what it would have cascaded to');
+
+        $dropped = (string) array_key_first($effects($state));
         $kept = array_values(array_filter($state['access']['workspaces'], static fn (array $m): bool => $m['id'] !== $dropped));
         $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, $state['revision'], $kept, $state['access']['application_admin']),
             'an update dropping a disclosing membership, confirmed before');
-        $this->assertSame($before, $this->delegatedAccessRecord($target), 'A stale confirmation changes nothing');
+        $this->assertSame($before, [$this->delegatedAccessRecord($target), $disclosed()], 'A stale update changes nothing, not even what it would have cascaded to');
     }
 
     /**

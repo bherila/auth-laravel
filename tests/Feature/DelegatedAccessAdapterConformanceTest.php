@@ -83,7 +83,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertSame('2026-10-09T17:45:00Z', $this->delegatedAccessCall('manager', ['operation' => 'subjects', 'query' => 'Removable'])['subjects'][0]['last_seen_at']);
         $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'target');
         $this->assertDelegatedReceiptsReplayThroughTheEndpoint('manager', 'target');
-        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'target', $this->swapAnAssignment(...));
+        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'target', $this->swapAnAssignment(...), fn (): array => $this->adapter->assignments['target'] ?? []);
         $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'removable');
         $this->assertDelegatedUpdateKeepsUnseenMemberships('manager', 'target');
 
@@ -176,7 +176,8 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'a removal offered that is refused' => ['offer_a_removal_it_refuses', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'target']],
             'a removal allowed but not offered' => ['hide_a_removal_it_allows', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
-            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap']],
+            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap', 'assignments']],
+            'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap', 'assignments']],
         ];
     }
 
@@ -187,7 +188,11 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
     public function test_each_assertion_catches_its_violation(string $flaw, string $assertion, array $arguments): void
     {
         $this->adapter->broken[$flaw] = true;
-        $arguments = array_map(fn (string $argument): mixed => $argument === 'swap' ? $this->swapAnAssignment(...) : $argument, $arguments);
+        $arguments = array_map(fn (string $argument): mixed => match ($argument) {
+            'swap' => $this->swapAnAssignment(...),
+            'assignments' => fn (): array => $this->adapter->assignments['target'] ?? [],
+            default => $argument,
+        }, $arguments);
 
         try {
             $this->{$assertion}(...$arguments);

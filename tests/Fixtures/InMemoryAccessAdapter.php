@@ -84,6 +84,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'offer_a_removal_it_refuses' => false,
         'hide_a_removal_it_allows' => false,
         'effects_outside_revision' => false,
+        'cascade_before_revision_check' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -305,7 +306,12 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
     {
         $subject = $payload['subject'];
         $current = $this->memberships[$subject] ?? throw DelegatedRefusal::of(DelegatedRefusal::NOT_PROVISIONED);
-        if ($payload['expected_revision'] !== $this->revision($subject) && ! $this->broken['ignore_revision']) {
+        $revision = $this->revision($subject);
+        if ($this->broken['cascade_before_revision_check']) {
+            // Clears what the removal would take before finding the confirmation stale.
+            $this->assignments[$subject] = array_diff_key($this->assignments[$subject] ?? [], array_flip($managed));
+        }
+        if ($payload['expected_revision'] !== $revision && ! $this->broken['ignore_revision']) {
             throw DelegatedRefusal::of(DelegatedRefusal::REVISION_CONFLICT);
         }
 

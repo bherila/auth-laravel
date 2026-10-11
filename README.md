@@ -1173,7 +1173,8 @@ provider can show it before the actor confirms:
 - **The revision covers what the effects stand for, not only their counts.** A confirmation shown
   against "2 project assignments" must fail with `revision_conflict` if either assignment changes
   before the write commits, even when the count is still 2.
-  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap)` checks it for an adapter.
+  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)` checks it for an
+  adapter, and that a refused write leaves the disclosed records (read by `$disclosed`) untouched.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
   the cascade; the revision is what keeps the confirmation honest.
 - **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
