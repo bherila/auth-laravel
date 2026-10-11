@@ -1216,7 +1216,12 @@ provider can show it before the actor confirms:
   too much, the membership is not offered as editable.
 - **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
   exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
-  disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
+  disclosure: it fails closed. That protects only until the provider takes this release. Upgrading
+  the provider means its confirmations show the effects, for a `remove` and for an `update` dropping
+  a membership, not only that its validator accepts them; an application emits them only after that
+  is deployed. The application changes its cascade-rules version in the same deploy that starts
+  disclosing, so a confirmation shown before (in a page left open, say) is refused as a revision
+  conflict rather than carried out under rules it never showed.
 
 **Operation ids.** `update` and `remove` carry `operation_id`: 32 to 64 characters of
 `[A-Za-z0-9_-]`, chosen by the provider once per user action and kept across every retry of it
