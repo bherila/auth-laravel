@@ -631,7 +631,9 @@ final class DelegatedContract
     {
         return $this->boundedString($value, $max)
             && preg_match('/^[^\p{Cc}\p{Zl}\p{Zp}\x{202A}-\x{202E}\x{2066}-\x{2069}]*$/uD', $value) === 1
-            && preg_match('/[^\p{Z}\s\p{Cf}]/u', $value) === 1;
+            // Something visible: not only spaces, format characters, default-ignorables (a variation
+            // selector, a grapheme joiner, a Hangul filler) or combining marks with nothing to mark.
+            && preg_match('/[^\p{Z}\s\p{Cf}\p{DI}\p{M}]/u', $value) === 1;
     }
 
     /**

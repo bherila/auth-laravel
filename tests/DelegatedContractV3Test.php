@@ -242,7 +242,9 @@ class DelegatedContractV3Test extends TestCase
     public function test_an_editable_membership_may_disclose_what_its_removal_takes_with_it(): void
     {
         $contract = new DelegatedContract;
-        $effects = [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => 2], ['kind' => 'x9_', 'label' => 'Ünïcode ok', 'count' => 1]];
+        $effects = [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => 2], ['kind' => 'x9_', 'label' => 'Ünïcode ok', 'count' => 1],
+            // Joiners, variation selectors and combining marks are fine inside visible text.
+            ['kind' => 'joined', 'label' => "Cafe\u{0301} \u{2764}\u{FE0F} \u{1F469}\u{200D}\u{1F4BB}", 'count' => 1]];
         $disclosing = fn (mixed $value): array => [...$this->state(), 'access' => ['application_admin' => false, 'workspaces' => [
             ['id' => 'w1', 'role' => 'owner', 'editable' => false],
             ['id' => 'w2', 'role' => 'sender', 'editable' => true, 'removal_effects' => $value],
@@ -280,6 +282,10 @@ class DelegatedContractV3Test extends TestCase
             'a label with a Unicode control' => [[...$effects[0], 'label' => "Project\u{0085}assignments"]],
             'a label of no-break spaces' => [[...$effects[0], 'label' => "\u{00A0}\u{3000}"]],
             'a label of a zero-width space' => [[...$effects[0], 'label' => "\u{200B}"]],
+            'a label of a grapheme joiner' => [[...$effects[0], 'label' => "\u{034F}"]],
+            'a label of a variation selector' => [[...$effects[0], 'label' => "\u{FE0F}"]],
+            'a label of a Hangul filler' => [[...$effects[0], 'label' => "\u{3164}"]],
+            'a label of a combining mark with nothing to mark' => [[...$effects[0], 'label' => " \u{0301}"]],
             'a label with a line separator' => [[...$effects[0], 'label' => "Project\u{2028}assignments"]],
             'a label reordered by a bidirectional override' => [[...$effects[0], 'label' => "Project \u{202E}stnemngissa"]],
             'null' => null,
@@ -321,6 +327,7 @@ class DelegatedContractV3Test extends TestCase
             'a line break' => "Portal access is unchanged.\nAsk the owner.",
             'a next-line control' => "Portal access is unchanged.\u{0085}",
             'blank in Unicode' => "\u{00A0}",
+            'only a variation selector' => "\u{FE0F}\u{034F}",
             'an isolate' => "Portal access is \u{2067}unchanged\u{2069}.",
             'not UTF-8' => "Portal \xc3",
             'markup as structure' => ['text' => $notice],

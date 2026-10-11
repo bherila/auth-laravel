@@ -1169,8 +1169,13 @@ provider can show it before the actor confirms:
   disclose as `removal_effects`, so an application never announces a further deletion in it. An unprovisioned state has no `access` to carry it, and it is never sent back in an
   `update`.
 - Plain text means valid UTF-8 with something visible in it (not only spaces, including no-break and
-  zero-width ones), without control characters, line or paragraph separators, or bidirectional
-  overrides and isolates. A provider escapes it and never renders it as markup.
+  zero-width ones, default-ignorable characters such as variation selectors, or combining marks with
+  nothing to mark), without control characters, line or paragraph separators, or bidirectional
+  overrides and isolates. Joiners and variation selectors inside visible text are fine. A provider
+  escapes it, never renders it as markup, and isolates its direction (`<bdi dir="auto">` in HTML):
+  text in one direction beside another can reorder without any control character.
+- A `label` names a category on its own ("Project assignments"). A provider shows it beside its count
+  (`Project assignments: 2`) and never inflects it into a sentence.
 - **The revision covers what the effects stand for, not only their counts.** A confirmation shown
   against "2 project assignments" must fail with `revision_conflict` if either assignment changes
   before the write commits, even when the count is still 2.
