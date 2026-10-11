@@ -1147,9 +1147,9 @@ to its search, and `after()` refuses it with another one (`invalid_cursor`, 422)
 - each `capabilities.controls.workspace_roles[]` entry may carry a `description` (1 to 1024 bytes).
   Omit it rather than send `null`.
 
-**Removal effects.** A removal can take more with it than the memberships themselves (svc-style
-staff removal also drops the person's project assignments). An application discloses that so the
-provider can show it before the actor confirms:
+**Removal effects.** A removal can take more with it than the memberships themselves: removing a staff member
+may also drop their project assignments. An application discloses that so the provider can show it
+before the actor confirms:
 
 ```json
 "access": { "application_admin": false, "workspaces": [
