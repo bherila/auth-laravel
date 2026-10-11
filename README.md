@@ -1164,8 +1164,9 @@ provider can show it before the actor confirms:
   plain text, `count` an integer of at least 1. Nothing to disclose is the field omitted, never `[]`
   or a zero count. It is never sent back in an `update`.
 - `removal_notice` is optional in a provisioned state's `access` (`read`, `update`, `remove`): up to
-  500 bytes of plain text saying what a removal leaves alone or does beyond the memberships, shown with
-  the confirmation. An unprovisioned state has no `access` to carry it, and it is never sent back in an
+  500 bytes of plain text giving context for the confirmation, such as what a removal leaves alone. It
+  is never a disclosure: it cannot widen what a removal may take, which is only what the memberships
+  disclose as `removal_effects`, so an application never announces a further deletion in it. An unprovisioned state has no `access` to carry it, and it is never sent back in an
   `update`.
 - Plain text means valid UTF-8 with something visible in it (not only spaces, including no-break and
   zero-width ones), without control characters, line or paragraph separators, or bidirectional

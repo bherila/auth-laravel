@@ -45,7 +45,8 @@ final class DelegatedContract
 
     /**
      * A state's `access` may carry `removal_notice`: plain text saying what removing this person's
-     * access leaves alone or does beyond the memberships, shown with the confirmation. Up to this many
+     * access leaves alone, shown with the confirmation. Context only: it never widens what a removal may
+     * take, which is what the memberships disclose as `removal_effects`. Up to this many
      * bytes. It sits in `access`, whose keys earlier providers check exactly, so one that cannot show
      * it refuses the state rather than dropping the notice.
      */
@@ -566,7 +567,7 @@ final class DelegatedContract
 
     /**
      * Access: memberships name a role, and a response also says whether each is editable and may
-     * disclose what else removing an editable one takes with it, and what a removal leaves alone. Role ids are bounded here; whether
+     * disclose what else removing an editable one takes with it, and say what a removal leaves alone. Role ids are bounded here; whether
      * they were advertised is {@see rolesAreAdvertised()}.
      */
     private function access(mixed $access, bool $reported): bool
