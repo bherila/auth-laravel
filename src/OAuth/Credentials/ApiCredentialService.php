@@ -323,7 +323,14 @@ final class ApiCredentialService
 
         Passport::token()->getConnection()->transaction(function () use ($client): void {
             $tokenIds = Passport::token()->newQuery()->where('client_id', $client->getKey())->pluck('id');
-            Passport::refreshToken()->newQuery()->whereIn('access_token_id', $tokenIds)->update(['revoked' => true]);
+            $refreshTokens = Passport::refreshToken();
+            $refresh = $refreshTokens->newQuery()->whereIn('access_token_id', $tokenIds);
+            // Keep the linked-access fallback for older schemas and unstamped legacy rows.
+            // The refresh token's own client record survives an access-token purge.
+            if ($refreshTokens->getConnection()->getSchemaBuilder()->hasColumn($refreshTokens->getTable(), 'client_id')) {
+                $refresh->orWhere('client_id', (string) $client->getKey());
+            }
+            $refresh->update(['revoked' => true]);
             foreach (Passport::token()->newQuery()->where('client_id', $client->getKey())->where('revoked', false)->pluck('id') as $tokenId) {
                 // One at a time through the repository so AccessTokenRevoked fires.
                 $this->accessTokens->revokeAccessToken((string) $tokenId);

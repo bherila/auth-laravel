@@ -4,6 +4,15 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+- Refresh tokens retain their validated OAuth client id, so deleting an app revokes its refresh
+  credentials even after expired access-token rows have been purged. Publish and run
+  `2026_10_11_120000_add_client_id_to_oauth_refresh_tokens` before purging more access-token rows.
+  It backfills linked records on the Passport connection and preserves application-owned columns;
+  already orphaned records without a client association cannot be recovered and must be revoked
+  separately. Unmigrated schemas and nullable legacy associations keep linked-access revocation.
+
 ## v0.24.0 - 2026-10-11
 
 ### Removal effects in the delegated access contract

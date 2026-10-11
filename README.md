@@ -623,6 +623,12 @@ All return JSON. Each new secret appears once, in a `201` no-store body. While t
 
 Bind `GrantableScopes` to offer only the scopes your REST operations use. Bind `CredentialOwnerResolver`, or set `credentials.owner_model`, when your API guard loads a different model from the web guard.
 
+#### Refresh-token client ownership
+
+Publish and run `2026_10_11_120000_add_client_id_to_oauth_refresh_tokens` before purging more expired access-token rows. It adds a nullable, indexed `client_id` to the refresh-token table on the Passport connection and backfills rows whose access token still exists. An existing application-owned column and its non-null values are preserved; rollback retains the column.
+
+The resource repository records the client from the validated grant on issuance and rotation. Deleting an app then revokes its refresh credentials even after their access-token rows disappear, while leaving other clients' credentials alone. Linked-access revocation still works with unmigrated schemas and nullable legacy associations. Already orphaned rows without a stored client association cannot be recovered by this migration and must be revoked separately.
+
 #### Personal API tokens that open an MCP connection (opt-in)
 
 By default no credential the service issues carries an MCP connection scope (any `resource_required_scopes` entry, such as `mcp:use`): a pasted API token reaches REST and per-module endpoints, never an endpoint that requires the connection scope. Some agent clients connect to a remote MCP server only with a static bearer key and cannot run the authorization-code flow. To let personal API tokens serve them, name the connection scopes a token may carry:
