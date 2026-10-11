@@ -4,6 +4,19 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Removal effects in the delegated access contract
+
+- A reported editable membership may carry `removal_effects` (`{kind, label, count}`, up to 8) and a
+  provisioned state's `access` may carry `removal_notice`, so a provider can show what a removal or a
+  dropped membership also takes before the actor confirms. Additive: contract version 3 is unchanged,
+  and applications that send neither are unaffected.
+- The revision must cover what the effects stand for; `assertDelegatedRemovalEffectsAreInTheRevision()`
+  checks it.
+- **Upgrade order:** providers before applications. An older provider refuses a state carrying either
+  field (`invalid_response`), so it never shows a confirmation without the disclosure.
+
 ## v0.23.2 - 2026-10-10
 
 - `OAuthCredentialOwners::revokeAllForOwnerId($id)` revokes an account's codes, access and refresh
