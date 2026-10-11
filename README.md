@@ -1274,6 +1274,9 @@ manages it, together with whatever it disclosed as `removal_effects`, and nothin
   for one never stored, still pending or abandoned, pruned, or another actor's. It never reaches the adapter and
   is answered whether or not writes are enabled.
 - Receipts are kept for 30 days.
+- A stored answer is what the write did then, not what a write would do now: its
+  `removal_effects` may be stale. A provider shows it as an outcome and never fills a new
+  confirmation from it; it reads afresh before confirming another write.
 
 A provider that gets an uncertain answer to a write (a 5xx, a timeout or a transport error) asks
 for the receipt once and shows the real outcome; if it is still unknown, it says so. It never
