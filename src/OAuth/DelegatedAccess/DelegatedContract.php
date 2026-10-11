@@ -43,6 +43,24 @@ final class DelegatedContract
     /** Read-only observations a state and a `subjects` entry may carry: ISO-8601 timestamps or null. */
     public const STATE_METADATA = ['provisioned_at', 'first_sign_in_at', 'last_seen_at'];
 
+    /**
+     * A state's `access` may carry `removal_notice`: plain text saying what removing this person's
+     * access leaves alone, shown with the confirmation. Context only: it never widens what a removal may
+     * take, which is what the memberships disclose as `removal_effects`. Up to this many
+     * bytes. It sits in `access`, whose keys earlier providers check exactly, so one that cannot show
+     * it refuses the state rather than dropping the notice.
+     */
+    public const MAX_REMOVAL_NOTICE_BYTES = 500;
+
+    /**
+     * An editable membership may carry `removal_effects`: what else goes when it is removed or dropped,
+     * up to this many `{kind, label, count}` entries.
+     */
+    public const MAX_REMOVAL_EFFECTS = 8;
+
+    /** A removal effect's `kind`: a stable identifier the application chooses. */
+    public const REMOVAL_EFFECT_KIND_PATTERN = '/^[a-z][a-z0-9_]{0,63}$/D';
+
     /** The operations that change something, each carrying an `operation_id`. */
     public const WRITE_OPERATIONS = ['update', 'remove'];
 
@@ -548,24 +566,29 @@ final class DelegatedContract
     }
 
     /**
-     * Access: memberships name a role, and a response also says whether each is editable. Role ids
-     * are bounded here; whether they were advertised is {@see rolesAreAdvertised()}.
+     * Access: memberships name a role, and a response also says whether each is editable and may
+     * disclose what else removing an editable one takes with it, and say what a removal leaves alone. Role ids are bounded here; whether
+     * they were advertised is {@see rolesAreAdvertised()}.
      */
     private function access(mixed $access, bool $reported): bool
     {
-        if (! is_array($access) || ! $this->hasExactKeys($access, ['application_admin', 'workspaces'])
+        $noticed = $reported && is_array($access) && array_key_exists('removal_notice', $access);
+        if (! is_array($access) || ! $this->hasExactKeys($access, $noticed ? ['application_admin', 'workspaces', 'removal_notice'] : ['application_admin', 'workspaces'])
+            || ($noticed && ! $this->plainText($access['removal_notice'], self::MAX_REMOVAL_NOTICE_BYTES))
             || ! is_bool($access['application_admin']) || ! is_array($access['workspaces'])
             || ! array_is_list($access['workspaces']) || count($access['workspaces']) > 100) {
             return false;
         }
 
-        $keys = $reported ? ['id', 'role', 'editable'] : ['id', 'role'];
         $ids = [];
         foreach ($access['workspaces'] as $workspace) {
+            $keys = ! $reported ? ['id', 'role']
+                : (is_array($workspace) && array_key_exists('removal_effects', $workspace) ? ['id', 'role', 'editable', 'removal_effects'] : ['id', 'role', 'editable']);
             if (! is_array($workspace) || ! $this->hasExactKeys($workspace, $keys)
                 || ! $this->boundedString($workspace['id'], 191)
                 || ! $this->boundedString($workspace['role'], 64)
                 || ($reported && ! is_bool($workspace['editable']))
+                || (array_key_exists('removal_effects', $workspace) && ! ($workspace['editable'] === true && $this->removalEffects($workspace['removal_effects'])))
                 || in_array($workspace['id'], $ids, true)) {
                 return false;
             }
@@ -573,6 +596,42 @@ final class DelegatedContract
         }
 
         return true;
+    }
+
+    /**
+     * 1 to {@see MAX_REMOVAL_EFFECTS} entries of exactly `{kind, label, count}`, kinds unique, each
+     * count at least 1. Nothing to disclose is the field omitted, never an empty list or a zero.
+     */
+    private function removalEffects(mixed $effects): bool
+    {
+        if (! is_array($effects) || $effects === [] || ! array_is_list($effects) || count($effects) > self::MAX_REMOVAL_EFFECTS) {
+            return false;
+        }
+        $kinds = [];
+        foreach ($effects as $effect) {
+            if (! is_array($effect) || ! $this->hasExactKeys($effect, ['kind', 'label', 'count'])
+                || ! is_string($effect['kind']) || preg_match(self::REMOVAL_EFFECT_KIND_PATTERN, $effect['kind']) !== 1
+                || ! $this->plainText($effect['label'], 255)
+                || ! is_int($effect['count']) || $effect['count'] < 1
+                || in_array($effect['kind'], $kinds, true)) {
+                return false;
+            }
+            $kinds[] = $effect['kind'];
+        }
+
+        return true;
+    }
+
+    /**
+     * Text a provider shows as it is, bounded in bytes: valid UTF-8 with something visible in it, and
+     * no control characters, line or paragraph separators, or bidirectional overrides (which reorder
+     * what the confirmation around them says).
+     */
+    private function plainText(mixed $value, int $max): bool
+    {
+        return $this->boundedString($value, $max)
+            && preg_match('/^[^\p{Cc}\p{Zl}\p{Zp}\x{202A}-\x{202E}\x{2066}-\x{2069}]*$/uD', $value) === 1
+            && preg_match('/[^\p{Z}\s\p{Cf}]/u', $value) === 1;
     }
 
     /**

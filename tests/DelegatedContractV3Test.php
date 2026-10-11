@@ -239,6 +239,98 @@ class DelegatedContractV3Test extends TestCase
         }
     }
 
+    public function test_an_editable_membership_may_disclose_what_its_removal_takes_with_it(): void
+    {
+        $contract = new DelegatedContract;
+        $effects = [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => 2], ['kind' => 'x9_', 'label' => 'Ünïcode ok', 'count' => 1]];
+        $disclosing = fn (mixed $value): array => [...$this->state(), 'access' => ['application_admin' => false, 'workspaces' => [
+            ['id' => 'w1', 'role' => 'owner', 'editable' => false],
+            ['id' => 'w2', 'role' => 'sender', 'editable' => true, 'removal_effects' => $value],
+        ]]];
+
+        foreach (['read', 'update'] as $operation) {
+            $state = [...$disclosing($effects), 'operation' => $operation];
+            $this->assertSame($state, $contract->response($state, self::APP, $operation, 'subject-example', 3));
+        }
+        $eight = array_map(static fn (int $i): array => ['kind' => "kind_{$i}", 'label' => "Effect {$i}", 'count' => $i + 1], range(1, 8));
+        $this->assertSame($disclosing($eight), $contract->response($disclosing($eight), self::APP, 'read', 'subject-example', 3));
+        $fields = array_diff_key($disclosing($effects), ['contract_version' => true, 'application' => true, 'operation' => true]);
+        $this->assertSame('read', $contract->adapterAnswer($fields, self::APP, 'read', 'subject-example')['operation'], 'an adapter may send it');
+
+        foreach ([
+            'nothing to disclose as an empty list' => [],
+            'a map, not a list' => ['a' => $effects[0]],
+            'more than eight' => [...$eight, ['kind' => 'kind_9', 'label' => 'Effect 9', 'count' => 9]],
+            'a kind twice' => [$effects[0], [...$effects[0], 'label' => 'Again']],
+            'a zero count' => [[...$effects[0], 'count' => 0]],
+            'a negative count' => [[...$effects[0], 'count' => -1]],
+            'a count as a string' => [[...$effects[0], 'count' => '2']],
+            'a count as a float' => [[...$effects[0], 'count' => 2.0]],
+            'an unknown count' => [[...$effects[0], 'count' => null]],
+            'no count' => [['kind' => 'project_assignments', 'label' => 'Project assignments']],
+            'an extra key' => [[...$effects[0], 'href' => 'https://app.example.test/']],
+            'a capitalised kind' => [[...$effects[0], 'kind' => 'Project_assignments']],
+            'a kind starting with a digit' => [[...$effects[0], 'kind' => '2fa_devices']],
+            'a kind with a hyphen' => [[...$effects[0], 'kind' => 'project-assignments']],
+            'a kind over 64 characters' => [[...$effects[0], 'kind' => 'k'.str_repeat('a', 64)]],
+            'a blank label' => [[...$effects[0], 'label' => '   ']],
+            'a label with a newline' => [[...$effects[0], 'label' => "Project\nassignments"]],
+            'a label over 255 bytes' => [[...$effects[0], 'label' => str_repeat('é', 128)]],
+            'a label that is not UTF-8' => [[...$effects[0], 'label' => "Project \xff"]],
+            'a label with a Unicode control' => [[...$effects[0], 'label' => "Project\u{0085}assignments"]],
+            'a label of no-break spaces' => [[...$effects[0], 'label' => "\u{00A0}\u{3000}"]],
+            'a label of a zero-width space' => [[...$effects[0], 'label' => "\u{200B}"]],
+            'a label with a line separator' => [[...$effects[0], 'label' => "Project\u{2028}assignments"]],
+            'a label reordered by a bidirectional override' => [[...$effects[0], 'label' => "Project \u{202E}stnemngissa"]],
+            'null' => null,
+        ] as $label => $value) {
+            $this->refused(fn () => $contract->response($disclosing($value), self::APP, 'read', 'subject-example', 3), 503, $label);
+        }
+
+        $protected = [...$this->state(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'owner', 'editable' => false, 'removal_effects' => $effects]]]];
+        $this->refused(fn () => $contract->response($protected, self::APP, 'read', 'subject-example', 3), 503, 'effects on a membership that cannot be removed');
+        $this->refused(fn () => $contract->request(self::APP, [...$this->update(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w2', 'role' => 'sender', 'removal_effects' => $effects]]]]), 422, 'effects sent back in an update');
+    }
+
+    public function test_a_provisioned_state_may_carry_a_removal_notice_in_its_access(): void
+    {
+        $contract = new DelegatedContract;
+        $notice = 'Client portal access is unchanged.';
+        $noticed = fn (mixed $value, array $state = []): array => [...($state ?: $this->state()), 'access' => [...($state ?: $this->state())['access'], 'removal_notice' => $value]];
+        $removed = [...$this->state(), 'operation' => 'remove', 'access' => ['application_admin' => false, 'workspaces' => [], 'removal_notice' => $notice],
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];
+
+        foreach (['read' => $noticed($notice), 'update' => [...$noticed($notice), 'operation' => 'update'], 'remove' => $removed] as $operation => $state) {
+            $this->assertSame($state, $contract->response($state, self::APP, $operation, 'subject-example', 3));
+            $fields = array_diff_key($state, ['contract_version' => true, 'application' => true, 'operation' => true]);
+            $this->assertSame($notice, $contract->adapterAnswer($fields, self::APP, $operation, 'subject-example')['access']['removal_notice']);
+        }
+        $long = $noticed(str_repeat('a', DelegatedContract::MAX_REMOVAL_NOTICE_BYTES));
+        $this->assertSame($long, $contract->response($long, self::APP, 'read', 'subject-example', 3));
+
+        // A stored answer carrying it replays as it was.
+        $receipt = ['contract_version' => 3, 'application' => self::APP, 'operation' => 'receipt', 'operation_id' => self::OPERATION,
+            'status' => 'known', 'response_status' => 200, 'response' => $removed];
+        $this->assertSame($receipt, $contract->receipt($receipt, self::APP, $contract->request(self::APP, $this->remove())));
+
+        foreach ([
+            'null' => null,
+            'empty' => '',
+            'blank' => "  ",
+            'over the bound' => str_repeat('a', DelegatedContract::MAX_REMOVAL_NOTICE_BYTES + 1),
+            'a line break' => "Portal access is unchanged.\nAsk the owner.",
+            'a next-line control' => "Portal access is unchanged.\u{0085}",
+            'blank in Unicode' => "\u{00A0}",
+            'an isolate' => "Portal access is \u{2067}unchanged\u{2069}.",
+            'not UTF-8' => "Portal \xc3",
+            'markup as structure' => ['text' => $notice],
+        ] as $label => $value) {
+            $this->refused(fn () => $contract->response($noticed($value), self::APP, 'read', 'subject-example', 3), 503, $label);
+        }
+        $this->refused(fn () => $contract->adapterAnswer([...array_diff_key($this->state(), ['contract_version' => true, 'application' => true, 'operation' => true]), 'removal_notice' => $notice], self::APP, 'read', 'subject-example'), 503, 'a notice beside access, where an earlier provider would drop it');
+        $this->refused(fn () => $contract->request(self::APP, $this->update(['access' => ['application_admin' => false, 'workspaces' => [], 'removal_notice' => $notice]])), 422, 'a notice sent back in an update');
+    }
+
     public function test_a_subject_entry_may_carry_the_same_metadata_held_to_the_same_shape(): void
     {
         $contract = new DelegatedContract;

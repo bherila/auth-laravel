@@ -1147,13 +1147,49 @@ to its search, and `after()` refuses it with another one (`invalid_cursor`, 422)
 - each `capabilities.controls.workspace_roles[]` entry may carry a `description` (1 to 1024 bytes).
   Omit it rather than send `null`.
 
+**Removal effects.** A removal can take more with it than the memberships themselves (svc-style
+staff removal also drops the person's project assignments). An application discloses that so the
+provider can show it before the actor confirms:
+
+```json
+"access": { "application_admin": false, "workspaces": [
+  { "id": "w2", "role": "member", "editable": true,
+    "removal_effects": [ { "kind": "project_assignments", "label": "Project assignments", "count": 2 } ] } ],
+  "removal_notice": "Client portal access is unchanged." }
+```
+
+- `removal_effects` is optional on a reported membership, and only on an editable one: what removing
+  it, or an `update` dropping it, also removes. 1 to 8 entries of exactly `{kind, label, count}`: `kind`
+  matches `[a-z][a-z0-9_]{0,63}` and is unique within the membership, `label` is 1 to 255 bytes of
+  plain text, `count` an integer of at least 1. Nothing to disclose is the field omitted, never `[]`
+  or a zero count. It is never sent back in an `update`.
+- `removal_notice` is optional in a provisioned state's `access` (`read`, `update`, `remove`): up to
+  500 bytes of plain text giving context for the confirmation, such as what a removal leaves alone. It
+  is never a disclosure: it cannot widen what a removal may take, which is only what the memberships
+  disclose as `removal_effects`, so an application never announces a further deletion in it. An unprovisioned state has no `access` to carry it, and it is never sent back in an
+  `update`.
+- Plain text means valid UTF-8 with something visible in it (not only spaces, including no-break and
+  zero-width ones), without control characters, line or paragraph separators, or bidirectional
+  overrides and isolates. A provider escapes it and never renders it as markup.
+- **The revision covers what the effects stand for, not only their counts.** A confirmation shown
+  against "2 project assignments" must fail with `revision_conflict` if either assignment changes
+  before the write commits, even when the count is still 2.
+  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)` checks it for an
+  adapter, and that a refused write leaves the disclosed records (read by `$disclosed`) untouched.
+- Effects are a disclosure, not a promise the provider enforces. The application performs and audits
+  the cascade (see **Removal** below for what it may take); the revision is what keeps the
+  confirmation honest.
+- **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
+  exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
+  disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
+
 **Operation ids.** `update` and `remove` carry `operation_id`: 32 to 64 characters of
 `[A-Za-z0-9_-]`, chosen by the provider once per user action and kept across every retry of it
 (`DelegatedContract::operationId()` makes one). It is distinct from the assertion's `jti`, which
 stays single-use per HTTP request; the endpoint refuses an `operation_id` equal to the `jti`.
 
 **Removal.** `remove` takes away the subject's access to this application as far as the actor
-manages it, and nothing else:
+manages it, together with whatever it disclosed as `removal_effects`, and nothing else:
 
 1. It removes every membership in the actor's projection and the application administrator flag.
    Memberships in workspaces the actor cannot see are outside it and survive.
@@ -1167,7 +1203,13 @@ manages it, and nothing else:
 4. The revision is compared as for an update (`revision_conflict`, 409). Removing a subject with
    nothing to remove changes nothing and answers the same revision. An unprovisioned subject is
    refused as `not_provisioned` (404).
-5. Suspending, revoking admission and deleting data are separate operations, not this one.
+5. A removed membership may take records that exist only because of it (a staff member's project
+   assignments in that workspace): exactly what the membership disclosed as `removal_effects`, never
+   records it did not disclose, and the same whether the membership goes by `remove` or by an `update`
+   dropping it. A membership that would take something with it and cannot say so (more than eight
+   kinds, say) must not be offered as editable.
+6. Suspending, revoking admission and deleting the account or data that outlives the membership are
+   separate operations, not this one.
 
 **Receipts.** The endpoint, not the adapter, keeps a receipt for every `update` and `remove`:
 
