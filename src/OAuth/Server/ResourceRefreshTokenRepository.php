@@ -63,6 +63,11 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
+        // The client link must outlive the access-token row, which can be purged while the
+        // refresh token is still live. Read it from the validated grant, never the request.
+        if ($model->getConnection()->getSchemaBuilder()->hasColumn($model->getTable(), 'client_id')) {
+            $attributes['client_id'] = $accessToken->getClient()->getIdentifier();
+        }
         $stamp = $this->providerIdentityStamp($model, $accessTokenId);
         // Checked again here: an account disabled (and its credentials revoked) between the new
         // access token and this row must not end up holding a fresh, unrevoked refresh token.

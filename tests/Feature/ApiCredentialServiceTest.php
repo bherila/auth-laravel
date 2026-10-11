@@ -7,10 +7,14 @@ use BWH\Auth\OAuth\Credentials\ApiCredentialService;
 use BWH\Auth\OAuth\Server\AgentOAuthServer;
 use BWH\Auth\OAuth\Server\OAuthResourceIndicator;
 use BWH\Auth\Http\Middleware\ExpectOAuthResource;
+use BWH\Auth\Testing\AssertsAgentOAuthContract;
 use BWH\Auth\Tests\Fixtures\User;
 use BWH\Auth\Tests\TestCase;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Schema\Blueprint;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Laravel\Passport\Http\Middleware\CheckToken;
 use Laravel\Passport\Passport;
 use Laravel\Passport\PassportServiceProvider;
@@ -24,6 +28,8 @@ use Laravel\Passport\PassportServiceProvider;
  */
 final class ApiCredentialServiceTest extends TestCase
 {
+    use AssertsAgentOAuthContract;
+
     private const APP = 'https://app.example.test';
 
     private const REDIRECT = 'http://127.0.0.1:3210/callback';
@@ -160,6 +166,69 @@ final class ApiCredentialServiceTest extends TestCase
         $this->actingAs($this->user)->deleteJson($app['delete_href'])->assertOk();
         $this->assertSame(0, Passport::token()->newQuery()->where('client_id', $issued['client_id'])->where('revoked', false)->count());
         $this->assertTrue((bool) $client->fresh()->revoked);
+    }
+
+    public function test_deleting_an_app_revokes_its_refresh_tokens_after_the_access_rows_are_purged(): void
+    {
+        $issued = $this->actingAs($this->user)->postJson(self::BASE.'/apps', [
+            'name' => 'Purged access app', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['items:read'],
+        ])->assertCreated()->json('data');
+        $this->agentOAuthCodeFlow($this->user, $issued['client_id'], 'items:read', self::REDIRECT)->assertOk();
+        $access = Passport::token()->newQuery()->where('client_id', $issued['client_id'])->sole();
+        $refresh = Passport::refreshToken()->newQuery()->where('access_token_id', $access->getKey())->sole();
+
+        $other = $this->actingAs($this->user)->postJson(self::BASE.'/apps', [
+            'name' => 'Other app', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['items:read'],
+        ])->assertCreated()->json('data');
+        $this->agentOAuthCodeFlow($this->user, $other['client_id'], 'items:read', self::REDIRECT)->assertOk();
+        $otherAccess = Passport::token()->newQuery()->where('client_id', $other['client_id'])->sole();
+        $otherRefresh = Passport::refreshToken()->newQuery()->where('access_token_id', $otherAccess->getKey())->sole();
+
+        // Refresh tokens outlive their expired access-token rows. Purge both clients' rows so the
+        // removal has to distinguish them through the refresh tokens' own client records.
+        $access->delete();
+        $otherAccess->delete();
+        $this->assertFalse((bool) $refresh->fresh()->revoked);
+        $this->assertFalse((bool) $otherRefresh->fresh()->revoked);
+
+        $this->actingAs($this->user)->deleteJson(self::BASE.'/apps/'.$issued['client_id'])->assertOk();
+
+        $this->assertTrue((bool) $refresh->fresh()->revoked, 'Client revocation reaches refresh tokens after access-token purge');
+        $this->assertFalse((bool) $otherRefresh->fresh()->revoked, "Another client's orphaned refresh token survives");
+        $this->assertSame($issued['client_id'], (string) $refresh->fresh()->getAttribute('client_id'));
+        $this->assertTrue((bool) Passport::client()->newQuery()->findOrFail($issued['client_id'])->revoked);
+        $this->assertFalse((bool) Passport::client()->newQuery()->findOrFail($other['client_id'])->revoked);
+    }
+
+    /** @return array<string, array{bool}> */
+    public static function legacyRefreshSchemas(): array
+    {
+        return ['nullable client association' => [true], 'column not migrated yet' => [false]];
+    }
+
+    #[DataProvider('legacyRefreshSchemas')]
+    public function test_deleting_an_app_still_revokes_linked_legacy_refresh_tokens(bool $hasClientColumn): void
+    {
+        if (! $hasClientColumn) {
+            Schema::table('oauth_refresh_tokens', static function (Blueprint $table): void {
+                $table->dropIndex(['client_id']);
+                $table->dropColumn('client_id');
+            });
+        }
+        $issued = $this->actingAs($this->user)->postJson(self::BASE.'/apps', [
+            'name' => 'Legacy refresh app', 'redirect_uris' => [self::REDIRECT], 'confidential' => false, 'scopes' => ['items:read'],
+        ])->assertCreated()->json('data');
+        $this->agentOAuthCodeFlow($this->user, $issued['client_id'], 'items:read', self::REDIRECT)->assertOk();
+        $access = Passport::token()->newQuery()->where('client_id', $issued['client_id'])->sole();
+        $refresh = Passport::refreshToken()->newQuery()->where('access_token_id', $access->getKey())->sole();
+        if ($hasClientColumn) {
+            $refresh->forceFill(['client_id' => null])->save();
+        }
+
+        $this->actingAs($this->user)->deleteJson(self::BASE.'/apps/'.$issued['client_id'])->assertOk();
+
+        $this->assertTrue((bool) $refresh->fresh()->revoked);
+        $this->assertTrue((bool) $access->fresh()->revoked);
     }
 
     public function test_unsafe_redirects_are_refused_and_a_public_app_has_no_secret(): void

@@ -195,6 +195,7 @@ final class OAuthResourceTokenBindingTest extends TestCase
             ->where('access_token_id', $claims['jti'])
             ->firstOrFail();
         $this->assertSame(self::RESOURCE, $storedRefreshToken->resource_uri);
+        $this->assertSame((string) $client->getKey(), $storedRefreshToken->client_id);
 
         $this->getJson('/mcp', ['Authorization' => 'Bearer '.$accessToken])->assertOk();
 
@@ -223,6 +224,10 @@ final class OAuthResourceTokenBindingTest extends TestCase
                 ->where('access_token_id', $refreshedClaims['jti'])
                 ->value('resource_uri'),
         );
+        $this->assertSame(
+            (string) $client->getKey(),
+            Passport::refreshToken()->newQuery()->where('access_token_id', $refreshedClaims['jti'])->value('client_id'),
+        );
     }
 
     public function test_refresh_resource_survives_expired_access_token_row_purge(): void
@@ -244,6 +249,10 @@ final class OAuthResourceTokenBindingTest extends TestCase
         // refresh token is still valid. The refresh credential owns its audience.
         Passport::token()->newQuery()->whereKey($accessTokenId)->delete();
         $this->assertDatabaseMissing('oauth_access_tokens', ['id' => $accessTokenId]);
+        $this->assertSame(
+            (string) $client->getKey(),
+            Passport::refreshToken()->newQuery()->where('access_token_id', $accessTokenId)->value('client_id'),
+        );
 
         $refreshed = $this->postJson('/oauth/token', [
             'grant_type' => 'refresh_token',
@@ -255,6 +264,10 @@ final class OAuthResourceTokenBindingTest extends TestCase
         $refreshedClaims = OAuthResourceIndicator::tokenClaims((string) $refreshed->json('access_token'));
         $this->assertSame(self::RESOURCE, $refreshedClaims['resource'] ?? null);
         $this->assertContains(self::RESOURCE, $refreshedClaims['aud'] ?? []);
+        $this->assertSame(
+            (string) $client->getKey(),
+            Passport::refreshToken()->newQuery()->where('access_token_id', $refreshedClaims['jti'])->value('client_id'),
+        );
         $this->assertSame(
             self::RESOURCE,
             Passport::refreshToken()->newQuery()
