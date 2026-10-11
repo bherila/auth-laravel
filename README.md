@@ -1176,7 +1176,8 @@ provider can show it before the actor confirms:
   `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)` checks it for an
   adapter, and that a refused write leaves the disclosed records (read by `$disclosed`) untouched.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
-  the cascade; the revision is what keeps the confirmation honest.
+  the cascade (see **Removal** below for what it may take); the revision is what keeps the
+  confirmation honest.
 - **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
   exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
   disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
@@ -1187,7 +1188,7 @@ provider can show it before the actor confirms:
 stays single-use per HTTP request; the endpoint refuses an `operation_id` equal to the `jti`.
 
 **Removal.** `remove` takes away the subject's access to this application as far as the actor
-manages it, and nothing else:
+manages it, together with whatever it disclosed as `removal_effects`, and nothing else:
 
 1. It removes every membership in the actor's projection and the application administrator flag.
    Memberships in workspaces the actor cannot see are outside it and survive.
@@ -1201,7 +1202,13 @@ manages it, and nothing else:
 4. The revision is compared as for an update (`revision_conflict`, 409). Removing a subject with
    nothing to remove changes nothing and answers the same revision. An unprovisioned subject is
    refused as `not_provisioned` (404).
-5. Suspending, revoking admission and deleting data are separate operations, not this one.
+5. A removed membership may take records that exist only because of it (a staff member's project
+   assignments in that workspace): exactly what the membership disclosed as `removal_effects`, never
+   records it did not disclose, and the same whether the membership goes by `remove` or by an `update`
+   dropping it. A membership that would take something with it and cannot say so (more than eight
+   kinds, say) must not be offered as editable.
+6. Suspending, revoking admission and deleting the account or data that outlives the membership are
+   separate operations, not this one.
 
 **Receipts.** The endpoint, not the adapter, keeps a receipt for every `update` and `remove`:
 
