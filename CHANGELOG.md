@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.23.1 - 2026-10-10
 
 ### A client that omits `resource` gets the endpoint its scopes belong to
 
