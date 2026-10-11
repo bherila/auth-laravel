@@ -44,6 +44,8 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->adapter->memberships['removable'] = ['w1' => 'member', 'w3' => 'owner'];
         // Only in a workspace the manager does not manage.
         $this->adapter->memberships['outsider'] = ['w3' => 'member'];
+        // Removable by the manager, with a membership in w4, which the manager may come to manage.
+        $this->adapter->memberships['colleague'] = ['w1' => 'member', 'w4' => 'member'];
         $this->adapter->labels = ['target' => 'Example Target', 'removable' => 'Removable Person', 'outsider' => 'Example Outsider'];
         $this->adapter->emails = ['removable' => 'removable@example.test'];
         $this->adapter->assignments['target'] = ['w1' => ['p1', 'p2']];
@@ -51,6 +53,12 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->adapter->metadata['removable'] = ['provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => '2026-09-02T08:15:00+02:00', 'last_seen_at' => '2026-10-09T17:45:00Z'];
 
         parent::setUp();
+    }
+
+    /** Let the manager manage w4 as well; nothing about any subject changes. */
+    private function widenTheManager(): void
+    {
+        $this->adapter->managers['manager'][] = 'w4';
     }
 
     /** Replace one of target's assigned projects in w1 with another: the same count, a different set. */
@@ -92,6 +100,12 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertEquals(['w2' => 'owner', 'w3' => 'member'], $this->adapter->memberships['target']);
         $this->assertSame(['w3' => 'owner'], $this->adapter->memberships['removable']);
         $this->assertSame(['w3' => 'member'], $this->adapter->memberships['outsider']);
+    }
+
+    public function test_a_confirmation_does_not_outlive_a_change_in_the_actors_reach(): void
+    {
+        $this->assertDelegatedRevisionCoversTheActorsReach('manager', 'colleague', $this->widenTheManager(...));
+        $this->assertSame(['w1' => 'member', 'w4' => 'member'], $this->adapter->memberships['colleague']);
     }
 
     public function test_removal_clears_an_application_administrator_the_actor_may_change(): void
@@ -178,6 +192,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
             'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap', 'assignments']],
             'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap', 'assignments']],
+            'a revision blind to the actor\'s reach' => ['revision_ignores_the_actor_scope', 'assertDelegatedRevisionCoversTheActorsReach', ['manager', 'colleague', 'widen']],
         ];
     }
 
@@ -190,6 +205,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->adapter->broken[$flaw] = true;
         $arguments = array_map(fn (string $argument): mixed => match ($argument) {
             'swap' => $this->swapAnAssignment(...),
+            'widen' => $this->widenTheManager(...),
             'assignments' => fn (): array => $this->adapter->assignments['target'] ?? [],
             default => $argument,
         }, $arguments);

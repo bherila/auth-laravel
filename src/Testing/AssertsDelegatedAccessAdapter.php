@@ -40,7 +40,8 @@ use Symfony\Component\HttpFoundation\Response;
  * {@see assertDelegatedSearchStaysInScope()}, {@see assertDelegatedRemoveStripsOnlyTheManagedProjection()},
  * {@see assertDelegatedRemoveRefusedWithoutPartialChange()}, {@see assertDelegatedMetadataIsWellFormed()}
  * and {@see assertDelegatedReceiptsReplayThroughTheEndpoint()}, which drives the real endpoint. An
- * adapter disclosing `removal_effects` also runs {@see assertDelegatedRemovalEffectsAreInTheRevision()}.
+ * adapter disclosing `removal_effects` also runs {@see assertDelegatedRemovalEffectsAreInTheRevision()},
+ * and every workspace application {@see assertDelegatedRevisionCoversTheActorsReach()}.
  *
  * @mixin TestCase
  */
@@ -410,6 +411,42 @@ trait AssertsDelegatedAccessAdapter
         $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, $state['revision'], $kept, $state['access']['application_admin']),
             'an update dropping a disclosing membership, confirmed before');
         $this->assertSame($before, [$this->delegatedAccessRecord($target), $disclosed()], 'A stale update changes nothing, not even what it would have cascaded to');
+    }
+
+    /**
+     * The revision covers the actor's reach, not only the subject's records.
+     *
+     * An actor that reads a target and then gains a workspace (another grant, nothing about the target
+     * changed) holds a confirmation for less than its write would now take: a `remove` would take the
+     * newly visible membership too, and resubmitting the update it read, unchanged, would drop that
+     * membership by omission. Both must be refused as a revision conflict and change nothing.
+     *
+     * Seed a target the actor may remove entirely, with an editable membership in a workspace the
+     * actor does not manage yet, and pass `$widen`, which grants the actor that workspace (and
+     * changes nothing about the target). It runs between the read and the writes. Not for an
+     * account-only application, which has no memberships to widen into.
+     *
+     * @param  callable(): void  $widen
+     */
+    protected function assertDelegatedRevisionCoversTheActorsReach(string $actor, string $target, callable $widen): void
+    {
+        $state = $this->delegatedAccessRead($actor, $target);
+        $this->assertTrue($state['allowed_edits']['remove'], 'Seed a target the actor may remove entirely');
+        $before = $this->delegatedAccessRecord($target);
+
+        $widen();
+        $this->assertSame($before, $this->delegatedAccessRecord($target), 'Seed a $widen that changes the actor\'s grants, not the target');
+        $after = $this->delegatedAccessRead($actor, $target);
+        $this->assertGreaterThan(count($state['access']['workspaces']), count($after['access']['workspaces']), 'Seed a $widen that brings one of the target\'s memberships into the actor\'s view');
+        $this->assertNotSame($state['revision'], $after['revision'], 'Gaining a workspace changes the revision of a subject with a membership in it');
+
+        $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedRemovePayload($target, $state['revision']),
+            'a removal confirmed before the actor gained a workspace');
+        $this->assertSame($before, $this->delegatedAccessRecord($target), 'A removal confirmed against less than it would take changes nothing');
+
+        $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, $state['revision'], $state['access']['workspaces'], $state['access']['application_admin']),
+            'an update read before the actor gained a workspace, resubmitted unchanged');
+        $this->assertSame($before, $this->delegatedAccessRecord($target), 'An update read before the actor gained a workspace drops nothing by omission');
     }
 
     /**

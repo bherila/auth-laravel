@@ -1363,6 +1363,11 @@ the capabilities; the conformance assertions below do.
 What remains the adapter's: match the verified actor to a local account through its binding and
 refuse (`not_authorized`, 403) unless it is active and may manage access. Show only what that actor
 may manage. Compare revisions under the same locks the changes take (`revision_conflict`, 409).
+A revision is of the subject as this actor sees it. It changes when the subject's records change and
+when the actor's reach over them does (a workspace it gains or loses, whether it may change the
+administrator flag), so two actors may be given different revisions for one subject. Otherwise an
+actor that gains a workspace after reading would remove a membership it never saw, or drop it by
+omission when resubmitting the update it read.
 Provision only an unbound subject, bound to `bindingIssuer()` and the exact subject, never by
 adopting a row found by address. Keep the application's own last-administrator and audit rules.
 
@@ -1424,7 +1429,8 @@ Each refused attempt must leave `delegatedAccessTruth()` exactly as it was.
 
 For version 3, also seed a subject and a workspace outside the manager's view whose labels match a
 search, a target the manager may remove entirely (with a membership it cannot see), and known
-metadata, then:
+metadata. For the revision's reach, seed a removable target with a membership in a workspace the
+manager does not manage yet, and a `$widen` closure that grants the manager that workspace. Then:
 
 ```php
 $this->assertDelegatedSearchStaysInScope($manager, 'subjects', 'Example', 'OnlyOutsideTheView');
@@ -1433,6 +1439,7 @@ $this->assertDelegatedRemoveRefusedWithoutPartialChange($manager, $target);   //
 $this->assertDelegatedRemoveStripsOnlyTheManagedProjection($manager, $removable);
 $this->assertDelegatedMetadataIsWellFormed($manager, $removable);
 $this->assertDelegatedReceiptsReplayThroughTheEndpoint($manager, $target);
+$this->assertDelegatedRevisionCoversTheActorsReach($manager, $colleague, $widen);   // widens the manager
 ```
 
 `assertDelegatedReceiptsReplayThroughTheEndpoint()` posts signed requests to the real route. It

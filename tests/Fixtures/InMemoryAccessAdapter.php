@@ -85,6 +85,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'hide_a_removal_it_allows' => false,
         'effects_outside_revision' => false,
         'cascade_before_revision_check' => false,
+        'revision_ignores_the_actor_scope' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -109,7 +110,14 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         };
     }
 
-    public function revision(string $subject): string
+    /**
+     * The subject's records as this actor sees them: the memberships, what their removal would take,
+     * and the actor's own reach (the workspaces it manages, whether it may change the administrator
+     * flag), so a confirmation does not outlive a change in what the actor's write would take.
+     *
+     * @param  list<string>  $managed
+     */
+    private function revision(string $subject, array $managed): string
     {
         $memberships = $this->memberships[$subject] ?? [];
         ksort($memberships);
@@ -120,7 +128,10 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         }, $this->assignments[$subject] ?? []);
         ksort($assignments);
 
-        return hash('sha256', json_encode([$memberships, $this->admins[$subject] ?? false, $this->generations[$subject] ?? 0, $assignments]));
+        sort($managed);
+        $scope = $this->broken['revision_ignores_the_actor_scope'] ? [] : [$managed, $this->adminEditable];
+
+        return hash('sha256', json_encode([$memberships, $this->admins[$subject] ?? false, $this->generations[$subject] ?? 0, $assignments, $scope]));
     }
 
     /**
@@ -234,7 +245,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         return ($this->broken['answer_an_extra_field'] ? ['internal_id' => 42] : []) + [
             'subject' => $subject,
             'provisioned' => true,
-            'revision' => $this->revision($subject),
+            'revision' => $this->revision($subject, $managed),
             'access' => ['application_admin' => $admin, 'workspaces' => $visible] + ($this->removalNotice === null ? [] : ['removal_notice' => $this->removalNotice]),
             'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false, 'remove' => $removable],
         ] + $metadata;
@@ -259,7 +270,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
                 throw DelegatedRefusal::of(DelegatedRefusal::INVALID_REQUEST);
             }
         }
-        if ($payload['expected_revision'] !== $this->revision($subject) && ! $this->broken['ignore_revision']) {
+        if ($payload['expected_revision'] !== $this->revision($subject, $managed) && ! $this->broken['ignore_revision']) {
             throw DelegatedRefusal::of(DelegatedRefusal::REVISION_CONFLICT);
         }
 
@@ -306,7 +317,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
     {
         $subject = $payload['subject'];
         $current = $this->memberships[$subject] ?? throw DelegatedRefusal::of(DelegatedRefusal::NOT_PROVISIONED);
-        $revision = $this->revision($subject);
+        $revision = $this->revision($subject, $managed);
         if ($this->broken['cascade_before_revision_check']) {
             // Clears what the removal would take before finding the confirmation stale.
             $this->assignments[$subject] = array_diff_key($this->assignments[$subject] ?? [], array_flip($managed));
