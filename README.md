@@ -1163,6 +1163,14 @@ provider can show it before the actor confirms:
   matches `[a-z][a-z0-9_]{0,63}` and is unique within the membership, `label` is 1 to 255 bytes of
   plain text, `count` an integer of at least 1. Nothing to disclose is the field omitted, never `[]`
   or a zero count. It is never sent back in an `update`.
+- `count` is exact: the number of records the removal takes, in the unit the label names (assignment
+  rows, say, not the distinct projects they point at), never an estimate. Omitting an effect means it
+  does not happen, never that it could not be counted; a membership whose effects cannot be counted
+  is not offered as editable.
+- One state carries at most 100 effect entries across its memberships
+  (`MAX_REMOVAL_EFFECTS_PER_STATE`), so every valid state fits `MAX_RESPONSE_BYTES` however its
+  strings escape. A state that would need more is never truncated and never drops an effect to fit:
+  the application offers fewer of those memberships as editable.
 - `removal_notice` is optional in a provisioned state's `access` (`read`, `update`, `remove`): up to
   500 bytes of plain text giving context for the confirmation, such as what a removal leaves alone. It
   is never a disclosure: it cannot widen what a removal may take, which is only what the memberships

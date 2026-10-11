@@ -272,9 +272,10 @@ final class DelegatedAccessController extends Controller
             throw new DelegatedAccessException('invalid_response');
         }
 
-        // With the exact-fields check, a contract-valid answer stays far below this bound today
-        // (pages of 50, bounded strings). It is kept so a future contract field cannot make this
-        // side send more than the provider reads.
+        // With the exact-fields check, a contract-valid answer stays below this bound (pages of 50,
+        // bounded strings, at most MAX_REMOVAL_EFFECTS_PER_STATE effects; DelegatedContractV3Test
+        // encodes the worst case). It is kept so a future contract field cannot make this side send
+        // more than the provider reads.
         if (strlen($json) > DelegatedContract::MAX_RESPONSE_BYTES) {
             throw new DelegatedAccessException('invalid_response');
         }

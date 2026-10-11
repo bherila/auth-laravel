@@ -298,6 +298,28 @@ class DelegatedContractV3Test extends TestCase
         $this->refused(fn () => $contract->request(self::APP, [...$this->update(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w2', 'role' => 'sender', 'removal_effects' => $effects]]]]), 422, 'effects sent back in an update');
     }
 
+    public function test_every_valid_state_encodes_within_the_response_bound(): void
+    {
+        $contract = new DelegatedContract;
+        // Each string at its byte bound and as long as escaping makes it: a control character is six
+        // bytes encoded, a four-byte character twelve.
+        $control = static fn (int $bytes): string => str_repeat("\x01", $bytes);
+        $label = str_repeat("\u{1F469}", 63).'abc';
+        $effect = static fn (int $i): array => ['kind' => 'k'.str_pad((string) $i, 63, 'x'), 'label' => $label, 'count' => PHP_INT_MAX];
+        $memberships = array_map(static fn (int $i): array => ['id' => sprintf('%03d', $i).$control(188), 'role' => $control(64), 'editable' => true, 'removal_effects' => [$effect(1)]], range(1, 100));
+        $state = static fn (array $workspaces): array => ['contract_version' => 3, 'application' => self::APP, 'operation' => 'read', 'subject' => $control(191),
+            'provisioned' => true, 'revision' => $control(128), 'access' => ['application_admin' => false, 'workspaces' => $workspaces, 'removal_notice' => str_repeat("\u{1F469}", 125)],
+            'allowed_edits' => ['application_admin' => true, 'workspaces' => true, 'provision' => false, 'remove' => false],
+            'provisioned_at' => '2026-10-10T12:00:00.123456+02:00', 'first_sign_in_at' => '2026-10-10T12:00:00.123456+02:00', 'last_seen_at' => '2026-10-10T12:00:00.123456+02:00'];
+
+        $largest = $state($memberships);
+        $this->assertSame($largest, $contract->response($largest, self::APP, 'read', $control(191), 3));
+        $this->assertLessThanOrEqual(DelegatedContract::MAX_RESPONSE_BYTES, strlen((string) json_encode($largest, JSON_UNESCAPED_SLASHES)));
+
+        $memberships[0]['removal_effects'][] = $effect(2);
+        $this->refused(fn () => $contract->response($state($memberships), self::APP, 'read', $control(191), 3), 503, 'more effects in one state than fit the response');
+    }
+
     public function test_a_provisioned_state_may_carry_a_removal_notice_in_its_access(): void
     {
         $contract = new DelegatedContract;

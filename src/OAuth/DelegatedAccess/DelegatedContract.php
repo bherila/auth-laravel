@@ -58,6 +58,13 @@ final class DelegatedContract
      */
     public const MAX_REMOVAL_EFFECTS = 8;
 
+    /**
+     * At most this many `removal_effects` entries in one state, across its memberships, so every
+     * valid state encodes within {@see MAX_RESPONSE_BYTES}, escaping included. A state that would
+     * need more is refused, never truncated: the application offers fewer memberships as editable.
+     */
+    public const MAX_REMOVAL_EFFECTS_PER_STATE = 100;
+
     /** A removal effect's `kind`: a stable identifier the application chooses. */
     public const REMOVAL_EFFECT_KIND_PATTERN = '/^[a-z][a-z0-9_]{0,63}$/D';
 
@@ -581,6 +588,7 @@ final class DelegatedContract
         }
 
         $ids = [];
+        $effects = 0;
         foreach ($access['workspaces'] as $workspace) {
             $keys = ! $reported ? ['id', 'role']
                 : (is_array($workspace) && array_key_exists('removal_effects', $workspace) ? ['id', 'role', 'editable', 'removal_effects'] : ['id', 'role', 'editable']);
@@ -589,7 +597,8 @@ final class DelegatedContract
                 || ! $this->boundedString($workspace['role'], 64)
                 || ($reported && ! is_bool($workspace['editable']))
                 || (array_key_exists('removal_effects', $workspace) && ! ($workspace['editable'] === true && $this->removalEffects($workspace['removal_effects'])))
-                || in_array($workspace['id'], $ids, true)) {
+                || in_array($workspace['id'], $ids, true)
+                || ($effects += count($workspace['removal_effects'] ?? [])) > self::MAX_REMOVAL_EFFECTS_PER_STATE) {
                 return false;
             }
             $ids[] = $workspace['id'];
