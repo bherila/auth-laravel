@@ -379,22 +379,28 @@ trait AssertsDelegatedAccessAdapter
      * every count is the same, and the write must be refused as a revision conflict: a `remove`, and
      * an `update` dropping the disclosing membership alike.
      *
-     * Seed a target with an editable membership that discloses `removal_effects`, and pass `$swap`, a
+     * Then a removal confirmed against a fresh read succeeds and takes exactly what it disclosed.
+     *
+     * Seed a target the actor may remove entirely, with an editable membership that discloses
+     * `removal_effects` and, better, records of the same kind outside the actor's view. Pass `$swap`, a
      * change to what one effect stands for that keeps every count (replace one assigned item with
      * another). It runs between the read and the writes. `$disclosed` reads the records the effects
      * stand for from the application's own tables, like {@see delegatedAccessTruth()}: a refused write
-     * must leave them exactly as they were, not only the memberships. Not for an account-only
-     * application, which has no memberships to disclose effects on.
+     * must leave them exactly as they were, not only the memberships. `$remaining` is what
+     * `$disclosed` must return after the fresh removal: the swapped records gone, everything outside
+     * the projection kept. Not for an account-only application, which has no memberships to disclose
+     * effects on.
      *
      * @param  callable(): void  $swap
      * @param  callable(): mixed  $disclosed
      */
-    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap, callable $disclosed): void
+    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap, callable $disclosed, mixed $remaining): void
     {
         $effects = static fn (array $state): array => array_column(array_filter($state['access']['workspaces'], static fn (array $m): bool => isset($m['removal_effects'])), 'removal_effects', 'id');
         $state = $this->delegatedAccessRead($actor, $target);
         $shown = $effects($state);
         $this->assertNotSame([], $shown, 'Seed a target with a membership that discloses removal_effects');
+        $this->assertTrue($state['allowed_edits']['remove'], 'Seed a target the actor may remove entirely, so only the revision refuses the stale removal');
 
         $swap();
         $after = $this->delegatedAccessRead($actor, $target);
@@ -411,6 +417,10 @@ trait AssertsDelegatedAccessAdapter
         $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, $state['revision'], $kept, $state['access']['application_admin']),
             'an update dropping a disclosing membership, confirmed before');
         $this->assertSame($before, [$this->delegatedAccessRecord($target), $disclosed()], 'A stale update changes nothing, not even what it would have cascaded to');
+
+        $removed = $this->delegatedAccessCall($actor, $this->delegatedRemovePayload($target, $after['revision']));
+        $this->assertSame([], $removed['access']['workspaces'], 'A removal confirmed against a fresh read succeeds');
+        $this->assertSame($remaining, $disclosed(), 'A removal takes exactly what it disclosed, and nothing outside the actor\'s projection');
     }
 
     /**

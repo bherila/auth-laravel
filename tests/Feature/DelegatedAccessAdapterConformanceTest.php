@@ -49,6 +49,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->adapter->labels = ['target' => 'Example Target', 'removable' => 'Removable Person', 'outsider' => 'Example Outsider'];
         $this->adapter->emails = ['removable' => 'removable@example.test'];
         $this->adapter->assignments['target'] = ['w1' => ['p1', 'p2']];
+        $this->adapter->assignments['colleague'] = ['w1' => ['p1', 'p2'], 'w4' => ['p9']];
         $this->adapter->removalNotice = 'Client portal access is unchanged.';
         $this->adapter->metadata['removable'] = ['provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => '2026-09-02T08:15:00+02:00', 'last_seen_at' => '2026-10-09T17:45:00Z'];
 
@@ -61,10 +62,10 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->adapter->managers['manager'][] = 'w4';
     }
 
-    /** Replace one of target's assigned projects in w1 with another: the same count, a different set. */
+    /** Replace one of colleague's assigned projects in w1 with another: the same count, a different set. */
     private function swapAnAssignment(): void
     {
-        $this->adapter->assignments['target']['w1'] = ['p1', 'p3'];
+        $this->adapter->assignments['colleague']['w1'] = ['p1', 'p3'];
     }
 
     protected function delegatedAccessTruth(string $subject): array
@@ -91,7 +92,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertSame('2026-10-09T17:45:00Z', $this->delegatedAccessCall('manager', ['operation' => 'subjects', 'query' => 'Removable'])['subjects'][0]['last_seen_at']);
         $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'target');
         $this->assertDelegatedReceiptsReplayThroughTheEndpoint('manager', 'target');
-        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'target', $this->swapAnAssignment(...), fn (): array => $this->adapter->assignments['target'] ?? []);
+        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'colleague', $this->swapAnAssignment(...), fn (): array => $this->adapter->assignments['colleague'] ?? [], ['w4' => ['p9']]);
         $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'removable');
         $this->assertDelegatedUpdateKeepsUnseenMemberships('manager', 'target');
 
@@ -100,6 +101,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertEquals(['w2' => 'owner', 'w3' => 'member'], $this->adapter->memberships['target']);
         $this->assertSame(['w3' => 'owner'], $this->adapter->memberships['removable']);
         $this->assertSame(['w3' => 'member'], $this->adapter->memberships['outsider']);
+        $this->assertSame(['w4' => 'member'], $this->adapter->memberships['colleague']);
     }
 
     public function test_a_confirmation_does_not_outlive_a_change_in_the_actors_reach(): void
@@ -190,8 +192,9 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'a removal offered that is refused' => ['offer_a_removal_it_refuses', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'target']],
             'a removal allowed but not offered' => ['hide_a_removal_it_allows', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
-            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap', 'assignments']],
-            'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap', 'assignments']],
+            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
+            'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
+            'a removal cascading beyond what it disclosed' => ['cascade_beyond_the_projection', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
             'a revision blind to the actor\'s reach' => ['revision_ignores_the_actor_scope', 'assertDelegatedRevisionCoversTheActorsReach', ['manager', 'colleague', 'widen']],
         ];
     }
@@ -206,7 +209,8 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $arguments = array_map(fn (string $argument): mixed => match ($argument) {
             'swap' => $this->swapAnAssignment(...),
             'widen' => $this->widenTheManager(...),
-            'assignments' => fn (): array => $this->adapter->assignments['target'] ?? [],
+            'assignments' => fn (): array => $this->adapter->assignments['colleague'] ?? [],
+            'remaining' => ['w4' => ['p9']],
             default => $argument,
         }, $arguments);
 

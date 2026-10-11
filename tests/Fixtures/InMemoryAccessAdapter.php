@@ -86,6 +86,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'effects_outside_revision' => false,
         'cascade_before_revision_check' => false,
         'revision_ignores_the_actor_scope' => false,
+        'cascade_beyond_the_projection' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -350,7 +351,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $answer = null;
         $this->memberships[$subject] = $this->broken['remove_unseen_memberships'] ? [] : array_diff_key($current, $mine);
         $this->admins[$subject] = $this->broken['keep_application_admin_on_removal'] && $admin;
-        $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
+        $this->assignments[$subject] = $this->broken['cascade_beyond_the_projection'] ? [] : array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
         if ($this->broken['remove_the_account']) {
             $answer = ['subject' => $subject, 'provisioned' => true, 'revision' => 'gone', 'access' => ['application_admin' => false, 'workspaces' => []],
                 'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];

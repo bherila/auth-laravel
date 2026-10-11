@@ -1178,9 +1178,18 @@ provider can show it before the actor confirms:
   (`Project assignments: 2`) and never inflects it into a sentence.
 - **The revision covers what the effects stand for, not only their counts.** A confirmation shown
   against "2 project assignments" must fail with `revision_conflict` if either assignment changes
-  before the write commits, even when the count is still 2.
-  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)` checks it for an
-  adapter, and that a refused write leaves the disclosed records (read by `$disclosed`) untouched.
+  before the write commits, even when the count is still 2. Read the effects and the revision from
+  one snapshot (one transaction, or under the locks the write takes), and make every path that changes
+  what an effect stands for (assigning, reassigning or deleting a project, not only the access screens)
+  take part in the same locking or versioning. When what a removal takes changes with a deploy
+  (cascading something new, or no longer), the revisions change with it: put a version of the cascade
+  rules in them, so a confirmation made under the old rules is refused under the new ones.
+  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed, $remaining)`
+  checks it for an adapter, with a target the actor may remove entirely: a stale write is refused and
+  leaves the disclosed records (read by `$disclosed`) untouched, and a removal confirmed against a
+  fresh read succeeds and leaves exactly `$remaining`. It runs in one process, so it cannot race the
+  database; an application's own adapter tests should also insert or reassign a dependent record
+  concurrently with a removal.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
   the cascade (see **Removal** below for what it may take); the revision is what keeps the
   confirmation honest.
