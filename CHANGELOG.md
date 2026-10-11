@@ -4,6 +4,18 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### A client that omits `resource` gets the endpoint its scopes belong to
+
+- With several resources and `assume_omitted_resource`, an authorization request without `resource` was
+  always bound to the assumed default, so a connector that never sends RFC 8707 parameters but asks for
+  an MCP connection scope was refused (`invalid_scope`). It is now bound to the default when its scopes
+  fit, otherwise to the first configured resource whose ceiling admits them (list a canonical endpoint
+  before its aliases).
+- Under the same assumption, an exchange or refresh that omits `resource` is for the resource its grant
+  was made for, instead of the default. Strict mode (no assumption) still requires the parameter.
+
 ## v0.23.0 - 2026-10-10
 
 ### Upgrade notes for 0.23.0

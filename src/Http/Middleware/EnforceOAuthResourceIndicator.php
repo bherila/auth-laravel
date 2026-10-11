@@ -30,7 +30,9 @@ final class EnforceOAuthResourceIndicator
             return $this->consentSubmission($request, $next);
         }
 
-        if ($request->routeIs('passport.token') && OAuthResourceIndicator::requestNamesResource($request)) {
+        // An omitted resource at the token endpoint is the grant's own, settled by the code and
+        // refresh-token repositories; only an explicit one is checked here.
+        if ($request->routeIs('passport.token') && $request->exists('resource')) {
             $resource = OAuthResourceIndicator::requestResource($request);
             if (! OAuthResourceIndicator::isConfiguredResource($resource)) {
                 return $this->invalidResource();
@@ -71,7 +73,8 @@ final class EnforceOAuthResourceIndicator
         // An omitted resource stands for the configured one only when the
         // application opted in; otherwise it stays omitted.
         $hasResource = $request->query->has('resource') || OAuthResourceIndicator::assumesOmittedResource();
-        $resource = $hasResource ? OAuthResourceIndicator::requestResource($request) : null;
+        $resource = ! $hasResource ? null
+            : ($request->query->has('resource') ? OAuthResourceIndicator::requestResource($request) : OAuthResourceIndicator::resourceForOmitted($scopes));
         if (($hasResource && ! OAuthResourceIndicator::isConfiguredResource($resource))
             || (! $hasResource && OAuthResourceIndicator::scopesRequireResource($scopes))) {
             return $this->invalidResource($request);

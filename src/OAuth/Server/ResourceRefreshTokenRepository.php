@@ -91,7 +91,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         $bound = $storedValue !== null;
         $request = $this->request();
         $hasRequestedResource = $request !== null && OAuthResourceIndicator::requestNamesResource($request);
-        $requestedResource = $request === null ? null : OAuthResourceIndicator::requestResource($request);
+        $requestedResource = $request === null ? null : OAuthResourceIndicator::exchangeResource($request, $storedResource);
 
         if (! $bound) {
             // A refresh request cannot add an audience that was absent from the

@@ -288,6 +288,11 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         if ($request === null || ! OAuthResourceIndicator::requestNamesResource($request)) {
             return null;
         }
+        // An omitted resource under the assumption means the grant's own, which the code or
+        // refresh-token check has already set as the validated resource.
+        if (! $request->exists('resource')) {
+            return OAuthResourceIndicator::validatedFor($request) ?? OAuthResourceIndicator::requestResource($request);
+        }
 
         $resource = OAuthResourceIndicator::requestResource($request);
         if ($resource === null || ! OAuthResourceIndicator::isConfiguredResource($resource)) {

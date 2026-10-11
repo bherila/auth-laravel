@@ -173,6 +173,21 @@ final class OAuthMultipleResourcesTest extends TestCase
         $this->bearer('POST', '/mcp', $token)->assertUnauthorized();
     }
 
+    public function test_a_client_that_never_sends_a_resource_gets_the_endpoint_its_scopes_belong_to(): void
+    {
+        // As a connector that predates RFC 8707 does: no `resource` at authorization, exchange
+        // or refresh, asking for the MCP connection scope.
+        ['client' => $client, 'tokens' => $tokens] = $this->connect('mcp:use items:read', null);
+        $this->assertSame(self::APP.'/api/v1/mcp', Passport::token()->newQuery()->latest('created_at')->first()->resource_uri);
+        $this->bearer('POST', '/api/v1/mcp', $tokens['access_token'])->assertOk()->assertJsonPath('ok', 'mcp');
+        $this->bearer('GET', '/api/v1/items', $tokens['access_token'])->assertUnauthorized();
+
+        $refreshed = $this->post('/oauth/token', [
+            'grant_type' => 'refresh_token', 'client_id' => $client, 'refresh_token' => $tokens['refresh_token'],
+        ], ['Accept' => 'application/json'])->assertOk()->json();
+        $this->bearer('POST', '/api/v1/mcp', $refreshed['access_token'])->assertOk();
+    }
+
     public function test_an_endpoint_and_its_alias_are_separate_audiences(): void
     {
         $mcp = $this->connect('mcp:use items:read', self::APP.'/api/v1/mcp')['tokens']['access_token'];
@@ -192,7 +207,10 @@ final class OAuthMultipleResourcesTest extends TestCase
 
         // The MCP connection scope stays off REST credentials, and REST-only scopes off MCP ones.
         $this->assertStringContainsString('error=invalid_scope',
-            (string) $this->authorize($client, 'mcp:use', null, $verifier)->headers->get('Location'));
+            (string) $this->authorize($client, 'mcp:use', self::APP.'/api/v1', $verifier)->headers->get('Location'));
+        // Omitted, a mix no single resource admits is refused rather than split.
+        $this->assertStringContainsString('error=invalid_scope',
+            (string) $this->authorize($client, 'mcp:use reports:read', null, $verifier)->headers->get('Location'));
         $this->assertStringContainsString('error=invalid_scope',
             (string) $this->authorize($client, 'mcp:use reports:read', self::APP.'/api/v1/mcp', $verifier)->headers->get('Location'));
 
