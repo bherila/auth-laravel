@@ -1207,6 +1207,13 @@ provider can show it before the actor confirms:
   label the same kind differently. An effect that happens only when several memberships go together
   (the last of a person's assignments for one client, say) belongs to none of them, so the
   application does not offer those memberships as editable.
+- **Only removal is described.** Changing a membership's role, or clearing the administrator flag,
+  takes nothing else with it. An application where such a change would cascade refuses it through
+  this contract (`invalid_request`), or does not offer the membership or the flag as editable.
+- **A disclosure grants nothing.** The application authorizes the whole cascade for this actor, as it
+  does the membership. Records the actor may not see one by one still count in an effect's total,
+  under a label that names them generically; they are never left out. Where even a count would say
+  too much, the membership is not offered as editable.
 - **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
   exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
   disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
