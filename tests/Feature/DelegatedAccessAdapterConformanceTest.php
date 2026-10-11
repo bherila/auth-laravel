@@ -45,11 +45,11 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         // Only in a workspace the manager does not manage.
         $this->adapter->memberships['outsider'] = ['w3' => 'member'];
         // Removable by the manager, with a membership in w4, which the manager may come to manage.
-        $this->adapter->memberships['colleague'] = ['w1' => 'member', 'w4' => 'member'];
+        $this->adapter->memberships['colleague'] = ['w1' => 'member', 'w2' => 'member', 'w4' => 'member'];
         $this->adapter->labels = ['target' => 'Example Target', 'removable' => 'Removable Person', 'outsider' => 'Example Outsider'];
         $this->adapter->emails = ['removable' => 'removable@example.test'];
         $this->adapter->assignments['target'] = ['w1' => ['p1', 'p2']];
-        $this->adapter->assignments['colleague'] = ['w1' => ['p1', 'p2'], 'w4' => ['p9']];
+        $this->adapter->assignments['colleague'] = ['w1' => ['p1', 'p2'], 'w2' => ['p5'], 'w4' => ['p9']];
         $this->adapter->removalNotice = 'Client portal access is unchanged.';
         $this->adapter->metadata['removable'] = ['provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => '2026-09-02T08:15:00+02:00', 'last_seen_at' => '2026-10-09T17:45:00Z'];
 
@@ -107,7 +107,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
     public function test_a_confirmation_does_not_outlive_a_change_in_the_actors_reach(): void
     {
         $this->assertDelegatedRevisionCoversTheActorsReach('manager', 'colleague', $this->widenTheManager(...));
-        $this->assertSame(['w1' => 'member', 'w4' => 'member'], $this->adapter->memberships['colleague']);
+        $this->assertSame(['w1' => 'member', 'w2' => 'member', 'w4' => 'member'], $this->adapter->memberships['colleague']);
     }
 
     public function test_removal_clears_an_application_administrator_the_actor_may_change(): void
@@ -195,6 +195,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
             'a stale removal cascading anyway' => ['cascade_before_revision_check', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
             'a removal cascading beyond what it disclosed' => ['cascade_beyond_the_projection', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
+            'an update leaving what it disclosed' => ['update_leaves_its_cascade', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'colleague', 'swap', 'assignments', 'remaining']],
             'a revision blind to the actor\'s reach' => ['revision_ignores_the_actor_scope', 'assertDelegatedRevisionCoversTheActorsReach', ['manager', 'colleague', 'widen']],
         ];
     }

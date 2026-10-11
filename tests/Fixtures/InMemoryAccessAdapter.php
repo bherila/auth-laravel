@@ -87,6 +87,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'cascade_before_revision_check' => false,
         'revision_ignores_the_actor_scope' => false,
         'cascade_beyond_the_projection' => false,
+        'update_leaves_its_cascade' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -302,7 +303,9 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $unseen = $this->broken['replace_wholesale'] ? [] : array_diff_key($current, array_flip($managed));
         $this->memberships[$subject] = $unseen + $requested;
         $this->admins[$subject] = $payload['access']['application_admin'];
-        $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
+        if (! $this->broken['update_leaves_its_cascade']) {
+            $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
+        }
 
         return $this->state($managed, $subject);
     }

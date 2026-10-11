@@ -1193,9 +1193,10 @@ before the actor confirms:
   (cascading something new, or no longer), the revisions change with it: put a version of the cascade
   rules in them, so a confirmation made under the old rules is refused under the new ones.
   `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed, $remaining)`
-  checks it for an adapter, with a target the actor may remove entirely: a stale write is refused and
-  leaves the disclosed records (read by `$disclosed`) untouched, and a removal confirmed against a
-  fresh read succeeds and leaves exactly `$remaining`. It runs in one process, so it cannot race the
+  checks it for an adapter, with a target the actor may remove entirely and two disclosing memberships:
+  a stale write is refused and leaves the disclosed records (read by `$disclosed`) untouched; then,
+  against fresh reads, an update dropping one membership takes its records and a removal takes the
+  rest, leaving exactly `$remaining`. It runs in one process, so it cannot race the
   database; an application's own adapter tests should also insert or reassign a dependent record
   concurrently with a removal.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
