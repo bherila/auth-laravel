@@ -44,8 +44,10 @@ final class DelegatedContract
     public const STATE_METADATA = ['provisioned_at', 'first_sign_in_at', 'last_seen_at'];
 
     /**
-     * A state may carry `removal_notice`: plain text saying what removing this person's access leaves
-     * alone or does beyond the memberships, shown with the confirmation. Up to this many bytes.
+     * A state's `access` may carry `removal_notice`: plain text saying what removing this person's
+     * access leaves alone or does beyond the memberships, shown with the confirmation. Up to this many
+     * bytes. It sits in `access`, whose keys earlier providers check exactly, so one that cannot show
+     * it refuses the state rather than dropping the notice.
      */
     public const MAX_REMOVAL_NOTICE_BYTES = 500;
 
@@ -73,9 +75,9 @@ final class DelegatedContract
 
     /** The top-level fields an answer may add to {@see ADAPTER_FIELDS}. */
     public const ADAPTER_OPTIONAL_FIELDS = [
-        'read' => [...self::STATE_METADATA, 'removal_notice'],
-        'update' => [...self::STATE_METADATA, 'removal_notice'],
-        'remove' => [...self::STATE_METADATA, 'removal_notice'],
+        'read' => self::STATE_METADATA,
+        'update' => self::STATE_METADATA,
+        'remove' => self::STATE_METADATA,
     ];
 
     /**
@@ -457,10 +459,7 @@ final class DelegatedContract
         if (! $response['provisioned']) {
             return $response['revision'] === null && $response['access'] === null
                 && $edits['application_admin'] === false && $edits['workspaces'] === false && $edits['remove'] === false
-                && ! array_key_exists('removal_notice', $response) && $this->metadata($response, false);
-        }
-        if (array_key_exists('removal_notice', $response) && ! $this->plainText($response['removal_notice'], self::MAX_REMOVAL_NOTICE_BYTES)) {
-            return false;
+                && $this->metadata($response, false);
         }
         if ($edits['provision'] !== false || ! $this->boundedString($response['revision'], 128) || ! $this->access($response['access'], true)) {
             return false;
@@ -567,12 +566,14 @@ final class DelegatedContract
 
     /**
      * Access: memberships name a role, and a response also says whether each is editable and may
-     * disclose what else removing an editable one takes with it. Role ids are bounded here; whether
+     * disclose what else removing an editable one takes with it, and what a removal leaves alone. Role ids are bounded here; whether
      * they were advertised is {@see rolesAreAdvertised()}.
      */
     private function access(mixed $access, bool $reported): bool
     {
-        if (! is_array($access) || ! $this->hasExactKeys($access, ['application_admin', 'workspaces'])
+        $noticed = $reported && is_array($access) && array_key_exists('removal_notice', $access);
+        if (! is_array($access) || ! $this->hasExactKeys($access, $noticed ? ['application_admin', 'workspaces', 'removal_notice'] : ['application_admin', 'workspaces'])
+            || ($noticed && ! $this->plainText($access['removal_notice'], self::MAX_REMOVAL_NOTICE_BYTES))
             || ! is_bool($access['application_admin']) || ! is_array($access['workspaces'])
             || ! array_is_list($access['workspaces']) || count($access['workspaces']) > 100) {
             return false;

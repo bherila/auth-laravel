@@ -1154,8 +1154,8 @@ provider can show it before the actor confirms:
 ```json
 "access": { "application_admin": false, "workspaces": [
   { "id": "w2", "role": "member", "editable": true,
-    "removal_effects": [ { "kind": "project_assignments", "label": "Project assignments", "count": 2 } ] } ] },
-"removal_notice": "Client portal access is unchanged."
+    "removal_effects": [ { "kind": "project_assignments", "label": "Project assignments", "count": 2 } ] } ],
+  "removal_notice": "Client portal access is unchanged." }
 ```
 
 - `removal_effects` is optional on a reported membership, and only on an editable one: what removing
@@ -1163,19 +1163,22 @@ provider can show it before the actor confirms:
   matches `[a-z][a-z0-9_]{0,63}` and is unique within the membership, `label` is 1 to 255 bytes of
   plain text, `count` an integer of at least 1. Nothing to disclose is the field omitted, never `[]`
   or a zero count. It is never sent back in an `update`.
-- `removal_notice` is optional on a provisioned state (`read`, `update`, `remove`): up to 500 bytes of
-  plain text saying what a removal leaves alone or does beyond the memberships, shown with the
-  confirmation. An unprovisioned state never carries it.
-- Plain text means valid UTF-8, not blank, without control characters (so no line breaks). A
-  provider escapes it and never renders it as markup.
+- `removal_notice` is optional in a provisioned state's `access` (`read`, `update`, `remove`): up to
+  500 bytes of plain text saying what a removal leaves alone or does beyond the memberships, shown with
+  the confirmation. An unprovisioned state has no `access` to carry it, and it is never sent back in an
+  `update`.
+- Plain text means valid UTF-8 with something visible in it (not only spaces, including no-break and
+  zero-width ones), without control characters, line or paragraph separators, or bidirectional
+  overrides and isolates. A provider escapes it and never renders it as markup.
 - **The revision covers what the effects stand for, not only their counts.** A confirmation shown
   against "2 project assignments" must fail with `revision_conflict` if either assignment changes
   before the write commits, even when the count is still 2.
   `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap)` checks it for an adapter.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
   the cascade; the revision is what keeps the confirmation honest.
-- **Upgrade order.** A provider on an earlier release refuses a state carrying `removal_effects` as
-  `invalid_response`, so it fails closed. Upgrade the provider first, then let applications emit them.
+- **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
+  exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
+  disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
 
 **Operation ids.** `update` and `remove` carry `operation_id`: 32 to 64 characters of
 `[A-Za-z0-9_-]`, chosen by the provider once per user action and kept across every retry of it

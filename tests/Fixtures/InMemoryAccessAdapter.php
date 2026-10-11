@@ -44,7 +44,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
      */
     public array $assignments = [];
 
-    /** A state's `removal_notice`, when set. */
+    /** A state's `access.removal_notice`, when set. */
     public ?string $removalNotice = null;
 
     /** @var array<string, int> subject => removals that changed nothing; only counted when broken */
@@ -234,9 +234,9 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
             'subject' => $subject,
             'provisioned' => true,
             'revision' => $this->revision($subject),
-            'access' => ['application_admin' => $admin, 'workspaces' => $visible],
+            'access' => ['application_admin' => $admin, 'workspaces' => $visible] + ($this->removalNotice === null ? [] : ['removal_notice' => $this->removalNotice]),
             'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false, 'remove' => $removable],
-        ] + $metadata + ($this->removalNotice === null ? [] : ['removal_notice' => $this->removalNotice]);
+        ] + $metadata;
     }
 
     /**

@@ -292,19 +292,20 @@ class DelegatedContractV3Test extends TestCase
         $this->refused(fn () => $contract->request(self::APP, [...$this->update(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w2', 'role' => 'sender', 'removal_effects' => $effects]]]]), 422, 'effects sent back in an update');
     }
 
-    public function test_a_provisioned_state_may_carry_a_removal_notice(): void
+    public function test_a_provisioned_state_may_carry_a_removal_notice_in_its_access(): void
     {
         $contract = new DelegatedContract;
         $notice = 'Client portal access is unchanged.';
-        $removed = [...$this->state(), 'operation' => 'remove', 'access' => ['application_admin' => false, 'workspaces' => []],
-            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true], 'removal_notice' => $notice];
+        $noticed = fn (mixed $value, array $state = []): array => [...($state ?: $this->state()), 'access' => [...($state ?: $this->state())['access'], 'removal_notice' => $value]];
+        $removed = [...$this->state(), 'operation' => 'remove', 'access' => ['application_admin' => false, 'workspaces' => [], 'removal_notice' => $notice],
+            'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];
 
-        foreach (['read' => [...$this->state(), 'removal_notice' => $notice], 'update' => [...$this->state(), 'operation' => 'update', 'removal_notice' => $notice], 'remove' => $removed] as $operation => $state) {
+        foreach (['read' => $noticed($notice), 'update' => [...$noticed($notice), 'operation' => 'update'], 'remove' => $removed] as $operation => $state) {
             $this->assertSame($state, $contract->response($state, self::APP, $operation, 'subject-example', 3));
             $fields = array_diff_key($state, ['contract_version' => true, 'application' => true, 'operation' => true]);
-            $this->assertSame($notice, $contract->adapterAnswer($fields, self::APP, $operation, 'subject-example')['removal_notice']);
+            $this->assertSame($notice, $contract->adapterAnswer($fields, self::APP, $operation, 'subject-example')['access']['removal_notice']);
         }
-        $long = [...$this->state(), 'removal_notice' => str_repeat('a', DelegatedContract::MAX_REMOVAL_NOTICE_BYTES)];
+        $long = $noticed(str_repeat('a', DelegatedContract::MAX_REMOVAL_NOTICE_BYTES));
         $this->assertSame($long, $contract->response($long, self::APP, 'read', 'subject-example', 3));
 
         // A stored answer carrying it replays as it was.
@@ -324,10 +325,10 @@ class DelegatedContractV3Test extends TestCase
             'not UTF-8' => "Portal \xc3",
             'markup as structure' => ['text' => $notice],
         ] as $label => $value) {
-            $this->refused(fn () => $contract->response([...$this->state(), 'removal_notice' => $value], self::APP, 'read', 'subject-example', 3), 503, $label);
+            $this->refused(fn () => $contract->response($noticed($value), self::APP, 'read', 'subject-example', 3), 503, $label);
         }
-        $this->refused(fn () => $contract->response([...$this->unprovisioned(), 'removal_notice' => $notice], self::APP, 'read', 'subject-example', 3), 503, 'a notice for an account that does not exist');
-        $this->refused(fn () => $contract->adapterAnswer(['subjects' => [], 'next_cursor' => null, 'removal_notice' => $notice], self::APP, 'subjects', null), 503, 'a notice on a page');
+        $this->refused(fn () => $contract->adapterAnswer([...array_diff_key($this->state(), ['contract_version' => true, 'application' => true, 'operation' => true]), 'removal_notice' => $notice], self::APP, 'read', 'subject-example'), 503, 'a notice beside access, where an earlier provider would drop it');
+        $this->refused(fn () => $contract->request(self::APP, $this->update(['access' => ['application_admin' => false, 'workspaces' => [], 'removal_notice' => $notice]])), 422, 'a notice sent back in an update');
     }
 
     public function test_a_subject_entry_may_carry_the_same_metadata_held_to_the_same_shape(): void
