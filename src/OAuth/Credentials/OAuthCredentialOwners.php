@@ -46,7 +46,16 @@ final class OAuthCredentialOwners
      */
     public function revokeAll(Authenticatable $owner): int
     {
-        $id = $owner->getAuthIdentifier();
+        return $this->revokeAllForOwnerId($owner->getAuthIdentifier());
+    }
+
+    /**
+     * revokeAll() by account id, for an owner the application can no longer load (a row
+     * removed or hidden from the default query). Such an owner is already refused at every
+     * use; this makes it durable, so restoring the row does not revive the credentials.
+     */
+    public function revokeAllForOwnerId(string|int $id): int
+    {
         $tokenIds = Passport::token()->newQuery()->where('user_id', $id)->pluck('id');
 
         // Refresh tokens by their access token, and by their own owner record, which outlives

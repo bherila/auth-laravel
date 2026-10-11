@@ -152,6 +152,11 @@ final class CredentialOwnerPolicyTest extends TestCase
         $this->withSession($this->sessionState($generation, (string) $user->oauth_subject));
         $tokens = $this->agentOAuthCodeFlow($user, $client, 'items:read', self::REDIRECT)->assertOk()->json();
         $this->app['auth']->forgetGuards();
+        // Passport's authorization controller holds the guard it was built with, and the route
+        // keeps the controller: drop it so the next connect authorizes as its own user.
+        foreach (Route::getRoutes() as $route) {
+            $route->flushController();
+        }
         $this->flushSession();
 
         return [$client, $tokens];
@@ -241,6 +246,32 @@ final class CredentialOwnerPolicyTest extends TestCase
         $this->enable($user);
         $this->useToken($tokens['access_token'])->assertUnauthorized();
         $this->refresh($client, $tokens['refresh_token'])->assertStatus(400);
+    }
+
+    public function test_an_owner_that_cannot_be_loaded_is_revoked_by_id_and_stays_revoked(): void
+    {
+        $gone = $this->user();
+        $other = $this->user('subject-other');
+        [$client, $tokens] = $this->connect($gone);
+        [$otherClient, $otherTokens] = $this->connect($other);
+        $this->agentOAuthCodeFlowWithoutAssertions($gone, $client);
+        $this->assertSame(1, Passport::authCode()->newQuery()->where('user_id', $gone->getKey())->where('revoked', false)->count());
+
+        // Removed behind the model's back, as a raw-query soft delete does: no owner to pass to revokeAll().
+        $row = (array) \Illuminate\Support\Facades\DB::table('users')->where('id', $gone->getKey())->first();
+        \Illuminate\Support\Facades\DB::table('users')->where('id', $gone->getKey())->delete();
+        $this->assertNull(app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->find($gone->getKey()));
+
+        $this->assertSame(1, app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->revokeAllForOwnerId($gone->getKey()));
+        $this->assertSame(0, Passport::token()->newQuery()->where('user_id', $gone->getKey())->where('revoked', false)->count());
+        $this->assertSame(0, Passport::authCode()->newQuery()->where('user_id', $gone->getKey())->where('revoked', false)->count());
+        $this->assertSame(1, Passport::refreshToken()->newQuery()->where('revoked', false)->count(), 'Only the other owner\'s refresh token survives');
+
+        \Illuminate\Support\Facades\DB::table('users')->insert($row);
+        $this->useToken($tokens['access_token'])->assertUnauthorized();
+        $this->refresh($client, $tokens['refresh_token'])->assertStatus(400);
+        $this->useToken($otherTokens['access_token'])->assertOk();
+        $this->refresh($otherClient, $otherTokens['refresh_token'])->assertOk();
     }
 
     public function test_a_bound_policy_needs_the_refresh_owner_column(): void
