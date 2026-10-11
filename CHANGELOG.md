@@ -4,6 +4,16 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.23.2 - 2026-10-10
+
+- `OAuthCredentialOwners::revokeAllForOwnerId($id)` revokes an account's codes, access and refresh
+  tokens by id, for an owner the application can no longer load (removed, or hidden from the default
+  query by a soft delete done outside the model). Such an owner is already refused at every use when a
+  `CredentialOwnerPolicy` is bound; revoking makes it durable if the row comes back. `revokeAll($owner)`
+  is unchanged and now delegates to it.
+- `AssertsAgentOAuthContract::assertOmittedResourceConnection()`, named in the v0.23.1 upgrade note,
+  ships in this release.
+
 ## v0.23.1 - 2026-10-10
 
 ### A client that omits `resource` gets the endpoint its scopes belong to
