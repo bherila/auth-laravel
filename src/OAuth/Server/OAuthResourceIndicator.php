@@ -239,6 +239,44 @@ final class OAuthResourceIndicator
         return $assumed === true || (is_string($assumed) && $assumed !== '');
     }
 
+    /**
+     * The resource an authorization request that names none is bound to: the assumed default
+     * when the requested scopes fit it, otherwise the first configured resource whose ceiling
+     * admits them (list a canonical endpoint before its aliases). A client that predates
+     * RFC 8707 and asks for an endpoint's own scope (an MCP connection scope, say) thereby
+     * gets that endpoint's audience instead of a refusal. With no fitting resource the default
+     * is returned, and its ceiling refuses the request.
+     *
+     * @param  mixed  $scopes
+     */
+    public static function resourceForOmitted(mixed $scopes): string
+    {
+        $default = self::resource();
+        if (self::scopesAllowedFor($default, $scopes)) {
+            return $default;
+        }
+        $fitting = array_values(array_filter(
+            array_column(self::resources(), 'uri'),
+            static fn (string $uri): bool => self::scopesAllowedFor($uri, $scopes),
+        ));
+
+        return $fitting[0] ?? $default;
+    }
+
+    /**
+     * The resource an exchange (code or refresh token) is for: the one it names, or, when it
+     * names none and omitted resources are assumed, the one the grant was made for. A client
+     * that never sends `resource` cannot be expected to repeat the one chosen for it.
+     */
+    public static function exchangeResource(Request $request, ?string $granted): ?string
+    {
+        if (! $request->exists('resource') && self::assumesOmittedResource()) {
+            return $granted;
+        }
+
+        return self::requestResource($request);
+    }
+
     /** Whether a token/authorization request names a resource, explicitly or by that assumption. */
     public static function requestNamesResource(Request $request): bool
     {

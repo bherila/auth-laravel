@@ -124,7 +124,7 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         $scopes = OAuthResourceIndicator::scopeIdentifiers($model->getAttribute('scopes'));
         $request = $this->request();
         $hasRequestedResource = $request !== null && OAuthResourceIndicator::requestNamesResource($request);
-        $requestedResource = $request === null ? null : OAuthResourceIndicator::requestResource($request);
+        $requestedResource = $request === null ? null : OAuthResourceIndicator::exchangeResource($request, $storedResource);
         $bound = $storedValue !== null || OAuthResourceIndicator::scopesRequireResource($scopes);
 
         if (! $bound) {
