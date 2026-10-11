@@ -46,9 +46,17 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->adapter->memberships['outsider'] = ['w3' => 'member'];
         $this->adapter->labels = ['target' => 'Example Target', 'removable' => 'Removable Person', 'outsider' => 'Example Outsider'];
         $this->adapter->emails = ['removable' => 'removable@example.test'];
+        $this->adapter->assignments['target'] = ['w1' => ['p1', 'p2']];
+        $this->adapter->removalNotice = 'Client portal access is unchanged.';
         $this->adapter->metadata['removable'] = ['provisioned_at' => '2026-09-01T10:00:00Z', 'first_sign_in_at' => '2026-09-02T08:15:00+02:00', 'last_seen_at' => '2026-10-09T17:45:00Z'];
 
         parent::setUp();
+    }
+
+    /** Replace one of target's assigned projects in w1 with another: the same count, a different set. */
+    private function swapAnAssignment(): void
+    {
+        $this->adapter->assignments['target']['w1'] = ['p1', 'p3'];
     }
 
     protected function delegatedAccessTruth(string $subject): array
@@ -75,6 +83,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
         $this->assertSame('2026-10-09T17:45:00Z', $this->delegatedAccessCall('manager', ['operation' => 'subjects', 'query' => 'Removable'])['subjects'][0]['last_seen_at']);
         $this->assertDelegatedRemoveRefusedWithoutPartialChange('manager', 'target');
         $this->assertDelegatedReceiptsReplayThroughTheEndpoint('manager', 'target');
+        $this->assertDelegatedRemovalEffectsAreInTheRevision('manager', 'target', $this->swapAnAssignment(...));
         $this->assertDelegatedRemoveStripsOnlyTheManagedProjection('manager', 'removable');
         $this->assertDelegatedUpdateKeepsUnseenMemberships('manager', 'target');
 
@@ -167,6 +176,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
             'a removal offered that is refused' => ['offer_a_removal_it_refuses', 'assertDelegatedRemoveRefusedWithoutPartialChange', ['manager', 'target']],
             'a removal allowed but not offered' => ['hide_a_removal_it_allows', 'assertDelegatedRemoveStripsOnlyTheManagedProjection', ['manager', 'removable']],
             'listing metadata from the future' => ['listing_metadata_from_the_future', 'assertDelegatedMetadataIsWellFormed', ['manager', 'target']],
+            'removal effects outside the revision' => ['effects_outside_revision', 'assertDelegatedRemovalEffectsAreInTheRevision', ['manager', 'target', 'swap']],
         ];
     }
 
@@ -177,6 +187,7 @@ class DelegatedAccessAdapterConformanceTest extends TestCase
     public function test_each_assertion_catches_its_violation(string $flaw, string $assertion, array $arguments): void
     {
         $this->adapter->broken[$flaw] = true;
+        $arguments = array_map(fn (string $argument): mixed => $argument === 'swap' ? $this->swapAnAssignment(...) : $argument, $arguments);
 
         try {
             $this->{$assertion}(...$arguments);

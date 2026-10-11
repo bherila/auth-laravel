@@ -39,7 +39,8 @@ use Symfony\Component\HttpFoundation\Response;
  * Contract version 3 adds search, removal, metadata and operation receipts:
  * {@see assertDelegatedSearchStaysInScope()}, {@see assertDelegatedRemoveStripsOnlyTheManagedProjection()},
  * {@see assertDelegatedRemoveRefusedWithoutPartialChange()}, {@see assertDelegatedMetadataIsWellFormed()}
- * and {@see assertDelegatedReceiptsReplayThroughTheEndpoint()}, which drives the real endpoint.
+ * and {@see assertDelegatedReceiptsReplayThroughTheEndpoint()}, which drives the real endpoint. An
+ * adapter disclosing `removal_effects` also runs {@see assertDelegatedRemovalEffectsAreInTheRevision()}.
  *
  * @mixin TestCase
  */
@@ -367,6 +368,41 @@ trait AssertsDelegatedAccessAdapter
             $actor, $this->delegatedRemovePayload($target, $state['revision']), 'removing a subject with something the actor may not remove');
         $this->assertSame($before, $this->delegatedAccessRecord($target), 'A refused removal changes nothing, not even what the actor could have removed');
         $this->assertFalse($state['allowed_edits']['remove'], 'allowed_edits.remove is false where a removal is refused');
+    }
+
+    /**
+     * What a removal would take with it is part of the revision, not only its count.
+     *
+     * A provider confirms a removal against the `removal_effects` it showed ("2 project assignments").
+     * If what they stand for changes before the write commits, the confirmation is stale even when
+     * every count is the same, and the write must be refused as a revision conflict: a `remove`, and
+     * an `update` dropping the disclosing membership alike.
+     *
+     * Seed a target with an editable membership that discloses `removal_effects`, and pass `$swap`, a
+     * change to what one effect stands for that keeps every count (replace one assigned item with
+     * another). It runs between the read and the writes. Not for an account-only application, which has
+     * no memberships to disclose effects on.
+     */
+    protected function assertDelegatedRemovalEffectsAreInTheRevision(string $actor, string $target, callable $swap): void
+    {
+        $effects = static fn (array $state): array => array_column(array_filter($state['access']['workspaces'], static fn (array $m): bool => isset($m['removal_effects'])), 'removal_effects', 'id');
+        $state = $this->delegatedAccessRead($actor, $target);
+        $disclosed = $effects($state);
+        $this->assertNotSame([], $disclosed, 'Seed a target with a membership that discloses removal_effects');
+
+        $swap();
+        $after = $this->delegatedAccessRead($actor, $target);
+        $this->assertSame($disclosed, $effects($after), 'Seed a $swap that keeps every disclosed effect and count, so only the revision can tell');
+        $this->assertNotSame($state['revision'], $after['revision'], 'Changing what a removal would take changes the revision');
+
+        $before = $this->delegatedAccessRecord($target);
+        $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedRemovePayload($target, $state['revision']),
+            'a removal confirmed against what it would have taken before');
+        $dropped = (string) array_key_first($disclosed);
+        $kept = array_values(array_filter($state['access']['workspaces'], static fn (array $m): bool => $m['id'] !== $dropped));
+        $this->assertDelegatedRefusal([DelegatedRefusal::REVISION_CONFLICT], $actor, $this->delegatedUpdatePayload($target, $state['revision'], $kept, $state['access']['application_admin']),
+            'an update dropping a disclosing membership, confirmed before');
+        $this->assertSame($before, $this->delegatedAccessRecord($target), 'A stale confirmation changes nothing');
     }
 
     /**

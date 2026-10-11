@@ -37,6 +37,16 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
     /** @var array<string, array<string, string|null>> subject => metadata field => timestamp */
     public array $metadata = [];
 
+    /**
+     * What goes with a membership when it is removed or dropped, disclosed as `removal_effects`.
+     *
+     * @var array<string, array<string, list<string>>> subject => workspace => assigned project ids
+     */
+    public array $assignments = [];
+
+    /** A state's `removal_notice`, when set. */
+    public ?string $removalNotice = null;
+
     /** @var array<string, int> subject => removals that changed nothing; only counted when broken */
     private array $generations = [];
 
@@ -73,6 +83,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'listing_metadata_from_the_future' => false,
         'offer_a_removal_it_refuses' => false,
         'hide_a_removal_it_allows' => false,
+        'effects_outside_revision' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -101,8 +112,14 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
     {
         $memberships = $this->memberships[$subject] ?? [];
         ksort($memberships);
+        $assignments = $this->broken['effects_outside_revision'] ? [] : array_map(static function (array $projects): array {
+            sort($projects);
 
-        return hash('sha256', json_encode([$memberships, $this->admins[$subject] ?? false, $this->generations[$subject] ?? 0]));
+            return $projects;
+        }, $this->assignments[$subject] ?? []);
+        ksort($assignments);
+
+        return hash('sha256', json_encode([$memberships, $this->admins[$subject] ?? false, $this->generations[$subject] ?? 0, $assignments]));
     }
 
     /**
@@ -187,7 +204,12 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $visible = [];
         foreach ($this->memberships[$subject] as $workspace => $role) {
             if (in_array($workspace, $managed, true)) {
-                $visible[] = ['id' => $workspace, 'role' => $role, 'editable' => $role !== 'owner'];
+                $membership = ['id' => $workspace, 'role' => $role, 'editable' => $role !== 'owner'];
+                $assigned = count($this->assignments[$subject][$workspace] ?? []);
+                if ($membership['editable'] && $assigned > 0) {
+                    $membership['removal_effects'] = [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => $assigned]];
+                }
+                $visible[] = $membership;
             }
         }
         $metadata = $this->metadata[$subject] ?? [];
@@ -214,7 +236,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
             'revision' => $this->revision($subject),
             'access' => ['application_admin' => $admin, 'workspaces' => $visible],
             'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false, 'remove' => $removable],
-        ] + $metadata;
+        ] + $metadata + ($this->removalNotice === null ? [] : ['removal_notice' => $this->removalNotice]);
     }
 
     /**
@@ -267,6 +289,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $unseen = $this->broken['replace_wholesale'] ? [] : array_diff_key($current, array_flip($managed));
         $this->memberships[$subject] = $unseen + $requested;
         $this->admins[$subject] = $payload['access']['application_admin'];
+        $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
 
         return $this->state($managed, $subject);
     }
@@ -310,6 +333,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $answer = null;
         $this->memberships[$subject] = $this->broken['remove_unseen_memberships'] ? [] : array_diff_key($current, $mine);
         $this->admins[$subject] = $this->broken['keep_application_admin_on_removal'] && $admin;
+        $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
         if ($this->broken['remove_the_account']) {
             $answer = ['subject' => $subject, 'provisioned' => true, 'revision' => 'gone', 'access' => ['application_admin' => false, 'workspaces' => []],
                 'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];

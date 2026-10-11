@@ -1147,6 +1147,36 @@ to its search, and `after()` refuses it with another one (`invalid_cursor`, 422)
 - each `capabilities.controls.workspace_roles[]` entry may carry a `description` (1 to 1024 bytes).
   Omit it rather than send `null`.
 
+**Removal effects.** A removal can take more with it than the memberships themselves (svc-style
+staff removal also drops the person's project assignments). An application discloses that so the
+provider can show it before the actor confirms:
+
+```json
+"access": { "application_admin": false, "workspaces": [
+  { "id": "w2", "role": "member", "editable": true,
+    "removal_effects": [ { "kind": "project_assignments", "label": "Project assignments", "count": 2 } ] } ] },
+"removal_notice": "Client portal access is unchanged."
+```
+
+- `removal_effects` is optional on a reported membership, and only on an editable one: what removing
+  it, or an `update` dropping it, also removes. 1 to 8 entries of exactly `{kind, label, count}`: `kind`
+  matches `[a-z][a-z0-9_]{0,63}` and is unique within the membership, `label` is 1 to 255 bytes of
+  plain text, `count` an integer of at least 1. Nothing to disclose is the field omitted, never `[]`
+  or a zero count. It is never sent back in an `update`.
+- `removal_notice` is optional on a provisioned state (`read`, `update`, `remove`): up to 500 bytes of
+  plain text saying what a removal leaves alone or does beyond the memberships, shown with the
+  confirmation. An unprovisioned state never carries it.
+- Plain text means valid UTF-8, not blank, without control characters (so no line breaks). A
+  provider escapes it and never renders it as markup.
+- **The revision covers what the effects stand for, not only their counts.** A confirmation shown
+  against "2 project assignments" must fail with `revision_conflict` if either assignment changes
+  before the write commits, even when the count is still 2.
+  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap)` checks it for an adapter.
+- Effects are a disclosure, not a promise the provider enforces. The application performs and audits
+  the cascade; the revision is what keeps the confirmation honest.
+- **Upgrade order.** A provider on an earlier release refuses a state carrying `removal_effects` as
+  `invalid_response`, so it fails closed. Upgrade the provider first, then let applications emit them.
+
 **Operation ids.** `update` and `remove` carry `operation_id`: 32 to 64 characters of
 `[A-Za-z0-9_-]`, chosen by the provider once per user action and kept across every retry of it
 (`DelegatedContract::operationId()` makes one). It is distinct from the assertion's `jti`, which
