@@ -7,6 +7,7 @@ use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedCursor;
 use Illuminate\Encryption\Encrypter;
 use PHPUnit\Framework\TestCase;
+use ReflectionClassConstant;
 
 /**
  * Contract version 3: search on the listings, `remove`, `receipt`, an `operation_id` on every write,
@@ -296,6 +297,27 @@ class DelegatedContractV3Test extends TestCase
         $protected = [...$this->state(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'owner', 'editable' => false, 'removal_effects' => $effects]]]];
         $this->refused(fn () => $contract->response($protected, self::APP, 'read', 'subject-example', 3), 503, 'effects on a membership that cannot be removed');
         $this->refused(fn () => $contract->request(self::APP, [...$this->update(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w2', 'role' => 'sender', 'removal_effects' => $effects]]]]), 422, 'effects sent back in an update');
+    }
+
+    public function test_the_spelled_out_default_ignorables_match_unicode_where_pcre_knows_them(): void
+    {
+        if (@preg_match('/\p{DI}/u', 'a') === false) {
+            $this->markTestSkipped('This PCRE2 predates \p{DI}, which is why the set is spelled out.');
+        }
+        $class = '/['.(new ReflectionClassConstant(DelegatedContract::class, 'DEFAULT_IGNORABLE'))->getValue().']/u';
+        $differ = [];
+        foreach ([[0, 0x2FFFF], [0xE0000, 0xE0FFF]] as [$from, $to]) {
+            for ($code = $from; $code <= $to; $code++) {
+                if ($code >= 0xD800 && $code <= 0xDFFF) {
+                    continue;
+                }
+                $character = mb_chr($code, 'UTF-8');
+                if (preg_match('/\p{DI}/u', $character) !== preg_match($class, $character)) {
+                    $differ[] = sprintf('U+%04X', $code);
+                }
+            }
+        }
+        $this->assertSame([], $differ);
     }
 
     public function test_every_valid_state_encodes_within_the_response_bound(): void

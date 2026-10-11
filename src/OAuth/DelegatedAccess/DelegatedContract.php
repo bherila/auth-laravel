@@ -65,6 +65,15 @@ final class DelegatedContract
      */
     public const MAX_REMOVAL_EFFECTS_PER_STATE = 100;
 
+    /**
+     * Unicode's Default_Ignorable_Code_Point set as a character-class body, spelled out because
+     * `\p{DI}` needs PCRE2 10.44 and PHP may link an older one. A test compares it with `\p{DI}`
+     * where that is available.
+     */
+    private const DEFAULT_IGNORABLE = '\x{00AD}\x{034F}\x{061C}\x{115F}\x{1160}\x{17B4}\x{17B5}\x{180B}-\x{180F}\x{200B}-\x{200F}'
+        .'\x{202A}-\x{202E}\x{2060}-\x{206F}\x{3164}\x{FE00}-\x{FE0F}\x{FEFF}\x{FFA0}\x{FFF0}-\x{FFF8}\x{1BCA0}-\x{1BCA3}'
+        .'\x{1D173}-\x{1D17A}\x{E0000}-\x{E0FFF}';
+
     /** A removal effect's `kind`: a stable identifier the application chooses. */
     public const REMOVAL_EFFECT_KIND_PATTERN = '/^[a-z][a-z0-9_]{0,63}$/D';
 
@@ -642,7 +651,7 @@ final class DelegatedContract
             && preg_match('/^[^\p{Cc}\p{Zl}\p{Zp}\x{202A}-\x{202E}\x{2066}-\x{2069}]*$/uD', $value) === 1
             // Something visible: not only spaces, format characters, default-ignorables (a variation
             // selector, a grapheme joiner, a Hangul filler) or combining marks with nothing to mark.
-            && preg_match('/[^\p{Z}\s\p{Cf}\p{DI}\p{M}]/u', $value) === 1;
+            && preg_match('/[^\p{Z}\s\p{Cf}\p{M}'.self::DEFAULT_IGNORABLE.']/u', $value) === 1;
     }
 
     /**
