@@ -12,7 +12,8 @@ use Illuminate\Contracts\Auth\Authenticatable;
  * personal) and refresh token is checked against it when issued, exchanged, refreshed and
  * used. A refused refresh is refused without consuming the refresh token. Pair it with
  * OAuthCredentialOwners::revokeAll() when the application disables an account, so
- * re-enabling it does not revive old credentials.
+ * re-enabling it does not revive old credentials (revokeAllForOwnerId() for an account it
+ * can no longer load).
  *
  * Deliberately separate from AuthUserPolicy::canLogin(): applications use that for
  * interactive login eligibility (some only for local password login), which is not the
