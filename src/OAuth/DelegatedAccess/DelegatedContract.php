@@ -620,11 +620,16 @@ final class DelegatedContract
         return true;
     }
 
-    /** Text a provider shows as it is: valid UTF-8, not blank, no control characters, bounded in bytes. */
+    /**
+     * Text a provider shows as it is, bounded in bytes: valid UTF-8 with something visible in it, and
+     * no control characters, line or paragraph separators, or bidirectional overrides (which reorder
+     * what the confirmation around them says).
+     */
     private function plainText(mixed $value, int $max): bool
     {
-        return $this->boundedString($value, $max) && trim($value) !== ''
-            && preg_match('//u', $value) === 1 && preg_match('/[\x00-\x1F\x7F]/', $value) !== 1;
+        return $this->boundedString($value, $max)
+            && preg_match('/^[^\p{Cc}\p{Zl}\p{Zp}\x{202A}-\x{202E}\x{2066}-\x{2069}]*$/uD', $value) === 1
+            && preg_match('/[^\p{Z}\s\p{Cf}]/u', $value) === 1;
     }
 
     /**

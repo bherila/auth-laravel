@@ -277,6 +277,11 @@ class DelegatedContractV3Test extends TestCase
             'a label with a newline' => [[...$effects[0], 'label' => "Project\nassignments"]],
             'a label over 255 bytes' => [[...$effects[0], 'label' => str_repeat('é', 128)]],
             'a label that is not UTF-8' => [[...$effects[0], 'label' => "Project \xff"]],
+            'a label with a Unicode control' => [[...$effects[0], 'label' => "Project\u{0085}assignments"]],
+            'a label of no-break spaces' => [[...$effects[0], 'label' => "\u{00A0}\u{3000}"]],
+            'a label of a zero-width space' => [[...$effects[0], 'label' => "\u{200B}"]],
+            'a label with a line separator' => [[...$effects[0], 'label' => "Project\u{2028}assignments"]],
+            'a label reordered by a bidirectional override' => [[...$effects[0], 'label' => "Project \u{202E}stnemngissa"]],
             'null' => null,
         ] as $label => $value) {
             $this->refused(fn () => $contract->response($disclosing($value), self::APP, 'read', 'subject-example', 3), 503, $label);
@@ -313,6 +318,9 @@ class DelegatedContractV3Test extends TestCase
             'blank' => "  ",
             'over the bound' => str_repeat('a', DelegatedContract::MAX_REMOVAL_NOTICE_BYTES + 1),
             'a line break' => "Portal access is unchanged.\nAsk the owner.",
+            'a next-line control' => "Portal access is unchanged.\u{0085}",
+            'blank in Unicode' => "\u{00A0}",
+            'an isolate' => "Portal access is \u{2067}unchanged\u{2069}.",
             'not UTF-8' => "Portal \xc3",
             'markup as structure' => ['text' => $notice],
         ] as $label => $value) {
