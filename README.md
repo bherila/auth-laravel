@@ -1147,9 +1147,9 @@ to its search, and `after()` refuses it with another one (`invalid_cursor`, 422)
 - each `capabilities.controls.workspace_roles[]` entry may carry a `description` (1 to 1024 bytes).
   Omit it rather than send `null`.
 
-**Removal effects.** A removal can take more with it than the memberships themselves (svc-style
-staff removal also drops the person's project assignments). An application discloses that so the
-provider can show it before the actor confirms:
+**Removal effects.** A removal can take more with it than the memberships themselves: removing a staff member
+may also drop their project assignments. An application discloses that so the provider can show it
+before the actor confirms:
 
 ```json
 "access": { "application_admin": false, "workspaces": [
@@ -1163,25 +1163,69 @@ provider can show it before the actor confirms:
   matches `[a-z][a-z0-9_]{0,63}` and is unique within the membership, `label` is 1 to 255 bytes of
   plain text, `count` an integer of at least 1. Nothing to disclose is the field omitted, never `[]`
   or a zero count. It is never sent back in an `update`.
+- `count` is exact: the number of records the removal takes, in the unit the label names (assignment
+  rows, say, not the distinct projects they point at), never an estimate. Omitting an effect means it
+  does not happen, never that it could not be counted; a membership whose effects cannot be counted
+  is not offered as editable.
+- One state carries at most 100 effect entries across its memberships
+  (`MAX_REMOVAL_EFFECTS_PER_STATE`), so every valid state fits `MAX_RESPONSE_BYTES` however its
+  strings escape. A state that would need more is never truncated and never drops an effect to fit:
+  the application offers fewer of those memberships as editable.
 - `removal_notice` is optional in a provisioned state's `access` (`read`, `update`, `remove`): up to
   500 bytes of plain text giving context for the confirmation, such as what a removal leaves alone. It
   is never a disclosure: it cannot widen what a removal may take, which is only what the memberships
   disclose as `removal_effects`, so an application never announces a further deletion in it. An unprovisioned state has no `access` to carry it, and it is never sent back in an
   `update`.
 - Plain text means valid UTF-8 with something visible in it (not only spaces, including no-break and
-  zero-width ones), without control characters, line or paragraph separators, or bidirectional
-  overrides and isolates. A provider escapes it and never renders it as markup.
+  zero-width ones, default-ignorable characters such as variation selectors, or combining marks with
+  nothing to mark), without control characters, line or paragraph separators, or bidirectional
+  overrides and isolates. Joiners and variation selectors inside visible text are fine. A provider
+  escapes it, never renders it as markup, and isolates its direction (`<bdi dir="auto">` in HTML):
+  text in one direction beside another can reorder without any control character.
+- A `label` names a category on its own ("Project assignments"). A provider shows it beside its count
+  (`Project assignments: 2`) and never inflects it into a sentence.
 - **The revision covers what the effects stand for, not only their counts.** A confirmation shown
   against "2 project assignments" must fail with `revision_conflict` if either assignment changes
-  before the write commits, even when the count is still 2.
-  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)` checks it for an
-  adapter, and that a refused write leaves the disclosed records (read by `$disclosed`) untouched.
+  before the write commits, even when the count is still 2. Read the effects and the revision from
+  one snapshot (one transaction, or under the locks the write takes), and make every path that changes
+  what an effect stands for (assigning, reassigning or deleting a project, not only the access screens)
+  take part in the same locking or versioning. When what a removal takes changes with a deploy
+  (cascading something new, or no longer), the revisions change with it: put a version of the cascade
+  rules in them, so a confirmation made under the old rules is refused under the new ones.
+  `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)`
+  checks stale removal and membership-drop writes on a removable target with at least one disclosing
+  membership; each refusal leaves access and the records read by `$disclosed` untouched.
+  `assertDelegatedWriteTakesExactlyWhatItDisclosed($actor, $target, $write, $disclosed, $expected)`
+  checks one fresh write per separately seeded target: `remove`, `drop` of the first disclosing
+  membership, or `role` changing it to another advertised role the actor may grant. It compares the
+  exact resulting records with `$expected`; a role change leaves them unchanged. One disclosing
+  membership suffices for each helper. They run in one process, so they cannot race the
+  database; an application's own adapter tests should also insert or reassign a dependent record
+  concurrently with a removal.
 - Effects are a disclosure, not a promise the provider enforces. The application performs and audits
   the cascade (see **Removal** below for what it may take); the revision is what keeps the
   confirmation honest.
+- **Per membership, never summed.** A provider shows each membership's effects with that membership,
+  for a `remove` and for an `update` dropping it alike. It does not add them up across memberships:
+  a kind is unique only within one membership, and two memberships may count overlapping records or
+  label the same kind differently. An effect that happens only when several memberships go together
+  (the last of a person's assignments for one client, say) belongs to none of them, so the
+  application does not offer those memberships as editable.
+- **Only removal is described.** Changing a membership's role, or clearing the administrator flag,
+  takes nothing else with it. An application where such a change would cascade refuses it through
+  this contract (`invalid_request`), or does not offer the membership or the flag as editable.
+- **A disclosure grants nothing.** The application authorizes the whole cascade for this actor, as it
+  does the membership. Records the actor may not see one by one still count in an effect's total,
+  under a label that names them generically; they are never left out. Where even a count would say
+  too much, the membership is not offered as editable.
 - **Upgrade order.** Both fields sit inside objects whose keys a provider on an earlier release checks
   exactly, so it refuses a state carrying either as `invalid_response` rather than dropping the
-  disclosure: it fails closed. Upgrade the provider first, then let applications emit them.
+  disclosure: it fails closed. That protects only until the provider takes this release. Upgrading
+  the provider means its confirmations show the effects, for a `remove` and for an `update` dropping
+  a membership, not only that its validator accepts them; an application emits them only after that
+  is deployed. The application changes its cascade-rules version in the same deploy that starts
+  disclosing, so a confirmation shown before (in a page left open, say) is refused as a revision
+  conflict rather than carried out under rules it never showed.
 
 **Operation ids.** `update` and `remove` carry `operation_id`: 32 to 64 characters of
 `[A-Za-z0-9_-]`, chosen by the provider once per user action and kept across every retry of it
@@ -1234,6 +1278,9 @@ manages it, together with whatever it disclosed as `removal_effects`, and nothin
   for one never stored, still pending or abandoned, pruned, or another actor's. It never reaches the adapter and
   is answered whether or not writes are enabled.
 - Receipts are kept for 30 days.
+- A stored answer is what the write did then, not what a write would do now: its
+  `removal_effects` may be stale. A provider shows it as an outcome and never fills a new
+  confirmation from it; it reads afresh before confirming another write.
 
 A provider that gets an uncertain answer to a write (a 5xx, a timeout or a transport error) asks
 for the receipt once and shows the real outcome; if it is still unknown, it says so. It never
@@ -1358,6 +1405,11 @@ the capabilities; the conformance assertions below do.
 What remains the adapter's: match the verified actor to a local account through its binding and
 refuse (`not_authorized`, 403) unless it is active and may manage access. Show only what that actor
 may manage. Compare revisions under the same locks the changes take (`revision_conflict`, 409).
+A revision is of the subject as this actor sees it. It changes when the subject's records change and
+when the actor's reach over them does (a workspace it gains or loses, whether it may change the
+administrator flag), so two actors may be given different revisions for one subject. Otherwise an
+actor that gains a workspace after reading would remove a membership it never saw, or drop it by
+omission when resubmitting the update it read.
 Provision only an unbound subject, bound to `bindingIssuer()` and the exact subject, never by
 adopting a row found by address. Keep the application's own last-administrator and audit rules.
 
@@ -1419,7 +1471,15 @@ Each refused attempt must leave `delegatedAccessTruth()` exactly as it was.
 
 For version 3, also seed a subject and a workspace outside the manager's view whose labels match a
 search, a target the manager may remove entirely (with a membership it cannot see), and known
-metadata, then:
+metadata. For the revision's reach, seed a removable target with a membership in a workspace the
+manager does not manage yet, and a `$widen` closure that grants the manager that workspace.
+If the adapter discloses removal effects, also seed a removable `$effectsTarget` with one disclosing
+membership, a `$swap` that replaces a dependent record without changing any count, and a
+`$disclosedEffects` reader of its own records. Seed separate `$removeTarget`, `$dropTarget` and
+`$roleTarget` for fresh writes, each with at least one disclosing membership. Their record readers
+include records outside the actor's projection that must survive. `$afterRemove` and `$afterDrop`
+are the exact expected records after those writes; `$beforeRole` is the unchanged record set, and
+`$roleTarget` has another advertised role the actor may grant. Then:
 
 ```php
 $this->assertDelegatedSearchStaysInScope($manager, 'subjects', 'Example', 'OnlyOutsideTheView');
@@ -1428,6 +1488,12 @@ $this->assertDelegatedRemoveRefusedWithoutPartialChange($manager, $target);   //
 $this->assertDelegatedRemoveStripsOnlyTheManagedProjection($manager, $removable);
 $this->assertDelegatedMetadataIsWellFormed($manager, $removable);
 $this->assertDelegatedReceiptsReplayThroughTheEndpoint($manager, $target);
+$this->assertDelegatedRevisionCoversTheActorsReach($manager, $colleague, $widen);   // widens the manager
+// For adapters disclosing removal_effects:
+$this->assertDelegatedRemovalEffectsAreInTheRevision($manager, $effectsTarget, $swap, $disclosedEffects);
+$this->assertDelegatedWriteTakesExactlyWhatItDisclosed($manager, $removeTarget, 'remove', $disclosedRemove, $afterRemove);
+$this->assertDelegatedWriteTakesExactlyWhatItDisclosed($manager, $dropTarget, 'drop', $disclosedDrop, $afterDrop);
+$this->assertDelegatedWriteTakesExactlyWhatItDisclosed($manager, $roleTarget, 'role', $disclosedRole, $beforeRole);
 ```
 
 `assertDelegatedReceiptsReplayThroughTheEndpoint()` posts signed requests to the real route. It

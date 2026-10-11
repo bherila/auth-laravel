@@ -12,10 +12,27 @@ the first entry here is in the git history.
   provisioned state's `access` may carry `removal_notice`, so a provider can show what a removal or a
   dropped membership also takes before the actor confirms. Additive: contract version 3 is unchanged,
   and applications that send neither are unaffected.
-- The revision must cover what the effects stand for; `assertDelegatedRemovalEffectsAreInTheRevision()`
-  checks it.
+- The revision must cover what the effects stand for, read from one snapshot with the cascade rules'
+  version in it. `assertDelegatedRemovalEffectsAreInTheRevision($actor, $target, $swap, $disclosed)`
+  checks stale removal and membership-drop refusals; its unreleased `$remaining` parameter is removed.
+  `assertDelegatedWriteTakesExactlyWhatItDisclosed($actor, $target, $write, $disclosed, $expected)`
+  checks the exact records after one fresh `remove`, `drop` or `role` write per separately seeded
+  target. A role change leaves dependent records unchanged. Each helper needs only one disclosing
+  membership.
+- One state carries at most 100 effect entries (`MAX_REMOVAL_EFFECTS_PER_STATE`), so every valid state
+  fits `MAX_RESPONSE_BYTES`. Labels and the notice must contain something visible beyond
+  default-ignorable characters and bare combining marks.
+- A provider shows effects per membership and never sums them; role changes and clearing the
+  administrator flag cascade nothing through this contract; a stored receipt is an outcome, never a
+  new confirmation.
+- **The revision now covers the actor's reach, not only the subject's records**: a workspace the actor
+  gains or loses, or whether it may change the administrator flag, changes it. This applies to every
+  workspace adapter, disclosing or not. `assertDelegatedRevisionCoversTheActorsReach($actor, $target, $widen)`
+  checks it; an adapter whose revision hashes only the subject's rows fails it.
 - **Upgrade order:** providers before applications. An older provider refuses a state carrying either
-  field (`invalid_response`), so it never shows a confirmation without the disclosure.
+  field (`invalid_response`), so it never shows a confirmation without the disclosure. An application
+  emits them only once the provider's confirmations show them, and changes its cascade-rules version
+  in that deploy.
 
 ## v0.23.2 - 2026-10-10
 

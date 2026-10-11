@@ -17,7 +17,7 @@ use BWH\Auth\OAuth\DelegatedAccess\DelegatedRefusal;
  */
 final class InMemoryAccessAdapter implements ApplicationAccessAdapter
 {
-    public const ROLES = ['owner', 'member'];
+    public const ROLES = ['owner', 'member', 'viewer'];
 
     /** @var array<string, list<string>> actor => workspaces it manages */
     public array $managers = ['manager' => ['w1', 'w2']];
@@ -85,6 +85,11 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         'hide_a_removal_it_allows' => false,
         'effects_outside_revision' => false,
         'cascade_before_revision_check' => false,
+        'revision_ignores_the_actor_scope' => false,
+        'cascade_beyond_the_projection' => false,
+        'update_leaves_its_cascade' => false,
+        'role_change_cascades' => false,
+        'update_replaces_retained_assignment' => false,
     ];
 
     public function handle(string $actorSubject, array $payload): array
@@ -109,7 +114,14 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         };
     }
 
-    public function revision(string $subject): string
+    /**
+     * The subject's records as this actor sees them: the memberships, what their removal would take,
+     * and the actor's own reach (the workspaces it manages, whether it may change the administrator
+     * flag), so a confirmation does not outlive a change in what the actor's write would take.
+     *
+     * @param  list<string>  $managed
+     */
+    private function revision(string $subject, array $managed): string
     {
         $memberships = $this->memberships[$subject] ?? [];
         ksort($memberships);
@@ -120,7 +132,10 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         }, $this->assignments[$subject] ?? []);
         ksort($assignments);
 
-        return hash('sha256', json_encode([$memberships, $this->admins[$subject] ?? false, $this->generations[$subject] ?? 0, $assignments]));
+        sort($managed);
+        $scope = $this->broken['revision_ignores_the_actor_scope'] ? [] : [$managed, $this->adminEditable];
+
+        return hash('sha256', json_encode([$memberships, $this->admins[$subject] ?? false, $this->generations[$subject] ?? 0, $assignments, $scope]));
     }
 
     /**
@@ -234,7 +249,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         return ($this->broken['answer_an_extra_field'] ? ['internal_id' => 42] : []) + [
             'subject' => $subject,
             'provisioned' => true,
-            'revision' => $this->revision($subject),
+            'revision' => $this->revision($subject, $managed),
             'access' => ['application_admin' => $admin, 'workspaces' => $visible] + ($this->removalNotice === null ? [] : ['removal_notice' => $this->removalNotice]),
             'allowed_edits' => ['application_admin' => $this->adminEditable, 'workspaces' => true, 'provision' => false, 'remove' => $removable],
         ] + $metadata;
@@ -259,7 +274,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
                 throw DelegatedRefusal::of(DelegatedRefusal::INVALID_REQUEST);
             }
         }
-        if ($payload['expected_revision'] !== $this->revision($subject) && ! $this->broken['ignore_revision']) {
+        if ($payload['expected_revision'] !== $this->revision($subject, $managed) && ! $this->broken['ignore_revision']) {
             throw DelegatedRefusal::of(DelegatedRefusal::REVISION_CONFLICT);
         }
 
@@ -269,7 +284,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
                 throw DelegatedRefusal::of(DelegatedRefusal::NOT_AUTHORIZED);
             }
             $unchanged = ($current[$membership['id']] ?? null) === $membership['role'];
-            if (! $unchanged && ! $this->broken['accept_any_role'] && ! in_array($membership['role'], ['member'], true)) {
+            if (! $unchanged && ! $this->broken['accept_any_role'] && ! in_array($membership['role'], ['member', 'viewer'], true)) {
                 throw DelegatedRefusal::of(DelegatedRefusal::ROLE_NOT_GRANTABLE);
             }
             $requested[$membership['id']] = $membership['role'];
@@ -290,7 +305,24 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $unseen = $this->broken['replace_wholesale'] ? [] : array_diff_key($current, array_flip($managed));
         $this->memberships[$subject] = $unseen + $requested;
         $this->admins[$subject] = $payload['access']['application_admin'];
-        $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
+        if (! $this->broken['update_leaves_its_cascade']) {
+            $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
+        }
+
+        if ($this->broken['role_change_cascades']) {
+            foreach ($requested as $workspace => $role) {
+                if (isset($current[$workspace]) && $current[$workspace] !== $role) {
+                    unset($this->assignments[$subject][$workspace]);
+                }
+            }
+        }
+        if ($this->broken['update_replaces_retained_assignment'] && array_diff_key($current, $this->memberships[$subject]) !== []) {
+            foreach ($this->assignments[$subject] ?? [] as $workspace => $projects) {
+                if ($projects !== []) {
+                    $this->assignments[$subject][$workspace][0] = 'replacement-test-project';
+                }
+            }
+        }
 
         return $this->state($managed, $subject);
     }
@@ -306,7 +338,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
     {
         $subject = $payload['subject'];
         $current = $this->memberships[$subject] ?? throw DelegatedRefusal::of(DelegatedRefusal::NOT_PROVISIONED);
-        $revision = $this->revision($subject);
+        $revision = $this->revision($subject, $managed);
         if ($this->broken['cascade_before_revision_check']) {
             // Clears what the removal would take before finding the confirmation stale.
             $this->assignments[$subject] = array_diff_key($this->assignments[$subject] ?? [], array_flip($managed));
@@ -339,7 +371,7 @@ final class InMemoryAccessAdapter implements ApplicationAccessAdapter
         $answer = null;
         $this->memberships[$subject] = $this->broken['remove_unseen_memberships'] ? [] : array_diff_key($current, $mine);
         $this->admins[$subject] = $this->broken['keep_application_admin_on_removal'] && $admin;
-        $this->assignments[$subject] = array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
+        $this->assignments[$subject] = $this->broken['cascade_beyond_the_projection'] ? [] : array_intersect_key($this->assignments[$subject] ?? [], $this->memberships[$subject]);
         if ($this->broken['remove_the_account']) {
             $answer = ['subject' => $subject, 'provisioned' => true, 'revision' => 'gone', 'access' => ['application_admin' => false, 'workspaces' => []],
                 'allowed_edits' => ['application_admin' => false, 'workspaces' => true, 'provision' => false, 'remove' => true]];

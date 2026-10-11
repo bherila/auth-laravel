@@ -7,6 +7,7 @@ use BWH\Auth\OAuth\DelegatedAccess\DelegatedContract;
 use BWH\Auth\OAuth\DelegatedAccess\DelegatedCursor;
 use Illuminate\Encryption\Encrypter;
 use PHPUnit\Framework\TestCase;
+use ReflectionClassConstant;
 
 /**
  * Contract version 3: search on the listings, `remove`, `receipt`, an `operation_id` on every write,
@@ -242,7 +243,9 @@ class DelegatedContractV3Test extends TestCase
     public function test_an_editable_membership_may_disclose_what_its_removal_takes_with_it(): void
     {
         $contract = new DelegatedContract;
-        $effects = [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => 2], ['kind' => 'x9_', 'label' => 'Ünïcode ok', 'count' => 1]];
+        $effects = [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => 2], ['kind' => 'x9_', 'label' => 'Ünïcode ok', 'count' => 1],
+            // Joiners, variation selectors and combining marks are fine inside visible text.
+            ['kind' => 'joined', 'label' => "Cafe\u{0301} \u{2764}\u{FE0F} \u{1F469}\u{200D}\u{1F4BB}", 'count' => 1]];
         $disclosing = fn (mixed $value): array => [...$this->state(), 'access' => ['application_admin' => false, 'workspaces' => [
             ['id' => 'w1', 'role' => 'owner', 'editable' => false],
             ['id' => 'w2', 'role' => 'sender', 'editable' => true, 'removal_effects' => $value],
@@ -280,6 +283,10 @@ class DelegatedContractV3Test extends TestCase
             'a label with a Unicode control' => [[...$effects[0], 'label' => "Project\u{0085}assignments"]],
             'a label of no-break spaces' => [[...$effects[0], 'label' => "\u{00A0}\u{3000}"]],
             'a label of a zero-width space' => [[...$effects[0], 'label' => "\u{200B}"]],
+            'a label of a grapheme joiner' => [[...$effects[0], 'label' => "\u{034F}"]],
+            'a label of a variation selector' => [[...$effects[0], 'label' => "\u{FE0F}"]],
+            'a label of a Hangul filler' => [[...$effects[0], 'label' => "\u{3164}"]],
+            'a label of a combining mark with nothing to mark' => [[...$effects[0], 'label' => " \u{0301}"]],
             'a label with a line separator' => [[...$effects[0], 'label' => "Project\u{2028}assignments"]],
             'a label reordered by a bidirectional override' => [[...$effects[0], 'label' => "Project \u{202E}stnemngissa"]],
             'null' => null,
@@ -290,6 +297,49 @@ class DelegatedContractV3Test extends TestCase
         $protected = [...$this->state(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'owner', 'editable' => false, 'removal_effects' => $effects]]]];
         $this->refused(fn () => $contract->response($protected, self::APP, 'read', 'subject-example', 3), 503, 'effects on a membership that cannot be removed');
         $this->refused(fn () => $contract->request(self::APP, [...$this->update(), 'access' => ['application_admin' => false, 'workspaces' => [['id' => 'w2', 'role' => 'sender', 'removal_effects' => $effects]]]]), 422, 'effects sent back in an update');
+    }
+
+    public function test_the_spelled_out_default_ignorables_match_unicode_where_pcre_knows_them(): void
+    {
+        if (@preg_match('/\p{DI}/u', 'a') === false) {
+            $this->markTestSkipped('This PCRE2 predates \p{DI}, which is why the set is spelled out.');
+        }
+        $class = '/['.(new ReflectionClassConstant(DelegatedContract::class, 'DEFAULT_IGNORABLE'))->getValue().']/u';
+        $differ = [];
+        foreach ([[0, 0x2FFFF], [0xE0000, 0xE0FFF]] as [$from, $to]) {
+            for ($code = $from; $code <= $to; $code++) {
+                if ($code >= 0xD800 && $code <= 0xDFFF) {
+                    continue;
+                }
+                $character = mb_chr($code, 'UTF-8');
+                if (preg_match('/\p{DI}/u', $character) !== preg_match($class, $character)) {
+                    $differ[] = sprintf('U+%04X', $code);
+                }
+            }
+        }
+        $this->assertSame([], $differ);
+    }
+
+    public function test_every_valid_state_encodes_within_the_response_bound(): void
+    {
+        $contract = new DelegatedContract;
+        // Each string at its byte bound and as long as escaping makes it: a control character is six
+        // bytes encoded, a four-byte character twelve.
+        $control = static fn (int $bytes): string => str_repeat("\x01", $bytes);
+        $label = str_repeat("\u{1F469}", 63).'abc';
+        $effect = static fn (int $i): array => ['kind' => 'k'.str_pad((string) $i, 63, 'x'), 'label' => $label, 'count' => PHP_INT_MAX];
+        $memberships = array_map(static fn (int $i): array => ['id' => sprintf('%03d', $i).$control(188), 'role' => $control(64), 'editable' => true, 'removal_effects' => [$effect(1)]], range(1, 100));
+        $state = static fn (array $workspaces): array => ['contract_version' => 3, 'application' => self::APP, 'operation' => 'read', 'subject' => $control(191),
+            'provisioned' => true, 'revision' => $control(128), 'access' => ['application_admin' => false, 'workspaces' => $workspaces, 'removal_notice' => str_repeat("\u{1F469}", 125)],
+            'allowed_edits' => ['application_admin' => true, 'workspaces' => true, 'provision' => false, 'remove' => false],
+            'provisioned_at' => '2026-10-10T12:00:00.123456+02:00', 'first_sign_in_at' => '2026-10-10T12:00:00.123456+02:00', 'last_seen_at' => '2026-10-10T12:00:00.123456+02:00'];
+
+        $largest = $state($memberships);
+        $this->assertSame($largest, $contract->response($largest, self::APP, 'read', $control(191), 3));
+        $this->assertLessThanOrEqual(DelegatedContract::MAX_RESPONSE_BYTES, strlen((string) json_encode($largest, JSON_UNESCAPED_SLASHES)));
+
+        $memberships[0]['removal_effects'][] = $effect(2);
+        $this->refused(fn () => $contract->response($state($memberships), self::APP, 'read', $control(191), 3), 503, 'more effects in one state than fit the response');
     }
 
     public function test_a_provisioned_state_may_carry_a_removal_notice_in_its_access(): void
@@ -321,6 +371,7 @@ class DelegatedContractV3Test extends TestCase
             'a line break' => "Portal access is unchanged.\nAsk the owner.",
             'a next-line control' => "Portal access is unchanged.\u{0085}",
             'blank in Unicode' => "\u{00A0}",
+            'only a variation selector' => "\u{FE0F}\u{034F}",
             'an isolate' => "Portal access is \u{2067}unchanged\u{2069}.",
             'not UTF-8' => "Portal \xc3",
             'markup as structure' => ['text' => $notice],

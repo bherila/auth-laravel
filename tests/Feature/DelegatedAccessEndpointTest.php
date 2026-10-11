@@ -445,6 +445,28 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->assertCount(1, $this->calls);
     }
 
+    public function test_a_replayed_write_answers_what_it_did_and_only_a_read_shows_the_effects_now(): void
+    {
+        $count = 2;
+        $this->answer = static function (string $actor, array $payload) use (&$count): array {
+            return self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => [
+                ['id' => 'w1', 'role' => 'member', 'editable' => true, 'removal_effects' => [['kind' => 'project_assignments', 'label' => 'Project assignments', 'count' => $count]]],
+            ]]);
+        };
+        $update = $this->update(['access' => ['application_admin' => false, 'workspaces' => [['id' => 'w1', 'role' => 'member']]]]);
+
+        $first = $this->send($update)->assertOk();
+        // What removing w1 would take changes after the write completed.
+        $count = 3;
+        $again = $this->send($update)->assertOk();
+        $this->assertSame($first->getContent(), $again->getContent(), 'A replay answers what the write did, not a fresh preview');
+        $this->assertSame(2, $again->json('access.workspaces.0.removal_effects.0.count'));
+        $this->assertCount(1, $this->calls);
+
+        $this->assertSame(3, $this->send(['operation' => 'read', 'subject' => 'target-subject'])->assertOk()->json('access.workspaces.0.removal_effects.0.count'));
+        $this->assertCount(2, $this->calls);
+    }
+
     public function test_a_stored_answer_is_replayed_after_writes_are_switched_off_and_only_new_writes_are_refused(): void
     {
         $this->answer = static fn (string $actor, array $payload): array => self::provisioned((string) $payload['subject'], ['application_admin' => false, 'workspaces' => []]);

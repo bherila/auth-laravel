@@ -58,6 +58,22 @@ final class DelegatedContract
      */
     public const MAX_REMOVAL_EFFECTS = 8;
 
+    /**
+     * At most this many `removal_effects` entries in one state, across its memberships, so every
+     * valid state encodes within {@see MAX_RESPONSE_BYTES}, escaping included. A state that would
+     * need more is refused, never truncated: the application offers fewer memberships as editable.
+     */
+    public const MAX_REMOVAL_EFFECTS_PER_STATE = 100;
+
+    /**
+     * Unicode's Default_Ignorable_Code_Point set as a character-class body, spelled out because
+     * `\p{DI}` needs PCRE2 10.44 and PHP may link an older one. A test compares it with `\p{DI}`
+     * where that is available.
+     */
+    private const DEFAULT_IGNORABLE = '\x{00AD}\x{034F}\x{061C}\x{115F}\x{1160}\x{17B4}\x{17B5}\x{180B}-\x{180F}\x{200B}-\x{200F}'
+        .'\x{202A}-\x{202E}\x{2060}-\x{206F}\x{3164}\x{FE00}-\x{FE0F}\x{FEFF}\x{FFA0}\x{FFF0}-\x{FFF8}\x{1BCA0}-\x{1BCA3}'
+        .'\x{1D173}-\x{1D17A}\x{E0000}-\x{E0FFF}';
+
     /** A removal effect's `kind`: a stable identifier the application chooses. */
     public const REMOVAL_EFFECT_KIND_PATTERN = '/^[a-z][a-z0-9_]{0,63}$/D';
 
@@ -581,6 +597,7 @@ final class DelegatedContract
         }
 
         $ids = [];
+        $effects = 0;
         foreach ($access['workspaces'] as $workspace) {
             $keys = ! $reported ? ['id', 'role']
                 : (is_array($workspace) && array_key_exists('removal_effects', $workspace) ? ['id', 'role', 'editable', 'removal_effects'] : ['id', 'role', 'editable']);
@@ -589,7 +606,8 @@ final class DelegatedContract
                 || ! $this->boundedString($workspace['role'], 64)
                 || ($reported && ! is_bool($workspace['editable']))
                 || (array_key_exists('removal_effects', $workspace) && ! ($workspace['editable'] === true && $this->removalEffects($workspace['removal_effects'])))
-                || in_array($workspace['id'], $ids, true)) {
+                || in_array($workspace['id'], $ids, true)
+                || ($effects += count($workspace['removal_effects'] ?? [])) > self::MAX_REMOVAL_EFFECTS_PER_STATE) {
                 return false;
             }
             $ids[] = $workspace['id'];
@@ -631,7 +649,9 @@ final class DelegatedContract
     {
         return $this->boundedString($value, $max)
             && preg_match('/^[^\p{Cc}\p{Zl}\p{Zp}\x{202A}-\x{202E}\x{2066}-\x{2069}]*$/uD', $value) === 1
-            && preg_match('/[^\p{Z}\s\p{Cf}]/u', $value) === 1;
+            // Something visible: not only spaces, format characters, default-ignorables (a variation
+            // selector, a grapheme joiner, a Hangul filler) or combining marks with nothing to mark.
+            && preg_match('/[^\p{Z}\s\p{Cf}\p{M}'.self::DEFAULT_IGNORABLE.']/u', $value) === 1;
     }
 
     /**
