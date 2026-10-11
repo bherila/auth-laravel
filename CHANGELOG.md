@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.24.1 - 2026-10-11
 
 - Refresh tokens retain their validated OAuth client id, so deleting an app revokes its refresh
   credentials even after expired access-token rows have been purged. Publish and run
