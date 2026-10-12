@@ -82,8 +82,13 @@ final readonly class ProviderIdentityPolicy
             $status = $this->client->status($subject);
             $observation = ['generation' => $status?->credentialVersion, 'checked_at' => Carbon::now()->getTimestamp()];
             // A store may report a failed write by returning false rather than throwing; an
-            // observation nobody else can read would make every caller ask again.
-            if (! $this->cache(fn (Repository $store) => $store->put($this->key($subject), $observation, self::FRESHNESS_SECONDS))) {
+            // observation nobody else can read would make every caller ask again. The
+            // database store also returns false when its upsert rewrites an identical row,
+            // because MySQL and MariaDB count that as no affected rows: two fresh checks in
+            // one request within the same second do exactly that. A store that holds this
+            // observation has not failed, so only a mismatched read-back refuses.
+            if (! $this->cache(fn (Repository $store) => $store->put($this->key($subject), $observation, self::FRESHNESS_SECONDS))
+                && $this->cache(fn (Repository $store) => $store->get($this->key($subject))) !== $observation) {
                 throw new ProviderStatusUnavailable('Provider status verification is unavailable.');
             }
 
