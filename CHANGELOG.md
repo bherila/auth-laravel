@@ -4,6 +4,17 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+- Provider identity enforcement no longer refuses with `temporarily_unavailable` when its
+  cache store reports an identical rewrite as a failed write. The database cache store does
+  this on MySQL and MariaDB, where an upsert that changes nothing affects no rows. Two fresh
+  checks in one request within the same second hit it, which is what an OAuth consent does:
+  the session middleware checks, then token issuance checks again. A `false` from the store
+  now refuses only when reading the key back does not return the observation just written.
+  No adoption step is needed. An application that moved its identity cache to another store
+  as a workaround can keep it.
+
 ## v0.24.2 - 2026-10-12
 
 - The delegated nonce migration checks for and creates its table on

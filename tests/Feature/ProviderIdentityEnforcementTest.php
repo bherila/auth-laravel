@@ -271,6 +271,61 @@ class ProviderIdentityEnforcementTest extends TestCase
         $this->policy()->verify('subject-example', 7);
     }
 
+    public function test_rewriting_an_identical_observation_is_not_a_failed_write(): void
+    {
+        // Models the database store on MySQL and MariaDB: an upsert that rewrites an
+        // identical row affects no rows, so put() reports false although the row holds
+        // the value. Two fresh checks in one request (session middleware, then token
+        // issuance on an OAuth consent) write the same observation within one second.
+        Http::fake(fn () => Http::response($this->payload()));
+        $this->useStore('affected-rows', new class extends ArrayStore
+        {
+            public function put($key, $value, $seconds): bool
+            {
+                $unchanged = $this->get($key) === $value;
+                parent::put($key, $value, $seconds);
+
+                return ! $unchanged;
+            }
+        });
+
+        $this->assertSame(Carbon::now()->getTimestamp(), $this->policy()->verify('subject-example', 7, fresh: true));
+        $this->assertSame(Carbon::now()->getTimestamp(), $this->policy()->verify('subject-example', 7, fresh: true));
+        Http::assertSentCount(2);
+    }
+
+    public function test_a_failed_write_still_refuses_when_the_store_holds_an_older_observation(): void
+    {
+        // The read-back accepts only this observation. An earlier answer for the same
+        // generation is not the one being written, and relying on it would shorten the
+        // window without saying so.
+        Http::fake(fn () => Http::response($this->payload()));
+        $store = new class extends ArrayStore
+        {
+            public bool $writable = true;
+
+            public function put($key, $value, $seconds): bool
+            {
+                return $this->writable && parent::put($key, $value, $seconds);
+            }
+        };
+        $this->useStore('stale', $store);
+        $this->policy()->verify('subject-example', 7, fresh: true);
+
+        $this->travel(1)->seconds();
+        $store->writable = false;
+
+        $this->expectException(ProviderStatusUnavailable::class);
+        $this->policy()->verify('subject-example', 7, fresh: true);
+    }
+
+    private function useStore(string $name, ArrayStore $store): void
+    {
+        config(["cache.stores.{$name}" => ['driver' => $name]]);
+        Cache::extend($name, fn () => Cache::repository($store));
+        config(['bherila-auth.provider_identity.cache_store' => $name]);
+    }
+
     public function test_a_failing_shared_store_refuses_retryably_instead_of_erroring(): void
     {
         Http::fake(fn () => Http::response($this->payload()));
