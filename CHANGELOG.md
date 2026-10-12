@@ -4,6 +4,30 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Application-requested admission invitations
+
+- `BWH\Auth\OAuth\Invitations\ApplicationInvitations` asks the identity provider to create,
+  resend or revoke an admission invitation to this application's own sign-in client, with no
+  roles, on behalf of a person the application has already authorized. The container binds it to
+  `ApplicationInvitationClient`, which authenticates with a client credentials token for
+  `bherila-auth.oauth_client` carrying exactly `invitations:admit` (cached encrypted until shortly
+  before expiry) and an RS256 actor assertion over the exact URL and body bytes sent.
+- Results are `IssuedInvitation` (`id`, `status`, `expiresAt`, `link`, `emailSent`; the link is
+  left out of JSON and debug output) and `RevokedInvitation`. Every failure is a typed
+  `ApplicationInvitationException` subclass carrying an `ApplicationInvitationError` code: one per
+  provider error, plus `not_configured`, `token_refused`, `unavailable` and `invalid_response`.
+- `BWH\Auth\Testing\FakeApplicationInvitations::swap()` replaces the client in application tests
+  with an in-memory provider that records calls and takes scripted responses and refusals.
+- New settings under `bherila-auth.application_invitations`: `issuer`, `key_id`,
+  `private_key_path` or `private_key`, `private_key_passphrase`, `timeout_seconds` and
+  `token_cache_store`. Nothing is called until an application calls the client. See
+  [docs/application-invitations.md](docs/application-invitations.md).
+- **Adoption:** the provider must be upgraded first and must enable the application (its key id
+  and public key, the client credentials grant on the sign-in client, and the application listed
+  for invitations). Generate a key pair used for nothing else. No migration.
+
 ## v0.24.4 - 2026-10-12
 
 - Dynamic client registration accepts `token_endpoint_auth_method` values of

@@ -46,6 +46,7 @@ Out of scope:
 - Mail contents for password reset, password reset notice, and 2FA code emails.
 - OAuth authorization state, authorization codes, refresh tokens, access-token JWTs, resource/audience bindings, registered redirect URIs, client scope restrictions, and consent decisions.
 - Audit events and logs emitted by consuming apps.
+- The application's invitation signing key, the client credentials token scoped to `invitations:admit`, and the invitation acceptance links the provider returns.
 
 ## Trust boundaries
 
@@ -56,6 +57,7 @@ Out of scope:
 - Browser/client to the OAuth authorization server and consent UI.
 - OAuth authorization server to the Passport token database and protected resource endpoint.
 - Laravel app to the identity provider's reconciliation API, authenticated with the static OAuth client credential (trusted HTTPS base URL, no redirects, bounded time and response size, strict response validation).
+- Laravel app to the identity provider's application invitation endpoints, authenticated with a client credentials token and a per-request signed actor assertion (same transport bounds as above).
 - Composer dependency supply chain to deployed package code.
 - App-specific policy layer through `AuthUserPolicy` and `AuthAuditLogger`.
 
@@ -131,6 +133,8 @@ that returns an `OAuthProtectedResource` bearer challenge.
 | Protected-resource discovery failure | A client cannot discover the authorization server or does not understand the API challenge. | Reusable RFC 9728 metadata and `WWW-Authenticate` helpers include `authorization_servers`, supported scopes, bearer method, and `resource_metadata` when configured. | Route the metadata document at the exact configured URI and return the helper's challenge from the MCP endpoint's unauthenticated/insufficient-scope responses. |
 | Disabled server still issues credentials | An operator turns off metadata/DCR but Passport's separately registered authorization or token routes continue processing existing clients and refresh grants. | `EnsureOAuthServerEnabled` returns a non-cacheable 404 before application-owned Passport routes execute. Package metadata and DCR controllers enforce the same opt-in switch themselves. | Install the gate on every Passport authorization/token route, clear cached configuration after changing the flag, and revoke existing credentials separately when required. |
 | Unsafe client metadata retrieval | A URL-form client ID causes server-side fetches into private infrastructure. | Client ID Metadata Documents are not enabled or advertised in this release; no arbitrary client URL is fetched. | Use DCR compatibility for now. Do not add `client_id_metadata_document_supported` until the follow-up implementation includes URL identity resolution, bounded fetches, redirect policy, DNS/IP SSRF defenses, and safe caching. |
+| Invitation link or credential leakage | An acceptance link (a single-use bearer credential), the invitation token, or the signing key reaches a log, an API response or an agent, letting someone else accept an invitation or request one as the application. | `IssuedInvitation` omits the link from JSON and debug output; exceptions carry fixed messages and no address, link, token, assertion, body or transport exception; sensitive parameters are marked; the token is cached encrypted under a key bound to the issuer, client and secret; requests never follow redirects. | Show the link only to the manager who asked; never log it or return it to automated agents; keep the signing key in the secret store and use it for nothing else. |
+| Invitation request replay or redirection | A captured request is replayed, or its assertion is used for another invitation, body or endpoint. | Each assertion binds the exact URL and SHA-256 of the exact body bytes, lives 60 seconds and carries a fresh 64-hex `jti`; the provider accepts each `jti` once. The client signs nothing it does not send. | Decide the actor's authority before calling: the provider relies on it. |
 | Dependency compromise | Composer package or transitive dependency is compromised. | Package is versioned and installable from tagged GitHub source. | Pin Composer lockfiles, review dependency updates, run CI, monitor advisories. |
 
 ## Design decisions
@@ -169,6 +173,8 @@ These are gaps in package behavior that the threat table flags above. They are l
   accepts the resource-bound credential; an unmarked route rejects bound tokens.
 - Return `OAuthProtectedResource::unauthorizedResponse()` / `insufficientScopeResponse()`
   from the protected endpoint and verify the challenge's `resource_metadata` URI.
+- If using application invitations, check the actor's authority before every call, keep the
+  invitation key separate from other keys, and keep acceptance links out of logs and agent responses.
 - Configure `bherila-auth.passkeys.allowed_origins` for every trusted production origin.
 - Ensure all auth routes are HTTPS-only in production.
 - Ensure cookies are secure and same-site.
