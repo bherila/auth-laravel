@@ -4,6 +4,20 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+- The delegated nonce migration checks for and creates its table on
+  `bherila-auth.delegated_access.nonce_connection`, matching the nonce store. An existing
+  table on the default connection no longer prevents creation on the configured connection.
+- **Upgrade note:** an application using a non-default nonce connection should copy the
+  corrected `2026_09_07_000000_create_delegated_access_nonces.php` migration, or republish it
+  with `php artisan vendor:publish --tag=bherila-auth-delegated-access-migrations --force`.
+  If the original migration has already been recorded as run, add a new application migration
+  that performs the same idempotent creation on the configured connection. Let the
+  application's reviewed deployment run that migration; updating the package alone does not
+  create the missing table. Moving active nonce storage also requires carrying unexpired
+  nonce records forward or waiting for the replay window to expire.
+
 ## v0.24.1 - 2026-10-11
 
 - Refresh tokens retain their validated OAuth client id, so deleting an app revokes its refresh
