@@ -65,7 +65,7 @@ $issued = app(ApplicationInvitations::class)->create($manager->oauth_subject, $e
 $issued->id;         // int: keep it for resend and revoke
 $issued->status;     // 'pending'
 $issued->expiresAt;  // DateTimeImmutable, UTC, seven days out
-$issued->link;       // the acceptance link: a secret, for the manager only
+$issued->link();     // the acceptance link: a secret, for the manager only
 $issued->emailSent;  // whether the provider's email was accepted for delivery
 
 $resent = app(ApplicationInvitations::class)->resend($manager->oauth_subject, $issued->id);   // new link and expiry
@@ -78,8 +78,10 @@ $revoked = app(ApplicationInvitations::class)->revoke($manager->oauth_subject, $
 - **Revoke** is idempotent. An accepted invitation cannot be revoked: remove the person's access in
   the application instead.
 
-`IssuedInvitation` leaves the link out of `json_encode()` and debug output, so serializing or
-dumping one never discloses it. Read `$issued->link` explicitly where the manager should see it.
+The link is not a property of `IssuedInvitation`, so no way of turning one into text or an array
+(`json_encode()`, `print_r()`, `var_export()`, `serialize()`, an array cast, `dump()`) discloses
+it. Read `$issued->link()` explicitly where the manager should see it. A copy restored from
+serialization carries no link, and `link()` throws `LogicException` for it.
 
 The address is sent exactly as given; the provider validates it. An empty address, one over 255
 characters or one that is not UTF-8 is refused before sending (`ApplicationInvitationInvalid` with

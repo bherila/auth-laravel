@@ -52,7 +52,7 @@ class ApplicationInvitationClientTest extends TestCase
         $this->assertSame(42, $issued->id);
         $this->assertSame('pending', $issued->status);
         $this->assertSame('2026-10-19T12:00:00+00:00', $issued->expiresAt->format(DATE_ATOM));
-        $this->assertSame(self::ISSUER.'/invitations/example-link-token', $issued->link);
+        $this->assertSame(self::ISSUER.'/invitations/example-link-token', $issued->link());
         $this->assertTrue($issued->emailSent);
     }
 
@@ -458,8 +458,20 @@ class ApplicationInvitationClientTest extends TestCase
         $issued = new IssuedInvitation(42, 'pending', new \DateTimeImmutable('2026-10-19T12:00:00Z'), 'https://identity.example.test/invitations/secret-token', true);
 
         $this->assertSame('{"id":42,"status":"pending","expires_at":"2026-10-19T12:00:00Z","email_sent":true}', json_encode($issued));
-        $this->assertStringNotContainsString('secret-token', print_r($issued, true));
-        $this->assertStringNotContainsString('secret-token', var_export(json_decode(json_encode($issued), true), true));
+        // Every way a debugging or logging tool turns an object into text or an array.
+        foreach ([
+            print_r($issued, true),
+            var_export($issued, true),
+            serialize($issued),
+            json_encode((array) $issued),
+            json_encode(get_object_vars($issued)),
+            (new \Symfony\Component\VarDumper\Dumper\CliDumper)->dump((new \Symfony\Component\VarDumper\Cloner\VarCloner)->cloneVar($issued), true),
+        ] as $text) {
+            $this->assertStringNotContainsString('secret-token', $text);
+        }
+        // Read explicitly, including from a copy.
+        $this->assertSame('https://identity.example.test/invitations/secret-token', $issued->link());
+        $this->assertSame('https://identity.example.test/invitations/secret-token', (clone $issued)->link());
     }
 
     public function test_every_reason_has_an_exception_and_a_fixed_message(): void

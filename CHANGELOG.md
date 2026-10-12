@@ -14,8 +14,8 @@ the first entry here is in the git history.
   `ApplicationInvitationClient`, which authenticates with a client credentials token for
   `bherila-auth.oauth_client` carrying exactly `invitations:admit` (cached encrypted until shortly
   before expiry) and an RS256 actor assertion over the exact URL and body bytes sent.
-- Results are `IssuedInvitation` (`id`, `status`, `expiresAt`, `link`, `emailSent`; the link is
-  left out of JSON and debug output) and `RevokedInvitation`. Every failure is a typed
+- Results are `IssuedInvitation` (`id`, `status`, `expiresAt`, `emailSent`, and `link()`, which is
+  kept outside the object's state so no serialization or dump discloses it) and `RevokedInvitation`. Every failure is a typed
   `ApplicationInvitationException` subclass carrying an `ApplicationInvitationError` code: one per
   provider error, plus `not_configured`, `token_refused`, `unavailable` and `invalid_response`.
 - `BWH\Auth\Testing\FakeApplicationInvitations::swap()` replaces the client in application tests

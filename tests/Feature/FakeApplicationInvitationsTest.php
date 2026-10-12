@@ -46,7 +46,7 @@ class FakeApplicationInvitationsTest extends TestCase
         $this->assertSame(1, $issued->id);
         $this->assertSame('pending', $issued->status);
         $this->assertSame('2026-10-19T12:00:00+00:00', $issued->expiresAt->format(DATE_ATOM));
-        $this->assertStringStartsWith(FakeApplicationInvitations::LINK_BASE, $issued->link);
+        $this->assertStringStartsWith(FakeApplicationInvitations::LINK_BASE, $issued->link());
         $this->assertTrue($issued->emailSent);
         $this->assertSame([['operation' => 'create', 'actor' => '42', 'email' => 'Person@Example.test', 'invitation_id' => null, 'result' => $issued, 'error' => null]],
             $this->fake->calls());
@@ -75,7 +75,7 @@ class FakeApplicationInvitationsTest extends TestCase
         $resent = $this->invitations()->resend('42', $issued->id);
 
         $this->assertSame($issued->id, $resent->id);
-        $this->assertNotSame($issued->link, $resent->link);
+        $this->assertNotSame($issued->link(), $resent->link());
         $this->assertSame('2026-10-27T12:00:00+00:00', $resent->expiresAt->format(DATE_ATOM));
         $this->fake->assertResent($issued->id, actor: '42');
     }
