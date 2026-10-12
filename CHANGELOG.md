@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.24.4 - 2026-10-12
 
 - Dynamic client registration accepts `token_endpoint_auth_method` values of
   `client_secret_post` and `client_secret_basic`, which the agent preset's metadata already
