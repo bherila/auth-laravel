@@ -32,9 +32,7 @@ return new class extends Migration
     }
 
     /** A skipped application-owned column cannot safely be removed on rollback. */
-    public function down(): void
-    {
-    }
+    public function down(): void {}
 
     public function getConnection(): ?string
     {

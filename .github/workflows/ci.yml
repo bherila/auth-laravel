@@ -56,6 +56,9 @@ jobs:
       - name: Validate Composer metadata
         run: composer validate --strict --no-check-lock
 
+      - name: Check shipped migration style
+        run: composer lint:migrations
+
       - name: Audit dependencies for known advisories
         run: composer audit --no-interaction
 
