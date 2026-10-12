@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.24.2 - 2026-10-12
 
 - The delegated nonce migration checks for and creates its table on
   `bherila-auth.delegated_access.nonce_connection`, matching the nonce store. An existing
@@ -17,6 +17,14 @@ the first entry here is in the git history.
   application's reviewed deployment run that migration; updating the package alone does not
   create the missing table. Moving active nonce storage also requires carrying unexpired
   nonce records forward or waiting for the replay window to expire.
+- All shipped migration directories pass Pint with the default Laravel preset. The
+  development dependency and `composer lint:migrations` CI check keep future migrations
+  clean when an application copies or publishes them. Formatting changes have no database
+  effect and do not require rerunning a migration.
+- `RELEASING.md` documents version choice, migration adoption, providers-first contract
+  upgrades with confirmation UI verification, cascade revision changes, signed tags,
+  changelog release notes, and Packagist confirmation. The automated release workflow
+  now uses the same version-specific CHANGELOG notes.
 
 ## v0.24.1 - 2026-10-11
 
