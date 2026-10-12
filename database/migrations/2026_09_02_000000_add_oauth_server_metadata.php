@@ -38,9 +38,7 @@ return new class extends Migration
      * that an application already owns, a later rollback cannot safely determine
      * which columns it is allowed to remove.
      */
-    public function down(): void
-    {
-    }
+    public function down(): void {}
 
     /** @param callable(Blueprint): void $definition */
     private function addColumn(string $tableName, string $column, callable $definition): void

@@ -26,6 +26,7 @@
   },
   "require-dev": {
     "laravel/passport": "^13.0",
+    "laravel/pint": "^1.29.3",
     "orchestra/testbench": "^11.0"
   },
   "suggest": {
@@ -42,7 +43,8 @@
     }
   },
   "scripts": {
-    "test": "phpunit"
+    "test": "phpunit",
+    "lint:migrations": "pint --test --preset=laravel database"
   },
   "extra": {
     "laravel": {

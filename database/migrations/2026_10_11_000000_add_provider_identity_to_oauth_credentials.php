@@ -31,9 +31,7 @@ return new class extends Migration
     }
 
     /** Intentionally a no-op, for the same reason as the OAuth server metadata migration. */
-    public function down(): void
-    {
-    }
+    public function down(): void {}
 
     /** @param callable(Blueprint): void $definition */
     private function addColumn(string $tableName, string $column, callable $definition): void
