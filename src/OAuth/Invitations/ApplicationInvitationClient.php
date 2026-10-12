@@ -346,7 +346,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
      *
      * @throws ApplicationInvitationUnavailable
      */
-    private function send(#[SensitiveParameter] array $settings, \Closure $request): array
+    private function send(#[SensitiveParameter] array $settings, #[SensitiveParameter] \Closure $request): array
     {
         $timeout = $settings['timeout_seconds'];
         $deadline = hrtime(true) + $timeout * 1_000_000_000;

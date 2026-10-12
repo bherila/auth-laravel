@@ -165,7 +165,8 @@ class ApplicationInvitationTraceRedactionTest extends TestCase
         }
         $types = $type instanceof \ReflectionNamedType ? [$type] : $type->getTypes();
         foreach ($types as $named) {
-            if ($named instanceof \ReflectionNamedType && in_array($named->getName(), ['string', 'array', 'mixed'], true)) {
+            // A closure carries whatever it captured, and the object it is bound to.
+            if ($named instanceof \ReflectionNamedType && in_array($named->getName(), ['string', 'array', 'mixed', \Closure::class, 'callable'], true)) {
                 return true;
             }
         }
@@ -174,8 +175,8 @@ class ApplicationInvitationTraceRedactionTest extends TestCase
     }
 
     /**
-     * Every string reachable from trace arguments, through arrays and object properties, except
-     * the redacted values themselves.
+     * Every string reachable from trace arguments, through arrays, object properties and what a
+     * closure captured or is bound to, except the redacted values themselves.
      *
      * @return list<string>
      */
@@ -184,8 +185,12 @@ class ApplicationInvitationTraceRedactionTest extends TestCase
         if (is_string($value)) {
             return [$value];
         }
-        if ($depth > 6 || $value instanceof SensitiveParameterValue || $value instanceof \Closure) {
+        if ($depth > 6 || $value instanceof SensitiveParameterValue) {
             return [];
+        }
+        if ($value instanceof \Closure) {
+            $function = new \ReflectionFunction($value);
+            $value = [$function->getClosureUsedVariables(), $function->getClosureThis()];
         }
         if (is_object($value)) {
             $value = (array) $value;

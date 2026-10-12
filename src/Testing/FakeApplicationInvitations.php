@@ -232,7 +232,7 @@ final class FakeApplicationInvitations implements ApplicationInvitations
      * @param  \Closure(): T  $provider
      * @return T
      */
-    private function run(string $operation, string $actor, #[SensitiveParameter] ?string $email, ?int $id, \Closure $provider): IssuedInvitation|RevokedInvitation
+    private function run(string $operation, string $actor, #[SensitiveParameter] ?string $email, ?int $id, #[SensitiveParameter] \Closure $provider): IssuedInvitation|RevokedInvitation
     {
         $call = ['operation' => $operation, 'actor' => $actor, 'email' => $email, 'invitation_id' => $id, 'result' => null, 'error' => null];
         try {
