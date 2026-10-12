@@ -222,6 +222,28 @@ return [
         'per_minute' => 120,
     ],
 
+    'application_invitations' => [
+        // Admission invitations this application asks the identity provider for, to its own sign-in
+        // client only (BWH\Auth\OAuth\Invitations\ApplicationInvitations). Uses the oauth_client
+        // credential, which the provider must allow the client credentials grant. Nothing calls the
+        // provider until the application does; see docs/application-invitations.md.
+        // The provider's exact issuer (an https:// origin with no path); null for oauth_client.base_url.
+        // Each assertion's audience is this value and the endpoint path, byte for byte.
+        'issuer' => env('BHERILA_AUTH_INVITATION_ISSUER'),
+        // The key id the provider has pinned this application's invitation public key under.
+        'key_id' => env('BHERILA_AUTH_INVITATION_KEY_ID'),
+        // The RS256 private key (at least 2048 bits) that signs actor assertions, separate from every
+        // other key: set exactly one of a readable PEM file path or the PEM itself.
+        'private_key_path' => env('BHERILA_AUTH_INVITATION_PRIVATE_KEY_PATH'),
+        'private_key' => env('BHERILA_AUTH_INVITATION_PRIVATE_KEY'),
+        'private_key_passphrase' => env('BHERILA_AUTH_INVITATION_PRIVATE_KEY_PASSPHRASE'),
+        // Total time per provider request, 1 through 30 seconds (connect time is at most 3).
+        'timeout_seconds' => (int) env('BHERILA_AUTH_INVITATION_TIMEOUT_SECONDS', 10),
+        // The cache store that keeps the client credentials token (encrypted) between requests:
+        // null for the default store, false to keep it only for the current process.
+        'token_cache_store' => env('BHERILA_AUTH_INVITATION_TOKEN_CACHE_STORE'),
+    ],
+
     'identity_tombstones' => [
         // Consuming the identity provider's deletion tombstone feed
         // (`bherila-auth:consume-identity-tombstones`). Off until the application binds
