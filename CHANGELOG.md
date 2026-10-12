@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.25.0 - 2026-10-12
 
 ### Application-requested admission invitations
 
@@ -14,10 +14,12 @@ the first entry here is in the git history.
   `ApplicationInvitationClient`, which authenticates with a client credentials token for
   `bherila-auth.oauth_client` carrying exactly `invitations:admit` (cached encrypted until shortly
   before expiry) and an RS256 actor assertion over the exact URL and body bytes sent.
-- Results are `IssuedInvitation` (`id`, `status`, `expiresAt`, `emailSent`, and `link()`, which is
-  kept outside the object's state so no serialization or dump discloses it) and `RevokedInvitation`. Every failure is a typed
-  `ApplicationInvitationException` subclass carrying an `ApplicationInvitationError` code: one per
-  provider error, plus `not_configured`, `token_refused`, `unavailable` and `invalid_response`.
+- Results are `IssuedInvitation` (`id`, `status`, `expiresAt`, `emailSent`, and `link()`, which
+  is kept outside the object's state so no serialization or dump discloses it) and
+  `RevokedInvitation`. Every failure is a typed `ApplicationInvitationException` subclass carrying
+  an `ApplicationInvitationError` code: one per provider error, plus `not_configured`,
+  `token_refused`, `unavailable` and `invalid_response`. No failure's message or stack trace
+  carries a credential, the address, the link or a provider body.
 - `BWH\Auth\Testing\FakeApplicationInvitations::swap()` replaces the client in application tests
   with an in-memory provider that records calls and takes scripted responses and refusals.
 - New settings under `bherila-auth.application_invitations`: `issuer`, `key_id`,
