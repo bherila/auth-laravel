@@ -49,13 +49,8 @@ final class ApplicationInvitationClient implements ApplicationInvitations
 
     public const PATH = '/api/application-invitations';
 
-    /** The provider's subject form: a decimal string with no leading zeros. */
-    private const SUBJECT = '/^[1-9][0-9]{0,19}$/D';
-
     /** A large invitation answer or error is well under 4 KiB; anything past this is not the contract. */
     private const RESPONSE_BYTES = 16_384;
-
-    private const MAX_EMAIL_LENGTH = 255;
 
     private const MAX_LINK_LENGTH = 2048;
 
@@ -77,12 +72,8 @@ final class ApplicationInvitationClient implements ApplicationInvitations
 
     public function create(string $actorSubject, #[SensitiveParameter] string $email): IssuedInvitation
     {
-        self::requireSubject($actorSubject);
-        if ($email === '' || ! mb_check_encoding($email, 'UTF-8') || mb_strlen($email) > self::MAX_EMAIL_LENGTH) {
-            // Refused here, so with no provider status.
-            throw new ApplicationInvitationInvalid(ApplicationInvitationError::InvalidRequest,
-                errors: ['email' => ['The email must be a valid address of at most '.self::MAX_EMAIL_LENGTH.' characters.']]);
-        }
+        InvitationArguments::subject($actorSubject);
+        InvitationArguments::email($email);
         $body = json_encode(['email' => $email], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         return $this->issued($this->call(self::PATH, $body, $actorSubject, 201), null);
@@ -90,16 +81,16 @@ final class ApplicationInvitationClient implements ApplicationInvitations
 
     public function resend(string $actorSubject, int $invitationId): IssuedInvitation
     {
-        self::requireSubject($actorSubject);
-        self::requireId($invitationId);
+        InvitationArguments::subject($actorSubject);
+        InvitationArguments::id($invitationId);
 
         return $this->issued($this->call(self::PATH.'/'.$invitationId.'/resend', '{}', $actorSubject, 200), $invitationId);
     }
 
     public function revoke(string $actorSubject, int $invitationId): RevokedInvitation
     {
-        self::requireSubject($actorSubject);
-        self::requireId($invitationId);
+        InvitationArguments::subject($actorSubject);
+        InvitationArguments::id($invitationId);
 
         $data = $this->call(self::PATH.'/'.$invitationId.'/revoke', '{}', $actorSubject, 200);
         $invitation = $data['invitation'] ?? null;
@@ -483,22 +474,6 @@ final class ApplicationInvitationClient implements ApplicationInvitations
         }
 
         return InMemory::plainText($pem, $passphrase ?? '');
-    }
-
-    /** @throws \InvalidArgumentException */
-    private static function requireSubject(string $subject): void
-    {
-        if (preg_match(self::SUBJECT, $subject) !== 1) {
-            throw new \InvalidArgumentException('The actor subject must be a provider subject: a decimal string with no leading zeros.');
-        }
-    }
-
-    /** @throws \InvalidArgumentException */
-    private static function requireId(int $id): void
-    {
-        if ($id < 1) {
-            throw new \InvalidArgumentException('The invitation id must be a positive integer.');
-        }
     }
 
     private static function expiresAt(mixed $value): ?DateTimeImmutable
