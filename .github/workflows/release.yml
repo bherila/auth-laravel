@@ -42,10 +42,15 @@ jobs:
             echo "Release ${GITHUB_REF_NAME} already exists; leaving it as it is."
             exit 0
           fi
+          awk -v tag="${GITHUB_REF_NAME}" '
+            /^## / { if (found) exit; found = ($2 == tag); next }
+            found { print }
+          ' CHANGELOG.md > /tmp/auth-laravel-release-notes.md
+          grep -q '[^[:space:]]' /tmp/auth-laravel-release-notes.md
           gh release create "${GITHUB_REF_NAME}" \
             --verify-tag \
             --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+            --notes-file /tmp/auth-laravel-release-notes.md
 
   packagist:
     name: Update Packagist (bherila/auth-laravel)
