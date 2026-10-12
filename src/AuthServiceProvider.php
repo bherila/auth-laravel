@@ -65,6 +65,8 @@ class AuthServiceProvider extends ServiceProvider
             $app['db']->connection(config('bherila-auth.delegated_access.receipt_connection')),
         ));
 
+        $this->app->singletonIf(\BWH\Auth\OAuth\Invitations\ApplicationInvitations::class, \BWH\Auth\OAuth\Invitations\ApplicationInvitationClient::class);
+
         $this->registerOAuthServerBindings();
     }
 
