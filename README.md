@@ -546,7 +546,7 @@ AgentOAuthServer::routes();
 |---|---|
 | Resource | `APP_URL/api/v1` (RFC 8707). An omitted `resource` is taken as this one; a different explicit resource is refused. |
 | PKCE | S256 required for every client |
-| Self-registration | `POST /oauth/register`, public clients only, `throttle:10,60` |
+| Self-registration | `POST /oauth/register`, public clients only, `throttle:10,60`. A request for `client_secret_post` or `client_secret_basic` is accepted and registered public; the response says `none`. A refusal's `error_description` names the fields at fault. |
 | Token endpoint auth methods advertised | `none`, `client_secret_basic`, `client_secret_post`. Confidential clients are only ones a person registers. |
 | Discovery routes | `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api/v1`. That's the only path whose `resource` matches, per RFC 9728. Point your MCP endpoint's `WWW-Authenticate resource_metadata` at it. A deployment mounted under a path must route the host-root well-known URL to the app. |
 | Kill switch | `OAUTH_SERVER_ENABLED` |

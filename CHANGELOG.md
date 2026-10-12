@@ -4,6 +4,19 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+- Dynamic client registration accepts `token_endpoint_auth_method` values of
+  `client_secret_post` and `client_secret_basic`, which the agent preset's metadata already
+  advertised. The client is still registered public with no secret, and the response states
+  `none` (RFC 7591 §3.2.1). Clients built on the MCP SDKs, including Claude's hosted
+  connectors, request `client_secret_post` by default and were refused with
+  `invalid_client_metadata`; they now register and complete the PKCE flow. Any other method
+  is still refused.
+- A registration refusal's `error_description` names the metadata fields at fault, for
+  example `Client metadata is invalid: token_endpoint_auth_method.`, without echoing their
+  values. No adoption step is needed.
+
 ## v0.24.3 - 2026-10-12
 
 - Provider identity enforcement no longer refuses with `temporarily_unavailable` when its
