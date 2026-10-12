@@ -361,7 +361,16 @@ final class ApplicationInvitationClient implements ApplicationInvitations
 
         $status = $response->status();
         $retryAfter = self::retryAfter($response->header('Retry-After'));
-        $bytes = self::readBounded($response->toPsrResponse()->getBody(), $deadline);
+        try {
+            $bytes = self::readBounded($response->toPsrResponse()->getBody(), $deadline);
+        } catch (ApplicationInvitationException $unreadable) {
+            // A refusal is decided by its status; an unreadable body (an oversized error page, say)
+            // must not hide it. A success answer has to be read whole.
+            if ($status >= 200 && $status < 300) {
+                throw $unreadable;
+            }
+            $bytes = '';
+        }
         $data = $bytes === '' ? null : json_decode($bytes, true, 16, JSON_BIGINT_AS_STRING);
 
         return [$status, is_array($data) && ($data === [] || ! array_is_list($data)) ? $data : null, $retryAfter];

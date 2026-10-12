@@ -204,6 +204,17 @@ class ApplicationInvitationClientTest extends TestCase
         $this->assertNull($refused->getPrevious());
     }
 
+    public function test_an_oversized_error_page_keeps_its_status(): void
+    {
+        $this->provider(fn () => Http::response(str_repeat('<p>Bad gateway</p>', 2000), 502, ['Retry-After' => '30']));
+
+        $refused = $this->refusal(fn () => $this->invitations()->create('42', 'person@example.test'));
+
+        $this->assertInstanceOf(ApplicationInvitationUnavailable::class, $refused);
+        $this->assertSame(ApplicationInvitationError::Unavailable, $refused->error);
+        $this->assertSame([502, 30], [$refused->status, $refused->retryAfter]);
+    }
+
     public function test_a_rate_limit_names_its_limit_and_delay(): void
     {
         $this->provider(['error' => 'rate_limited', 'message' => 'x', 'limit' => 'recipient'], 429, ['Retry-After' => '120']);
