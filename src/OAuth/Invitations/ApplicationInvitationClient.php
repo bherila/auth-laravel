@@ -238,7 +238,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
             return [$cached['token'], true];
         }
 
-        [$status, $data] = $this->send($settings, fn (PendingRequest $request): Response => $request->asForm()->acceptJson()->post(
+        [$status, $data, $retryAfter] = $this->send($settings, fn (PendingRequest $request): Response => $request->asForm()->acceptJson()->post(
             $settings['issuer'].$settings['token_path'], [
                 'grant_type' => 'client_credentials',
                 'client_id' => $settings['client_id'],
@@ -246,10 +246,10 @@ final class ApplicationInvitationClient implements ApplicationInvitations
                 'scope' => self::SCOPE,
             ]));
         if ($status === 400 || $status === 401) {
-            throw ApplicationInvitationException::for(ApplicationInvitationError::TokenRefused, $status);
+            throw ApplicationInvitationException::for(ApplicationInvitationError::TokenRefused, $status, $retryAfter);
         }
         if ($status !== 200) {
-            throw ApplicationInvitationException::for(ApplicationInvitationError::Unavailable, $status);
+            throw ApplicationInvitationException::for(ApplicationInvitationError::Unavailable, $status, $retryAfter);
         }
         $token = $data['access_token'] ?? null;
         $expiresIn = $data['expires_in'] ?? null;

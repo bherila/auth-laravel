@@ -409,6 +409,16 @@ class ApplicationInvitationClientTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_a_throttled_token_endpoint_keeps_its_delay(): void
+    {
+        Http::fake(['*/oauth/token' => Http::response(['error' => 'too_many_requests'], 429, ['Retry-After' => '45'])]);
+
+        $refused = $this->refusal(fn () => $this->invitations()->create('42', 'person@example.test'));
+
+        $this->assertInstanceOf(ApplicationInvitationUnavailable::class, $refused);
+        $this->assertSame([429, 45], [$refused->status, $refused->retryAfter]);
+    }
+
     /** @return array<string, array{0: int, 1: array<mixed>, 2: ApplicationInvitationError}> */
     public static function tokenAnswers(): array
     {
