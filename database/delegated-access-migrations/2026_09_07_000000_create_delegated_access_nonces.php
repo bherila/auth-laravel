@@ -9,11 +9,12 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasTable(DatabaseNonceStore::TABLE)) {
+        $schema = Schema::connection(config('bherila-auth.delegated_access.nonce_connection'));
+        if ($schema->hasTable(DatabaseNonceStore::TABLE)) {
             return;
         }
 
-        Schema::create(DatabaseNonceStore::TABLE, function (Blueprint $table) {
+        $schema->create(DatabaseNonceStore::TABLE, function (Blueprint $table) {
             $table->string('key', 64)->primary();
             $table->unsignedBigInteger('expires_at')->index();
         });
