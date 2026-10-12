@@ -160,6 +160,31 @@ final class AgentOAuthServerPresetTest extends TestCase
         $this->assertSame(self::APP.'/api/v1', OAuthResourceIndicator::tokenClaims($refreshed['access_token'])['resource'] ?? null);
     }
 
+    /**
+     * A client that asks for `client_secret_post`, as the MCP SDKs do by
+     * default, is registered as a public client, told so, and completes the
+     * code flow with PKCE and no secret.
+     */
+    public function test_a_client_requesting_a_secret_method_is_registered_public_and_completes_the_flow(): void
+    {
+        $user = User::query()->create(['name' => 'Agent User', 'email' => 'sdk@example.test', 'password' => 'not-used']);
+        $registered = $this->postJson('/oauth/register', [
+            'client_name' => 'Claude',
+            'redirect_uris' => [self::REDIRECT],
+            'grant_types' => ['authorization_code', 'refresh_token'],
+            'response_types' => ['code'],
+            'token_endpoint_auth_method' => 'client_secret_post',
+            'scope' => 'mcp:use',
+        ])->assertCreated()
+            ->assertJsonPath('token_endpoint_auth_method', 'none')
+            ->assertJsonMissingPath('client_secret');
+
+        $clientId = (string) $registered->json('client_id');
+        $this->assertFalse(Passport::client()->newQuery()->findOrFail($clientId)->confidential());
+
+        $this->codeFlow($user, $clientId, 'mcp:use')->assertOk();
+    }
+
     public function test_a_person_registered_confidential_client_authenticates_with_its_secret(): void
     {
         $user = User::query()->create(['name' => 'Agent User', 'email' => 'secret@example.test', 'password' => 'not-used']);

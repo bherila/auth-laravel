@@ -39,7 +39,12 @@ final class DynamicClientRegistrationValidator
             'grant_types.*' => ['string', 'in:authorization_code,refresh_token'],
             'response_types' => ['sometimes', 'array', 'size:1'],
             'response_types.*' => ['string', 'in:code'],
-            'token_endpoint_auth_method' => ['sometimes', 'string', 'in:none'],
+            // Every method the metadata document may advertise is accepted on
+            // request, but a self-registered client is always public: RFC 7591
+            // section 3.2.1 lets the server replace requested metadata, and the
+            // response states `none`. Clients built on the MCP SDKs ask for
+            // `client_secret_post` by default and follow the method returned.
+            'token_endpoint_auth_method' => ['sometimes', 'string', 'in:none,client_secret_basic,client_secret_post'],
             // An explicitly empty scope is meaningful: it registers a client with
             // no requested scopes. Omission means the authorization server's
             // configured catalog remains the upper bound.
@@ -47,20 +52,23 @@ final class DynamicClientRegistrationValidator
             'application_type' => ['sometimes', 'string', 'in:native,web'],
         ]);
         if ($validator->fails()) {
-            throw new InvalidClientMetadata;
+            throw self::invalid(array_keys($validator->failed()));
         }
 
         $metadata = $validator->validated();
         $grantTypes = array_values(array_unique($metadata['grant_types'] ?? ['authorization_code', 'refresh_token']));
         sort($grantTypes);
         $responseTypes = array_values(array_unique($metadata['response_types'] ?? ['code']));
-        if ($grantTypes !== ['authorization_code', 'refresh_token'] || $responseTypes !== ['code']) {
-            throw new InvalidClientMetadata;
+        if ($grantTypes !== ['authorization_code', 'refresh_token']) {
+            throw self::invalid(['grant_types']);
+        }
+        if ($responseTypes !== ['code']) {
+            throw self::invalid(['response_types']);
         }
 
         $clientName = trim((string) $metadata['client_name']);
         if ($clientName === '' || preg_match('/[\p{C}]/u', $clientName) !== 0) {
-            throw new InvalidClientMetadata;
+            throw self::invalid(['client_name']);
         }
 
         $applicationType = isset($metadata['application_type'])
@@ -69,13 +77,13 @@ final class DynamicClientRegistrationValidator
         $redirectUris = [];
         foreach ($metadata['redirect_uris'] as $redirectUri) {
             if (! is_string($redirectUri) || ! $this->validRedirectUri($redirectUri, $applicationType)) {
-                throw new InvalidClientMetadata;
+                throw self::invalid(['redirect_uris']);
             }
             $redirectUris[] = $redirectUri;
         }
         $redirectUris = array_values(array_unique($redirectUris));
         if ($redirectUris === []) {
-            throw new InvalidClientMetadata;
+            throw self::invalid(['redirect_uris']);
         }
 
         // An omitted scope uses the application catalog as the client's explicit
@@ -85,7 +93,7 @@ final class DynamicClientRegistrationValidator
         if (array_key_exists('scope', $metadata)) {
             $scopes = self::parseScopes((string) $metadata['scope']);
             if (array_diff($scopes, $allowedScopes) !== []) {
-                throw new InvalidClientMetadata;
+                throw self::invalid(['scope']);
             }
         }
 
@@ -95,6 +103,24 @@ final class DynamicClientRegistrationValidator
             scopes: $scopes,
             applicationType: $applicationType,
         );
+    }
+
+    /**
+     * A refusal that names the metadata fields at fault, never their values, so
+     * a client developer (or an operator reading a connector's error) can tell
+     * which field to change without the response reflecting caller input.
+     *
+     * @param  list<int|string>  $fields
+     */
+    private static function invalid(array $fields): InvalidClientMetadata
+    {
+        $names = array_values(array_unique(array_map(
+            static fn (int|string $field): string => explode('.', (string) $field)[0],
+            $fields,
+        )));
+        sort($names);
+
+        return new InvalidClientMetadata('Client metadata is invalid: '.implode(', ', $names).'.');
     }
 
     /** @return list<string> */

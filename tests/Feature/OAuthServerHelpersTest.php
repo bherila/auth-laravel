@@ -210,6 +210,72 @@ class OAuthServerHelpersTest extends TestCase
         $this->assertSame(['mcp:use'], $registration->scopes);
     }
 
+    /**
+     * The MCP SDKs register with `client_secret_post` unless told otherwise, and
+     * the metadata document advertises it. Registration accepts the request but
+     * still creates a public client, and says so in the response.
+     */
+    #[DataProvider('secretAuthMethodProvider')]
+    public function test_dynamic_registration_accepts_a_requested_secret_method_as_a_public_client(string $method): void
+    {
+        $registration = app(DynamicClientRegistrationValidator::class)->validate(
+            $this->jsonRequest([
+                'client_name' => 'Claude',
+                'redirect_uris' => ['https://claude.ai/api/mcp/auth_callback'],
+                'grant_types' => ['authorization_code', 'refresh_token'],
+                'response_types' => ['code'],
+                'token_endpoint_auth_method' => $method,
+                'scope' => 'mcp:use',
+            ]),
+            ['identity:read', 'mcp:use'],
+        );
+
+        $metadata = $registration->responseMetadata('client-id', 123);
+        $this->assertSame('none', $metadata['token_endpoint_auth_method']);
+        $this->assertArrayNotHasKey('client_secret', $metadata);
+        $this->assertSame(['mcp:use'], $registration->scopes);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function secretAuthMethodProvider(): iterable
+    {
+        yield 'client_secret_post' => ['client_secret_post'];
+        yield 'client_secret_basic' => ['client_secret_basic'];
+    }
+
+    public function test_a_refusal_names_the_fields_at_fault_without_their_values(): void
+    {
+        try {
+            app(DynamicClientRegistrationValidator::class)->validate(
+                $this->jsonRequest([
+                    'client_name' => 'Synthetic Client',
+                    'redirect_uris' => ['https://client.example.test/callback'],
+                    'token_endpoint_auth_method' => 'private_key_jwt',
+                    'scope' => 'mcp:use',
+                ]),
+                ['mcp:use'],
+            );
+            $this->fail('An unsupported auth method must be refused.');
+        } catch (InvalidClientMetadata $exception) {
+            $this->assertSame('Client metadata is invalid: token_endpoint_auth_method.', $exception->getMessage());
+        }
+
+        try {
+            app(DynamicClientRegistrationValidator::class)->validate(
+                $this->jsonRequest([
+                    'client_name' => 'Synthetic Client',
+                    'redirect_uris' => ['https://client.example.test/callback'],
+                    'scope' => 'mcp:use records:delete',
+                ]),
+                ['mcp:use'],
+            );
+            $this->fail('An unknown scope must be refused.');
+        } catch (InvalidClientMetadata $exception) {
+            $this->assertSame('Client metadata is invalid: scope.', $exception->getMessage());
+            $this->assertStringNotContainsString('records:delete', $exception->getMessage());
+        }
+    }
+
     public function test_empty_scope_is_distinct_from_an_omitted_scope(): void
     {
         $empty = app(DynamicClientRegistrationValidator::class)->validate(
@@ -293,7 +359,7 @@ class OAuthServerHelpersTest extends TestCase
         yield 'invalid port' => [[...$valid, 'redirect_uris' => ['http://127.0.0.1:0/callback']]];
         yield 'fragment' => [[...$valid, 'redirect_uris' => ['https://client.example.test/callback#fragment']]];
         yield 'unknown scope' => [[...$valid, 'scope' => 'mcp:use records:delete']];
-        yield 'confidential client' => [[...$valid, 'token_endpoint_auth_method' => 'client_secret_post']];
+        yield 'unsupported auth method' => [[...$valid, 'token_endpoint_auth_method' => 'private_key_jwt']];
         yield 'web application type with loopback redirect' => [[
             ...$valid,
             'application_type' => 'web',
