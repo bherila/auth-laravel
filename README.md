@@ -2,6 +2,8 @@
 
 Shared Laravel auth package for BWH applications.
 
+Release procedure and upgrade requirements: [RELEASING.md](RELEASING.md).
+
 The companion React component package is
 [`bwh-auth`](https://github.com/bherila/auth-react).
 
