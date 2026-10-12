@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.24.3 - 2026-10-12
 
 - Provider identity enforcement no longer refuses with `temporarily_unavailable` when its
   cache store reports an identical rewrite as a failed write. The database cache store does
