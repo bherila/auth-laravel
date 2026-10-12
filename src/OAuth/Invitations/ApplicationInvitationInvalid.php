@@ -2,6 +2,8 @@
 
 namespace BWH\Auth\OAuth\Invitations;
 
+use SensitiveParameter;
+
 /**
  * The request is not valid (`invalid_request`): the address was refused, here before sending
  * ({@see $status} null) or by the provider (422).
@@ -15,7 +17,7 @@ final class ApplicationInvitationInvalid extends ApplicationInvitationException
         ApplicationInvitationError $error,
         ?int $status = null,
         ?int $retryAfter = null,
-        public readonly array $errors = [],
+        #[SensitiveParameter] public readonly array $errors = [],
     ) {
         parent::__construct($error, $status, $retryAfter);
     }

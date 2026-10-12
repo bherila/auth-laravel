@@ -140,7 +140,7 @@ final class FakeApplicationInvitations implements ApplicationInvitations
         ApplicationInvitationError|ApplicationInvitationException $error,
         ?int $retryAfter = null,
         ?string $limit = null,
-        array $errors = [],
+        #[SensitiveParameter] array $errors = [],
     ): self {
         return $this->script($operation, $error instanceof ApplicationInvitationException
             ? $error
@@ -185,14 +185,14 @@ final class FakeApplicationInvitations implements ApplicationInvitations
     }
 
     /** An invitation was created for this address (exactly as passed), by this actor when given. */
-    public function assertCreated(string $email, ?string $actor = null): void
+    public function assertCreated(#[SensitiveParameter] string $email, ?string $actor = null): void
     {
         Assert::assertNotEmpty(array_filter($this->calls('create'), fn (array $call): bool => $call['email'] === $email
             && ($actor === null || $call['actor'] === $actor) && $call['error'] === null),
             'No invitation was created for the address'.($actor === null ? '' : ' by that actor').'.');
     }
 
-    public function assertNotCreated(?string $email = null): void
+    public function assertNotCreated(#[SensitiveParameter] ?string $email = null): void
     {
         Assert::assertEmpty(array_filter($this->calls('create'), fn (array $call): bool => ($email === null || $call['email'] === $email) && $call['error'] === null),
             'An invitation was created.');
@@ -232,7 +232,7 @@ final class FakeApplicationInvitations implements ApplicationInvitations
      * @param  \Closure(): T  $provider
      * @return T
      */
-    private function run(string $operation, string $actor, ?string $email, ?int $id, \Closure $provider): IssuedInvitation|RevokedInvitation
+    private function run(string $operation, string $actor, #[SensitiveParameter] ?string $email, ?int $id, \Closure $provider): IssuedInvitation|RevokedInvitation
     {
         $call = ['operation' => $operation, 'actor' => $actor, 'email' => $email, 'invitation_id' => $id, 'result' => null, 'error' => null];
         try {
@@ -281,7 +281,7 @@ final class FakeApplicationInvitations implements ApplicationInvitations
     }
 
     /** @param  array{status: string, expires_at: DateTimeImmutable}  $invitation */
-    private static function status(array $invitation): string
+    private static function status(#[SensitiveParameter] array $invitation): string
     {
         return $invitation['status'] === 'pending' && $invitation['expires_at'] <= self::now() ? 'expired' : $invitation['status'];
     }

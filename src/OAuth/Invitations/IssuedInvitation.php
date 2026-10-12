@@ -18,7 +18,7 @@ use WeakMap;
  */
 final class IssuedInvitation implements JsonSerializable
 {
-    /** @var WeakMap<object, string>|null links by {@see $key}, outside every object's own state */
+    /** @var WeakMap<object, string>|null links by {@see}, outside every object's own state */
     private static ?WeakMap $links = null;
 
     /** An empty object that names this invitation's link; a clone shares it, a dump shows nothing. */

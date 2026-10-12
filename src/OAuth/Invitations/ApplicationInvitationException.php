@@ -3,6 +3,7 @@
 namespace BWH\Auth\OAuth\Invitations;
 
 use RuntimeException;
+use SensitiveParameter;
 
 /**
  * A refused or failed application-requested invitation call.
@@ -37,7 +38,7 @@ abstract class ApplicationInvitationException extends RuntimeException
         ?int $status = null,
         ?int $retryAfter = null,
         ?string $limit = null,
-        array $errors = [],
+        #[SensitiveParameter] array $errors = [],
     ): self {
         $status ??= $error->status();
 

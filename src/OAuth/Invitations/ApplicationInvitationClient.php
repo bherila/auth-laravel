@@ -139,7 +139,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
      *
      * @throws ApplicationInvitationUnavailable
      */
-    private function issued(array $data, ?int $expectedId): IssuedInvitation
+    private function issued(#[SensitiveParameter] array $data, ?int $expectedId): IssuedInvitation
     {
         $invitation = $data['invitation'] ?? null;
         if (! is_array($invitation)
@@ -160,7 +160,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
      *
      * @param  array<mixed>|null  $data
      */
-    private static function refusal(int $status, ?array $data, ?int $retryAfter): ApplicationInvitationException
+    private static function refusal(int $status, #[SensitiveParameter] ?array $data, ?int $retryAfter): ApplicationInvitationException
     {
         $error = ApplicationInvitationError::fromProvider($status, $data['error'] ?? null);
         if ($error === null) {
@@ -182,7 +182,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
      *
      * @return array<string, list<string>>
      */
-    private static function fieldErrors(mixed $errors): array
+    private static function fieldErrors(#[SensitiveParameter] mixed $errors): array
     {
         if (! is_array($errors)) {
             return [];
@@ -267,7 +267,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
     }
 
     /** @return array{key: string, token: string, expires: int}|null */
-    private function cachedToken(array $settings, int $now): ?array
+    private function cachedToken(#[SensitiveParameter] array $settings, int $now): ?array
     {
         if ($settings['token_cache_store'] === false) {
             return null;
@@ -289,7 +289,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
     }
 
     /** @param  array{key: string, token: string, expires: int}  $token */
-    private function storeToken(array $settings, #[SensitiveParameter] array $token, int $seconds): void
+    private function storeToken(#[SensitiveParameter] array $settings, #[SensitiveParameter] array $token, int $seconds): void
     {
         if ($settings['token_cache_store'] === false || $seconds < 1) {
             return;
@@ -302,7 +302,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
         }
     }
 
-    private function forgetToken(array $settings): void
+    private function forgetToken(#[SensitiveParameter] array $settings): void
     {
         $this->token = null;
         if ($settings['token_cache_store'] === false) {
@@ -458,7 +458,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
      *
      * @throws ApplicationInvitationMisconfigured
      */
-    private static function privateKey(array $settings): InMemory
+    private static function privateKey(#[SensitiveParameter] array $settings): InMemory
     {
         $path = $settings['private_key_path'] ?? null;
         $pem = $settings['private_key'] ?? null;
@@ -501,7 +501,7 @@ final class ApplicationInvitationClient implements ApplicationInvitations
     }
 
     /** An absolute HTTPS (or loopback HTTP, when the issuer is) URL with no credentials. */
-    private static function isLink(string $link): bool
+    private static function isLink(#[SensitiveParameter] string $link): bool
     {
         if ($link === '' || strlen($link) > self::MAX_LINK_LENGTH || filter_var($link, FILTER_VALIDATE_URL) === false) {
             return false;
