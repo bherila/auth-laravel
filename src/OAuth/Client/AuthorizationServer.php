@@ -175,16 +175,50 @@ final class AuthorizationServer
     }
 
     /**
-     * RFC 8707 §2: an absolute URI (RFC 3986 §4.3, so a URN too) with no fragment. Checked as
-     * a scheme, then a non-empty run of URI characters other than `#`, with every `%`
-     * starting a percent-encoding.
+     * RFC 8707 §2: an absolute URI (RFC 3986 §4.3, so a URN too) with no fragment.
+     *
+     * Checked by component: a scheme; then either `//` and an authority (optional userinfo,
+     * a host that is an IP literal in brackets or a registered name, optional digits for a
+     * port) followed by a path, or a path alone; then an optional query. Brackets are
+     * accepted only around an IP literal host, and every `%` must start a percent-encoding.
      */
     private static function isAbsoluteUri(string $uri): bool
     {
-        return preg_match(
-            '/^[A-Za-z][A-Za-z0-9+.-]*:(?:[A-Za-z0-9\-._~!$&\'()*+,;=:@\/?\[\]]|%[0-9A-Fa-f]{2})+\z/',
-            $uri,
-        ) === 1;
+        $unreserved = 'A-Za-z0-9\-._~';
+        $subDelims = '!$&\'()*+,;=';
+        $pct = '%[0-9A-Fa-f]{2}';
+        $pchar = "(?:[{$unreserved}{$subDelims}:@]|{$pct})";
+
+        if (preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:(?<rest>.+)\z/s', $uri, $match) !== 1) {
+            return false;
+        }
+
+        $rest = $match['rest'];
+        if (str_starts_with($rest, '//')) {
+            $authorityEnd = strcspn($rest, '/?', 2) + 2;
+            if (! self::isAuthority(substr($rest, 2, $authorityEnd - 2), $unreserved, $subDelims, $pct)) {
+                return false;
+            }
+            $rest = substr($rest, $authorityEnd);
+        }
+
+        return preg_match("/^(?:{$pchar}|\\/)*(?:\\?(?:{$pchar}|[\\/?])*)?\\z/", $rest) === 1;
+    }
+
+    private static function isAuthority(string $authority, string $unreserved, string $subDelims, string $pct): bool
+    {
+        $userinfo = "(?:[{$unreserved}{$subDelims}:]|{$pct})*@";
+        $regName = "(?:[{$unreserved}{$subDelims}]|{$pct})*";
+        if (preg_match("/^(?:{$userinfo})?(?:\\[(?<literal>[^\\]]*)\\]|{$regName})(?::[0-9]*)?\\z/", $authority, $match) !== 1) {
+            return false;
+        }
+
+        $literal = $match['literal'] ?? '';
+
+        return $literal === ''
+            ? ! str_contains($authority, '[')
+            : filter_var($literal, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
+                || preg_match("/^v[0-9A-Fa-f]+\\.[{$unreserved}{$subDelims}:]+\\z/", $literal) === 1;
     }
 
     private static function validIssuer(string $issuer): bool

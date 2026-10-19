@@ -970,7 +970,11 @@ class OAuthClientServersTest extends TestCase
 
     public function test_other_absolute_uris_are_resource_indicators(): void
     {
-        foreach (['https://svc.example.test/api/v1?tenant=a', 'https://[2001:db8::1]:8443/api', 'urn:ietf:params:oauth:x%2Fy', 'tag:example.com,2026:api'] as $resource) {
+        foreach ([
+            'https://svc.example.test/api/v1?tenant=a', 'https://[2001:db8::1]:8443/api', 'https://[v7.fe80::a+en1]/api',
+            'https://user:pw@svc.example.test:443', 'https://192.0.2.1/x?y=/z?', 'urn:ietf:params:oauth:x%2Fy',
+            'tag:example.com,2026:api', 'mailto:api@example.test', 'urn:example:payments/v1',
+        ] as $resource) {
             config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
 
             $this->assertSame($resource, $this->startFlow('svc')['resource']);
@@ -979,7 +983,14 @@ class OAuthClientServersTest extends TestCase
 
     public function test_a_resource_that_is_not_an_absolute_uri_without_fragment_is_a_configuration_error(): void
     {
-        foreach (['/api/v1', 'api', 'urn:', ':x', '1urn:x', ' urn:x', 'urn:x ', "urn:x\n", 'urn:a b', 'urn:%zz', 'https://svc.example.test/api#part', 'urn:x#', "urn:caf\u{e9}", ['urn:x']] as $resource) {
+        foreach ([
+            '/api/v1', 'api', 'urn:', ':x', '1urn:x', ' urn:x', 'urn:x ', "urn:x\n", 'urn:a b', 'urn:%zz',
+            'https://svc.example.test/api#part', 'urn:x#', "urn:caf\u{e9}", ['urn:x'],
+            // Brackets belong only around an IP literal host.
+            'urn:x[y', 'urn:[x]', 'https://example.test/a[b', 'https://example.test/a]', 'https://example.test/?q=[1]',
+            'https://ex[ample.test/', 'https://[2001:db8::1/api', 'https://[not-an-ip]/api', 'https://[2001:db8::1]x/api',
+            'https://[2001:db8::1]:44a/api', 'https://a@b@example.test/', 'https://example.test:port/',
+        ] as $resource) {
             config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
 
             $this->get('/connections/svc/start')->assertStatus(503);
