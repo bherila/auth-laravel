@@ -139,14 +139,6 @@ final class AuthorizationServer
         return $issuer;
     }
 
-    /** The configured scope, or an empty string; for reporting, so it never aborts. */
-    public function requestedScope(): string
-    {
-        $scope = $this->settings['scope'] ?? null;
-
-        return is_string($scope) ? $scope : '';
-    }
-
     /** The RFC 8707 resource this server's tokens are requested for, if any. */
     public function resource(): ?string
     {
@@ -155,13 +147,7 @@ final class AuthorizationServer
             return null;
         }
 
-        abort_unless(
-            is_string($resource)
-            && filter_var($resource, FILTER_VALIDATE_URL) !== false
-            && parse_url($resource, PHP_URL_FRAGMENT) === null,
-            503,
-            'OAuth is not configured.',
-        );
+        abort_unless(is_string($resource) && self::isAbsoluteUri($resource), 503, 'OAuth is not configured.');
 
         return $resource;
     }
@@ -186,6 +172,19 @@ final class AuthorizationServer
         $path = parse_url($this->value('redirect_uri'), PHP_URL_PATH);
 
         return is_string($path) && $path !== '' ? $path : '/';
+    }
+
+    /**
+     * RFC 8707 §2: an absolute URI (RFC 3986 §4.3, so a URN too) with no fragment. Checked as
+     * a scheme, then a non-empty run of URI characters other than `#`, with every `%`
+     * starting a percent-encoding.
+     */
+    private static function isAbsoluteUri(string $uri): bool
+    {
+        return preg_match(
+            '/^[A-Za-z][A-Za-z0-9+.-]*:(?:[A-Za-z0-9\-._~!$&\'()*+,;=:@\/?\[\]]|%[0-9A-Fa-f]{2})+\z/',
+            $uri,
+        ) === 1;
     }
 
     private static function validIssuer(string $issuer): bool

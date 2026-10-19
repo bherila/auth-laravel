@@ -36,7 +36,7 @@ it was sent to, and RFC 9207 `iss` is checked before any code is exchanged.
 | `issuer` | required | The server's exact issuer identifier (RFC 8414): `http(s)`, no query, fragment or credentials. Compared byte for byte with `iss`. |
 | `client_id`, `client_secret`, `scope` | required | This application's confidential client at that server. |
 | `redirect_uri` | required | This server's own callback. Two servers, or a server and the sign-in provider, sharing one is a 503. |
-| `resource` | none | Sent as `resource` on the authorization request, the code exchange and every refresh. |
+| `resource` | none | Sent as `resource` on the authorization request, the code exchange and every refresh. Any absolute URI without a fragment (RFC 8707), for example `https://svc.example.com/api/v1` or `urn:example:payments`. |
 | `authorization_response_iss` | `advertised` | `required`: refuse a response without `iss`. `advertised`: require it when the metadata at the issuer advertises `authorization_response_iss_parameter_supported`. `when_present`: only check it when sent. A present `iss` is always checked. |
 | `base_url` | `issuer` | Where the paths below are appended. |
 | `authorize_path`, `token_path` | `/oauth/authorize`, `/oauth/token` | |
@@ -84,8 +84,11 @@ public function callback(Request $request, OAuthClient $oauth): RedirectResponse
 ```
 
 `OAuthTokens` carries the server name, issuer, resource, access and refresh tokens, expiry and
-granted scopes (the requested ones when a code exchange's response omits `scope`, per RFC 6749
-§5.1). Its token values are redacted from `var_dump`/`print_r`, and the token request's
+granted scopes. When a code exchange's response omits `scope`, the scopes are the ones that
+flow requested (RFC 6749 §5.1), recorded when it started, not the setting at callback time; for
+a sign-in flow begun before that was recorded they are null. Access and refresh tokens must be
+`1*VSCHAR` (printable ASCII and space, RFC 6749 Appendix A); anything else is refused as a
+malformed response. Its token values are redacted from `var_dump`/`print_r`, and the token request's
 parameters are `#[\SensitiveParameter]`, so the client secret, code, verifier and refresh token
 never appear in an exception trace.
 
@@ -123,7 +126,10 @@ ten are kept.
 $tokens = $oauth->forServer('svc')->refreshTokens($stored->refreshToken, $stored->scopes);
 ```
 
-Sends the refresh grant with the client credentials and configured resource. A response that
+Sends the refresh grant with the client credentials and configured resource. A server that does
+not rotate refresh tokens omits `refresh_token`; the one you sent stays valid (RFC 6749 §6), and
+`$tokens->refreshToken` is that token, so storing the result always keeps a usable refresh
+token. Compare it with the stored one if you only want to write on rotation. A response that
 omits `scope` leaves the grant unchanged (RFC 6749 §6): `$tokens->scopes` is then the granted
 scopes you passed, or null if you passed none. It is never filled from the configured `scope`,
 which may be broader than what was granted. A server that

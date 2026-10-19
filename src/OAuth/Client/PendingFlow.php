@@ -10,7 +10,8 @@ use Illuminate\Support\Carbon;
  *
  * It records everything the answer is checked against: the server it was sent to (by name
  * and exact issuer), the callback and resource it named, the PKCE verifier, whether `iss`
- * must be present, and who was signed in. It lives in the session that started it, so a
+ * must be present, and who was signed in; and the scope it requested, which is what a token
+ * response that omits `scope` was granted (RFC 6749 §5.1). It lives in the session that started it, so a
  * response carried into another browser finds nothing, and it is removed on first use,
  * whatever the outcome, so a response cannot be replayed.
  *
@@ -42,6 +43,7 @@ final readonly class PendingFlow
         public bool $userBound,
         public ?string $user,
         public ?int $startedAt,
+        public ?string $scope = null,
     ) {}
 
     public function store(Session $session, string $state): void
@@ -125,6 +127,7 @@ final readonly class PendingFlow
             'issuer_required' => $this->issuerRequired,
             'user' => $this->user,
             'started_at' => $this->startedAt,
+            'scope' => $this->scope,
         ];
     }
 
@@ -138,6 +141,7 @@ final readonly class PendingFlow
             || ! is_bool($binding['issuer_required'] ?? null)
             || ! (is_string($binding['user'] ?? null) || ($binding['user'] ?? null) === null)
             || ! is_int($binding['started_at'] ?? null)
+            || ! (is_string($binding['scope'] ?? null) || ($binding['scope'] ?? null) === null)
             || ! is_string($verifier) || $verifier === '') {
             return null;
         }
@@ -152,6 +156,7 @@ final readonly class PendingFlow
             userBound: true,
             user: $binding['user'],
             startedAt: $binding['started_at'],
+            scope: $binding['scope'] ?? null,
         );
     }
 
