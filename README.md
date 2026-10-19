@@ -9,7 +9,9 @@ The companion React component package is
 
 Includes:
 
-- OAuth 2.0 authorization-code client mechanics with PKCE and validated identity responses
+- OAuth 2.0 authorization-code client mechanics with PKCE and validated identity responses, for the
+  sign-in provider and [further authorization servers](docs/oauth-authorization-servers.md), with
+  per-server callbacks, bound pending flows and RFC 9207 `iss` checked before the code exchange
 - Opt-in [provider browser-session generation verification](docs/provider-session-verification.md)
 - Opt-in [identity tombstone consumption](docs/identity-tombstones.md): apply the identity provider's deletions
   through an application-bound handler and acknowledge each one after local deletion commits
@@ -686,6 +688,24 @@ public function callback(Request $request, OAuthClient $oauth): RedirectResponse
 
 The package deliberately does not match or bind users by email. That decision is
 application-specific and must not silently replace a trusted provider-subject binding.
+
+The callback refuses a response with `OAuthCallbackRejected` (403) unless its `state` names the
+flow this session started (spent on first use, and no older than `oauth_client.pending_flow_ttl`),
+the signed-in person is the one who started it, and any RFC 9207 `iss` is exactly
+`oauth_client.issuer` (`OAUTH_PROVIDER_ISSUER`, default `base_url`). Set
+`OAUTH_AUTHORIZATION_RESPONSE_ISS` to `required` (or `advertised`) once the provider sends `iss`,
+so a response without it is refused too.
+
+#### Several authorization servers
+
+To call other applications' APIs for a person, configure each as an entry of
+`oauth_client.servers` with its exact `issuer` and its own `redirect_uri`, and use
+`$oauth->forServer('svc')->redirect($request)`, `->tokensFromCallback($request)` (an
+`OAuthTokens`) and `->refreshTokens($refreshToken)`. Every pending flow is bound to its session,
+person, server, issuer, callback, resource and verifier, and `iss` is checked before the code is
+exchanged. `SameSubject::matchesUser($owner, $provider, $subject)` confirms that the account a
+token belongs to is the local owner's. See
+[docs/oauth-authorization-servers.md](docs/oauth-authorization-servers.md).
 
 #### Signing out, and the application list
 

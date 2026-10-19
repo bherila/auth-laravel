@@ -4,6 +4,53 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Several authorization servers for the OAuth client, with bound flows and RFC 9207 `iss`
+
+- `OAuthClient::forServer($name)` is a client of an entry of the new `oauth_client.servers`
+  setting: an authorization server whose API the application calls for a person. Each entry has
+  its exact `issuer`, client credentials, `scope`, optional RFC 8707 `resource` and its own
+  static `redirect_uri` (two servers, or a server and the sign-in provider, sharing one is a
+  503). The top-level `oauth_client` settings remain the sign-in provider, named `default`.
+- Every pending flow is bound to the session and signed-in person that started it, the server
+  and exact issuer it went to, the callback, the resource and the PKCE verifier. A response is
+  refused before its code is exchanged unless all of them match: the flow is found by `state`
+  and spent on first use, is no older than `oauth_client.pending_flow_ttl` (1800 seconds), was
+  started for this server with its current settings, arrives at that server's callback path,
+  and the same person is signed in. Several flows can be pending in one session (at most ten).
+- RFC 9207: a present `iss` must equal the configured issuer byte for byte, read from the raw
+  query string, on error responses too. A missing `iss` is refused when the server is configured
+  `authorization_response_iss: required`, or `advertised` (the default for named servers) and the
+  RFC 8414 metadata at the configured issuer advertises
+  `authorization_response_iss_parameter_supported`. Only that flag is read from metadata (cached
+  for `metadata_cache_seconds`); every endpoint comes from configuration. Unreadable metadata,
+  or metadata naming another issuer, is a 503 before the person is redirected.
+- `tokensFromCallback()` returns `OAuthTokens` (server, issuer, resource, access and refresh
+  tokens, expiry, scopes; token values redacted from dumps). `refreshTokens()` sends a refresh
+  grant with the configured client and resource. `identityFromCallback()` also works for a named
+  server that configures `identity_path`.
+- Refusals throw `OAuthCallbackRejected` (403) with an `OAuthCallbackFailure` reason and, for an
+  OAuth `error` response, the well-formed error code. Token request failures throw
+  `OAuthTokenRequestFailed` (502) with the OAuth error code and `definitive`, which is false when
+  the server gave no answer (a 5xx or dropped connection) and a rotating refresh token may
+  already have been replaced.
+- `SameSubject::matches()` and `SameSubject::matchesUser()` confirm that the account another
+  application reports for a token is the local owner: both must name the trusted provider and
+  the same non-empty subject. An unbound owner never matches.
+- `OAuthClient::isConfigured($name)`, `serverName()` and `issuer()` are new.
+- The sign-in flow keeps the `oauth.login.state` and `oauth.login.code_verifier` session keys and
+  sends the same authorization and token requests. It now also refuses a present `iss` that is
+  not `oauth_client.issuer` (`OAUTH_PROVIDER_ISSUER`, default `base_url`), and a flow it started
+  that is older than `pending_flow_ttl` or completed by a different signed-in person. An
+  unreachable token endpoint is a 502 instead of an uncaught connection error. Its 403 and 502
+  responses keep their status and message. A session seeded with only the legacy keys still
+  completes.
+- **Adoption:** none for sign-in. Once the identity provider sends RFC 9207 `iss`, set
+  `OAUTH_AUTHORIZATION_RESPONSE_ISS=required` (or `advertised`). To connect to another
+  server, add its entry and routes; see
+  [docs/oauth-authorization-servers.md](docs/oauth-authorization-servers.md). No migration.
+
 ## v0.25.0 - 2026-10-12
 
 ### Application-requested admission invitations
