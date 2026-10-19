@@ -115,6 +115,22 @@ class OAuthClientServersTest extends TestCase
         ]);
     }
 
+    /** @var (\Closure(): mixed)|null */
+    private ?\Closure $tokenAnswer = null;
+
+    /**
+     * Answer svc's token endpoint with $answer from now on. Http::fake() keeps the first stub
+     * that matches a URL, so a test trying several answers swaps this one instead.
+     */
+    private function answerTokenRequests(\Closure $answer): void
+    {
+        if ($this->tokenAnswer === null) {
+            Http::fake([self::SVC.'/oauth/token' => fn () => ($this->tokenAnswer)()]);
+        }
+
+        $this->tokenAnswer = $answer;
+    }
+
     /** @return array<string, string> */
     private function startFlow(string $server): array
     {
@@ -744,7 +760,7 @@ class OAuthClientServersTest extends TestCase
     {
         Http::fake();
 
-        foreach ([['a b'], [''], [1], ['k' => 'finance:read']] as $scopes) {
+        foreach ([['a b'], [''], [1], ['k' => 'finance:read'], ["finance:read\n"], ['caf\u{e9}']] as $scopes) {
             try {
                 app(OAuthClient::class)->forServer('svc')->refreshTokens('r', $scopes);
                 $this->fail('Malformed scopes were accepted.');
@@ -758,12 +774,12 @@ class OAuthClientServersTest extends TestCase
     public function test_a_malformed_successful_refresh_is_ambiguous(): void
     {
         foreach ([
-            Http::response(['token_type' => 'Bearer']),
-            Http::response(['access_token' => 'a', 'token_type' => 'mac']),
-            Http::response(['access_token' => 'a', 'refresh_token' => 7]),
-            Http::response('not json'),
+            fn () => Http::response(['token_type' => 'Bearer']),
+            fn () => Http::response(['access_token' => 'a', 'token_type' => 'mac']),
+            fn () => Http::response(['access_token' => 'a', 'refresh_token' => 7]),
+            fn () => Http::response('not json'),
         ] as $answer) {
-            Http::fake([self::SVC.'/oauth/token' => $answer]);
+            $this->answerTokenRequests($answer);
 
             try {
                 app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
@@ -884,7 +900,7 @@ class OAuthClientServersTest extends TestCase
             fn () => Http::response('unavailable', 503),
             fn () => throw new ConnectionException('reset'),
         ] as $answer) {
-            Http::fake([self::SVC.'/oauth/token' => $answer]);
+            $this->answerTokenRequests($answer);
 
             try {
                 app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
@@ -903,5 +919,141 @@ class OAuthClientServersTest extends TestCase
         $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
 
         $this->assertStringNotContainsString('secret-', print_r($tokens, true));
+    }
+
+    public function test_an_omitted_scope_is_the_scope_the_flow_requested_not_the_current_setting(): void
+    {
+        $this->fakeServers();
+        $query = $this->startFlow('phr');
+
+        // The setting changes (or is broadened) while the person is at the server.
+        config(['bherila-auth.oauth_client.servers.phr.scope' => 'billing:read identity:read clinical:read']);
+
+        $this->respond('phr', ['code' => 'c', 'state' => $query['state'], 'iss' => self::PHR])
+            ->assertOk()
+            ->assertJsonPath('scopes', ['billing:read', 'identity:read']);
+    }
+
+    public function test_a_refresh_that_does_not_rotate_keeps_the_submitted_refresh_token(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'next-access', 'token_type' => 'Bearer'])]);
+
+        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('still-valid-refresh');
+
+        $this->assertSame('next-access', $tokens->accessToken);
+        $this->assertSame('still-valid-refresh', $tokens->refreshToken);
+    }
+
+    public function test_a_code_exchange_without_a_refresh_token_reports_none(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'token_type' => 'Bearer'])]);
+        $query = $this->startFlow('svc');
+
+        $this->respond('svc', ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC])
+            ->assertOk()
+            ->assertJsonPath('refresh_token', null);
+    }
+
+    public function test_a_urn_is_a_resource_indicator(): void
+    {
+        config(['bherila-auth.oauth_client.servers.svc.resource' => 'urn:example:payments']);
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'token_type' => 'Bearer'])]);
+
+        $query = $this->startFlow('svc');
+        $this->assertSame('urn:example:payments', $query['resource']);
+
+        $this->respond('svc', ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC])
+            ->assertOk()
+            ->assertJsonPath('resource', 'urn:example:payments');
+        Http::assertSent(fn (ClientRequest $request): bool => $request['resource'] === 'urn:example:payments');
+    }
+
+    public function test_other_absolute_uris_are_resource_indicators(): void
+    {
+        foreach ([
+            'https://svc.example.test/api/v1?tenant=a', 'https://[2001:db8::1]:8443/api', 'https://[v7.fe80::a+en1]/api',
+            'https://user:pw@svc.example.test:443', 'https://192.0.2.1/x?y=/z?', 'urn:ietf:params:oauth:x%2Fy',
+            'tag:example.com,2026:api', 'mailto:api@example.test', 'urn:example:payments/v1',
+        ] as $resource) {
+            config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
+
+            $this->assertSame($resource, $this->startFlow('svc')['resource']);
+        }
+    }
+
+    public function test_a_resource_that_is_not_an_absolute_uri_without_fragment_is_a_configuration_error(): void
+    {
+        foreach ([
+            '/api/v1', 'api', 'urn:', ':x', '1urn:x', ' urn:x', 'urn:x ', "urn:x\n", 'urn:a b', 'urn:%zz',
+            'https://svc.example.test/api#part', 'urn:x#', "urn:caf\u{e9}", ['urn:x'],
+            // Brackets belong only around an IP literal host.
+            'urn:x[y', 'urn:[x]', 'https://example.test/a[b', 'https://example.test/a]', 'https://example.test/?q=[1]',
+            'https://ex[ample.test/', 'https://[2001:db8::1/api', 'https://[not-an-ip]/api', 'https://[2001:db8::1]x/api',
+            'https://[2001:db8::1]:44a/api', 'https://a@b@example.test/', 'https://example.test:port/',
+        ] as $resource) {
+            config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
+
+            $this->get('/connections/svc/start')->assertStatus(503);
+        }
+    }
+
+    public function test_error_values_ending_in_a_newline_are_dropped(): void
+    {
+        $query = $this->startFlow('svc');
+        $this->get('/connections/svc/callback?'.http_build_query(['error' => "access_denied\n", 'state' => $query['state'], 'iss' => self::SVC]))
+            ->assertForbidden()
+            ->assertJsonPath('rejected', 'authorization_denied')
+            ->assertJsonPath('provider_error', null);
+
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['error' => "invalid_grant\n"], 400)]);
+        try {
+            app(OAuthClient::class)->forServer('svc')->refreshTokens('r');
+            $this->fail('The refresh was accepted.');
+        } catch (OAuthTokenRequestFailed $failed) {
+            $this->assertNull($failed->oauthError);
+        }
+    }
+
+    public function test_tokens_must_be_visible_ascii(): void
+    {
+        foreach ([
+            ['access_token' => "a\nb"],
+            ['access_token' => "token\n"],
+            ['access_token' => "a\x00b"],
+            ['access_token' => "caf\u{e9}"],
+            ['access_token' => 'a', 'refresh_token' => "r\tr"],
+            ['access_token' => 'a', 'refresh_token' => "r\u{e9}"],
+        ] as $body) {
+            $this->answerTokenRequests(fn () => Http::response($body));
+
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('r');
+                $this->fail('A malformed token was accepted: '.json_encode($body));
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertFalse($failed->definitive);
+            }
+        }
+
+        // VSCHAR is %x20-7E: visible ASCII and space.
+        $this->answerTokenRequests(fn () => Http::response(['access_token' => 'a.b-c_d~e+f/g= h', 'refresh_token' => '!~']));
+        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('r');
+        $this->assertSame('a.b-c_d~e+f/g= h', $tokens->accessToken);
+        $this->assertSame('!~', $tokens->refreshToken);
+    }
+
+    public function test_an_invalid_refresh_token_is_refused_before_any_request(): void
+    {
+        Http::fake();
+
+        foreach (['', "r\n", "a\x00b", "caf\u{e9}"] as $refreshToken) {
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens($refreshToken);
+                $this->fail('An invalid refresh token was sent.');
+            } catch (\InvalidArgumentException $refused) {
+                $this->assertSame('The refresh token is not a valid OAuth token.', $refused->getMessage());
+            }
+        }
+
+        Http::assertNothingSent();
     }
 }

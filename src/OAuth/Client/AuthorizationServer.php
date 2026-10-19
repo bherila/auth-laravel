@@ -139,14 +139,6 @@ final class AuthorizationServer
         return $issuer;
     }
 
-    /** The configured scope, or an empty string; for reporting, so it never aborts. */
-    public function requestedScope(): string
-    {
-        $scope = $this->settings['scope'] ?? null;
-
-        return is_string($scope) ? $scope : '';
-    }
-
     /** The RFC 8707 resource this server's tokens are requested for, if any. */
     public function resource(): ?string
     {
@@ -155,13 +147,7 @@ final class AuthorizationServer
             return null;
         }
 
-        abort_unless(
-            is_string($resource)
-            && filter_var($resource, FILTER_VALIDATE_URL) !== false
-            && parse_url($resource, PHP_URL_FRAGMENT) === null,
-            503,
-            'OAuth is not configured.',
-        );
+        abort_unless(is_string($resource) && self::isAbsoluteUri($resource), 503, 'OAuth is not configured.');
 
         return $resource;
     }
@@ -186,6 +172,53 @@ final class AuthorizationServer
         $path = parse_url($this->value('redirect_uri'), PHP_URL_PATH);
 
         return is_string($path) && $path !== '' ? $path : '/';
+    }
+
+    /**
+     * RFC 8707 §2: an absolute URI (RFC 3986 §4.3, so a URN too) with no fragment.
+     *
+     * Checked by component: a scheme; then either `//` and an authority (optional userinfo,
+     * a host that is an IP literal in brackets or a registered name, optional digits for a
+     * port) followed by a path, or a path alone; then an optional query. Brackets are
+     * accepted only around an IP literal host, and every `%` must start a percent-encoding.
+     */
+    private static function isAbsoluteUri(string $uri): bool
+    {
+        $unreserved = 'A-Za-z0-9\-._~';
+        $subDelims = '!$&\'()*+,;=';
+        $pct = '%[0-9A-Fa-f]{2}';
+        $pchar = "(?:[{$unreserved}{$subDelims}:@]|{$pct})";
+
+        if (preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:(?<rest>.+)\z/s', $uri, $match) !== 1) {
+            return false;
+        }
+
+        $rest = $match['rest'];
+        if (str_starts_with($rest, '//')) {
+            $authorityEnd = strcspn($rest, '/?', 2) + 2;
+            if (! self::isAuthority(substr($rest, 2, $authorityEnd - 2), $unreserved, $subDelims, $pct)) {
+                return false;
+            }
+            $rest = substr($rest, $authorityEnd);
+        }
+
+        return preg_match("/^(?:{$pchar}|\\/)*(?:\\?(?:{$pchar}|[\\/?])*)?\\z/", $rest) === 1;
+    }
+
+    private static function isAuthority(string $authority, string $unreserved, string $subDelims, string $pct): bool
+    {
+        $userinfo = "(?:[{$unreserved}{$subDelims}:]|{$pct})*@";
+        $regName = "(?:[{$unreserved}{$subDelims}]|{$pct})*";
+        if (preg_match("/^(?:{$userinfo})?(?:\\[(?<literal>[^\\]]*)\\]|{$regName})(?::[0-9]*)?\\z/", $authority, $match) !== 1) {
+            return false;
+        }
+
+        $literal = $match['literal'] ?? '';
+
+        return $literal === ''
+            ? ! str_contains($authority, '[')
+            : filter_var($literal, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
+                || preg_match("/^v[0-9A-Fa-f]+\\.[{$unreserved}{$subDelims}:]+\\z/", $literal) === 1;
     }
 
     private static function validIssuer(string $issuer): bool

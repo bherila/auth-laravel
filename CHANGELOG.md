@@ -10,7 +10,9 @@ the first entry here is in the git history.
 
 - `OAuthClient::forServer($name)` is a client of an entry of the new `oauth_client.servers`
   setting: an authorization server whose API the application calls for a person. Each entry has
-  its exact `issuer`, client credentials, `scope`, optional RFC 8707 `resource` and its own
+  its exact `issuer`, client credentials, `scope`, optional RFC 8707 `resource` (any absolute
+  URI without a fragment, URNs included, checked by component: brackets only around an IP
+  literal host) and its own
   static `redirect_uri` (two servers, or a server and the sign-in provider, sharing one is a
   503). The top-level `oauth_client` settings remain the sign-in provider, named `default`.
 - Every pending flow is bound to the session and signed-in person that started it, the server
@@ -30,11 +32,16 @@ the first entry here is in the git history.
   tokens, expiry, scopes; token values redacted from dumps). `refreshTokens($refreshToken,
   $grantedScopes)` sends a refresh grant with the configured client and resource. A refresh
   response without `scope` reports the granted scopes passed in, or null, never the configured
-  request. `identityFromCallback()` also works for a named server that configures
-  `identity_path`.
+  request; one without `refresh_token` (the server does not rotate) carries the submitted
+  refresh token, which stays valid. A submitted refresh token that is not a non-empty
+  `1*VSCHAR` value, or malformed granted scopes, is an `InvalidArgumentException` before
+  anything is sent. A code exchange response without `scope` reports the scope
+  the pending flow requested, not the setting at callback time. Access and refresh tokens must
+  be `1*VSCHAR` (RFC 6749 Appendix A). `identityFromCallback()` also works for a named server
+  that configures `identity_path`.
 - Refusals throw `OAuthCallbackRejected` (403) with an `OAuthCallbackFailure` reason and, for an
   OAuth `error` response, its code when it fits RFC 6749's error grammar (printable ASCII other
-  than `"` and `\`, at most 64 characters). Token request failures throw
+  than `"` and `\`, at most 64 characters, nothing after it; read from the raw query string). Token request failures throw
   `OAuthTokenRequestFailed` (502) with the OAuth error code and `definitive`, which is false when
   the server gave no usable answer (a 5xx, a dropped connection, or a malformed success) and a
   code or rotating refresh token may already have been used. The token request parameters

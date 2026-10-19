@@ -85,6 +85,7 @@ final class OAuthClient
             userBound: true,
             user: $this->userKey($request),
             startedAt: Carbon::now()->getTimestamp(),
+            scope: $server->value('scope'),
         );
 
         $authorize = $server->endpoint('authorize_path');
@@ -92,7 +93,7 @@ final class OAuthClient
             'client_id' => $server->value('client_id'),
             'redirect_uri' => $flow->callback,
             'response_type' => 'code',
-            'scope' => $server->value('scope'),
+            'scope' => $flow->scope,
             'state' => $state,
             'code_challenge' => $challenge,
             'code_challenge_method' => 'S256',
@@ -127,7 +128,10 @@ final class OAuthClient
             'redirect_uri' => $flow->callback,
             'code' => $code,
             'code_verifier' => $flow->verifier,
-        ], 'The identity provider rejected the authorization code.', self::scopeList($server->requestedScope()));
+        ], 'The identity provider rejected the authorization code.',
+            // What the flow requested, not today's setting; unknown for a flow that predates it.
+            $flow->scope === null ? null : self::scopeList($flow->scope),
+        );
     }
 
     /**
@@ -147,13 +151,18 @@ final class OAuthClient
      * @param  list<string>|null  $grantedScopes  the scopes the grant currently carries
      *
      * @throws OAuthTokenRequestFailed (502)
-     * @throws InvalidArgumentException when $grantedScopes is not a list of scope tokens
+     * @throws InvalidArgumentException when $refreshToken is not a non-empty 1*VSCHAR token, or
+     *                                  $grantedScopes is not a list of scope tokens; nothing is sent
      */
     public function refreshTokens(#[SensitiveParameter] string $refreshToken, ?array $grantedScopes = null): OAuthTokens
     {
+        if (! self::isToken($refreshToken)) {
+            throw new InvalidArgumentException('The refresh token is not a valid OAuth token.');
+        }
+
         if ($grantedScopes !== null && (! array_is_list($grantedScopes) || array_filter(
             $grantedScopes,
-            static fn (mixed $scope): bool => ! is_string($scope) || preg_match('/^[\x21\x23-\x5B\x5D-\x7E]+$/', $scope) !== 1,
+            static fn (mixed $scope): bool => ! is_string($scope) || preg_match('/^[\x21\x23-\x5B\x5D-\x7E]+\z/', $scope) !== 1,
         ) !== [])) {
             throw new InvalidArgumentException('Granted scopes must be a list of OAuth scope tokens.');
         }
@@ -165,7 +174,7 @@ final class OAuthClient
             'client_id' => $server->value('client_id'),
             'client_secret' => $server->value('client_secret'),
             'refresh_token' => $refreshToken,
-        ], 'The authorization server refused the refresh token.', $grantedScopes);
+        ], 'The authorization server refused the refresh token.', $grantedScopes, $refreshToken);
     }
 
     public function identityFromCallback(Request $request): OAuthIdentity
@@ -239,8 +248,8 @@ final class OAuthClient
             throw $reject(OAuthCallbackFailure::IssuerMissing);
         }
 
-        if ($query->has('error')) {
-            $error = $query->all()['error'];
+        if (array_key_exists('error', $raw)) {
+            $error = $raw['error'];
 
             throw $reject(
                 OAuthCallbackFailure::AuthorizationDenied,
@@ -260,6 +269,8 @@ final class OAuthClient
      * @param  array<string, string>  $parameters  carries the client secret and the code or
      *                                             refresh token, so it never appears in a trace
      * @param  list<string>|null  $scopesWhenOmitted  what a response without `scope` was granted
+     * @param  string|null  $refreshTokenWhenOmitted  the refresh token sent, which stays valid when a
+     *                                                refresh response does not rotate it (RFC 6749 §6)
      */
     private function requestTokens(
         AuthorizationServer $server,
@@ -268,6 +279,7 @@ final class OAuthClient
         #[SensitiveParameter] array $parameters,
         string $refusal,
         ?array $scopesWhenOmitted,
+        #[SensitiveParameter] ?string $refreshTokenWhenOmitted = null,
     ): OAuthTokens {
         if ($resource !== null) {
             $parameters['resource'] = $resource;
@@ -296,9 +308,9 @@ final class OAuthClient
         $expiresIn = is_string($expiresIn) && ctype_digit($expiresIn) ? (int) $expiresIn : $expiresIn;
         $scope = $response->json('scope');
 
-        if (! is_string($accessToken) || $accessToken === ''
+        if (! self::isToken($accessToken)
             || ($tokenType !== null && (! is_string($tokenType) || Str::lower($tokenType) !== 'bearer'))
-            || ($refreshToken !== null && (! is_string($refreshToken) || $refreshToken === ''))
+            || ($refreshToken !== null && ! self::isToken($refreshToken))
             || ($expiresIn !== null && (! is_int($expiresIn) || $expiresIn <= 0))
             || ($scope !== null && ! is_string($scope))) {
             // The server answered success, so it may have used the code or rotated the refresh
@@ -311,7 +323,7 @@ final class OAuthClient
             issuer: $issuer,
             resource: $resource,
             accessToken: $accessToken,
-            refreshToken: $refreshToken,
+            refreshToken: $refreshToken ?? $refreshTokenWhenOmitted,
             expiresAt: $expiresIn === null ? null : CarbonImmutable::now()->addSeconds($expiresIn),
             scopes: $scope === null ? $scopesWhenOmitted : self::scopeList($scope),
         );
@@ -330,7 +342,13 @@ final class OAuthClient
      */
     private static function oauthError(mixed $error): ?string
     {
-        return is_string($error) && preg_match('/^[\x20\x21\x23-\x5B\x5D-\x7E]{1,64}$/', $error) === 1 ? $error : null;
+        return is_string($error) && preg_match('/^[\x20\x21\x23-\x5B\x5D-\x7E]{1,64}\z/', $error) === 1 ? $error : null;
+    }
+
+    /** RFC 6749 Appendix A.12/A.17: an access or refresh token is 1*VSCHAR (%x20-7E). */
+    private static function isToken(mixed $token): bool
+    {
+        return is_string($token) && preg_match('/^[\x20-\x7E]+\z/', $token) === 1;
     }
 
     private function issuerRequired(AuthorizationServer $server): bool
