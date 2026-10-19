@@ -521,11 +521,15 @@ class OAuthClientServersTest extends TestCase
             ->assertForbidden()
             ->assertJsonPath('rejected', 'issuer_mismatch');
 
-        $query = $this->startFlow('svc');
-        $this->respond('svc', ['error' => '<script>', 'state' => $query['state'], 'iss' => self::SVC])
-            ->assertForbidden()
-            ->assertJsonPath('rejected', 'authorization_denied')
-            ->assertJsonPath('provider_error', null);
+        // RFC 6749 error = 1*NQSCHAR: printable ASCII except '"' and '\\'. Bounded in length.
+        foreach (['Vendor-Error.2' => 'Vendor-Error.2', 'bad"quote' => null, 'back\\slash' => null,
+            "caf\u{e9}" => null, "tab\there" => null, str_repeat('a', 65) => null, str_repeat('a', 64) => str_repeat('a', 64)] as $error => $kept) {
+            $query = $this->startFlow('svc');
+            $this->respond('svc', ['error' => (string) $error, 'state' => $query['state'], 'iss' => self::SVC])
+                ->assertForbidden()
+                ->assertJsonPath('rejected', 'authorization_denied')
+                ->assertJsonPath('provider_error', $kept);
+        }
 
         $this->assertNoTokenRequest();
     }
@@ -692,14 +696,15 @@ class OAuthClientServersTest extends TestCase
             'token_type' => 'Bearer', 'access_token' => 'next-access', 'refresh_token' => 'next-refresh', 'expires_in' => 900,
         ])]);
 
-        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh', ['finance:read']);
 
         $this->assertSame('next-access', $tokens->accessToken);
         $this->assertSame('next-refresh', $tokens->refreshToken);
         $this->assertSame('svc', $tokens->server);
         $this->assertSame(self::SVC, $tokens->issuer);
         $this->assertSame(self::SVC.'/api/v1', $tokens->resource);
-        $this->assertSame(['finance:read', 'identity:read'], $tokens->scopes);
+        // The response omitted `scope`: the grant is unchanged, not the configured request.
+        $this->assertSame(['finance:read'], $tokens->scopes);
         $this->assertNotNull($tokens->expiresAt);
         Http::assertSent(fn (ClientRequest $request): bool => $request->url() === self::SVC.'/oauth/token'
             && $request->data() === [
@@ -709,6 +714,154 @@ class OAuthClientServersTest extends TestCase
                 'refresh_token' => 'old-refresh',
                 'resource' => self::SVC.'/api/v1',
             ]);
+    }
+
+    public function test_a_refresh_omitting_scope_without_the_prior_grant_reports_none(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'refresh_token' => 'r2'])]);
+
+        $this->assertNull(app(OAuthClient::class)->forServer('svc')->refreshTokens('r')->scopes);
+    }
+
+    public function test_a_refresh_reports_the_scope_the_server_returns(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'scope' => 'identity:read'])]);
+
+        $this->assertSame(['identity:read'], app(OAuthClient::class)->forServer('svc')->refreshTokens('r', ['finance:read', 'identity:read'])->scopes);
+    }
+
+    public function test_a_code_exchange_omitting_scope_reports_the_requested_scope(): void
+    {
+        $this->fakeServers();
+        $query = $this->startFlow('phr');
+
+        $this->respond('phr', ['code' => 'c', 'state' => $query['state'], 'iss' => self::PHR])
+            ->assertOk()
+            ->assertJsonPath('scopes', ['billing:read', 'identity:read']);
+    }
+
+    public function test_malformed_prior_scopes_are_refused(): void
+    {
+        Http::fake();
+
+        foreach ([['a b'], [''], [1], ['k' => 'finance:read']] as $scopes) {
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('r', $scopes);
+                $this->fail('Malformed scopes were accepted.');
+            } catch (\InvalidArgumentException) {
+            }
+        }
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_malformed_successful_refresh_is_ambiguous(): void
+    {
+        foreach ([
+            Http::response(['token_type' => 'Bearer']),
+            Http::response(['access_token' => 'a', 'token_type' => 'mac']),
+            Http::response(['access_token' => 'a', 'refresh_token' => 7]),
+            Http::response('not json'),
+        ] as $answer) {
+            Http::fake([self::SVC.'/oauth/token' => $answer]);
+
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+                $this->fail('The refresh was accepted.');
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertFalse($failed->definitive);
+                $this->assertNull($failed->oauthError);
+            }
+        }
+    }
+
+    public function test_an_extension_error_code_is_kept(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['error' => 'Vendor-Specific.1'], 400)]);
+
+        try {
+            app(OAuthClient::class)->forServer('svc')->refreshTokens('r');
+            $this->fail('The refresh was accepted.');
+        } catch (OAuthTokenRequestFailed $failed) {
+            $this->assertSame('Vendor-Specific.1', $failed->oauthError);
+        }
+    }
+
+    public function test_credentials_are_kept_out_of_exception_traces(): void
+    {
+        $previous = ini_set('zend.exception_ignore_args', '0');
+
+        try {
+            Http::fake([self::SVC.'/oauth/token' => Http::response(['token_type' => 'Bearer'])]);
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('long-lived-refresh');
+                $this->fail('The refresh was accepted.');
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertTraceArgumentsAvoid($failed, ['svc-secret', 'long-lived-refresh']);
+            }
+
+            $query = $this->startFlow('svc');
+            $this->withoutExceptionHandling();
+            try {
+                $this->respond('svc', ['code' => 'one-time-code', 'state' => $query['state'], 'iss' => self::SVC]);
+                $this->fail('The exchange was accepted.');
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertTraceArgumentsAvoid($failed, ['svc-secret', 'one-time-code', $this->verifierFrom($failed)]);
+            }
+        } finally {
+            ini_set('zend.exception_ignore_args', (string) $previous);
+        }
+    }
+
+    private function verifierFrom(OAuthTokenRequestFailed $failed): string
+    {
+        $verifier = null;
+        Http::assertSent(function (ClientRequest $request) use (&$verifier): bool {
+            $verifier = $request['code_verifier'] ?? $verifier;
+
+            return true;
+        });
+
+        return (string) $verifier;
+    }
+
+    /** @param  list<string>  $secrets */
+    private function assertTraceArgumentsAvoid(\Throwable $exception, array $secrets): void
+    {
+        $strings = [];
+        $collect = function (mixed $value, int $depth) use (&$collect, &$strings): void {
+            if (is_string($value)) {
+                $strings[] = $value;
+            } elseif (is_array($value) && $depth < 6) {
+                foreach ($value as $item) {
+                    $collect($item, $depth + 1);
+                }
+            }
+        };
+        $frames = 0;
+        foreach ($exception->getTrace() as $frame) {
+            // This test's own helpers are handed the values on purpose.
+            if (array_key_exists('args', $frame) && ($frame['class'] ?? null) !== self::class) {
+                $frames++;
+                $collect($frame['args'], 0);
+            }
+        }
+
+        $this->assertGreaterThan(0, $frames, 'Arguments were not recorded; the check proves nothing.');
+        foreach ($secrets as $secret) {
+            $this->assertNotContains($secret, $strings);
+        }
+    }
+
+    public function test_a_numeric_server_name_is_its_own_server(): void
+    {
+        $servers = config('bherila-auth.oauth_client.servers');
+        $servers['1'] = array_replace($servers['svc'], ['redirect_uri' => 'https://pf.example.test/connections/1/callback']);
+        config(['bherila-auth.oauth_client.servers' => $servers]);
+        Route::middleware('web')->get('/connections/1/start', fn (Request $request, OAuthClient $client) => $client->forServer('1')->redirect($request));
+
+        $this->get('/connections/1/start')->assertRedirectContains(self::SVC.'/oauth/authorize?');
+        $this->assertTrue(OAuthClient::isConfigured('1'));
     }
 
     public function test_a_refused_refresh_is_definitive(): void

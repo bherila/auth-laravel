@@ -27,14 +27,19 @@ the first entry here is in the git history.
   for `metadata_cache_seconds`); every endpoint comes from configuration. Unreadable metadata,
   or metadata naming another issuer, is a 503 before the person is redirected.
 - `tokensFromCallback()` returns `OAuthTokens` (server, issuer, resource, access and refresh
-  tokens, expiry, scopes; token values redacted from dumps). `refreshTokens()` sends a refresh
-  grant with the configured client and resource. `identityFromCallback()` also works for a named
-  server that configures `identity_path`.
+  tokens, expiry, scopes; token values redacted from dumps). `refreshTokens($refreshToken,
+  $grantedScopes)` sends a refresh grant with the configured client and resource. A refresh
+  response without `scope` reports the granted scopes passed in, or null, never the configured
+  request. `identityFromCallback()` also works for a named server that configures
+  `identity_path`.
 - Refusals throw `OAuthCallbackRejected` (403) with an `OAuthCallbackFailure` reason and, for an
-  OAuth `error` response, the well-formed error code. Token request failures throw
+  OAuth `error` response, its code when it fits RFC 6749's error grammar (printable ASCII other
+  than `"` and `\`, at most 64 characters). Token request failures throw
   `OAuthTokenRequestFailed` (502) with the OAuth error code and `definitive`, which is false when
-  the server gave no answer (a 5xx or dropped connection) and a rotating refresh token may
-  already have been replaced.
+  the server gave no usable answer (a 5xx, a dropped connection, or a malformed success) and a
+  code or rotating refresh token may already have been used. The token request parameters
+  (client secret, code, verifier, refresh token) are `#[\SensitiveParameter]`, so they never
+  appear in exception traces.
 - `SameSubject::matches()` and `SameSubject::matchesUser()` confirm that the account another
   application reports for a token is the local owner: both must name the trusted provider and
   the same non-empty subject. An unbound owner never matches.

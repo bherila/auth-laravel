@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use SensitiveParameter;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
@@ -126,7 +127,7 @@ final class OAuthClient
             'redirect_uri' => $flow->callback,
             'code' => $code,
             'code_verifier' => $flow->verifier,
-        ], 'The identity provider rejected the authorization code.');
+        ], 'The identity provider rejected the authorization code.', self::scopeList($server->requestedScope()));
     }
 
     /**
@@ -138,10 +139,25 @@ final class OAuthClient
      * When {@see OAuthTokenRequestFailed::$definitive} is false the server may have rotated
      * already: do not retry with the old token.
      *
+     * A refresh response that omits `scope` leaves the grant unchanged (RFC 6749 §6), so
+     * pass the scopes granted so far: they are what {@see OAuthTokens::$scopes} reports then.
+     * Without them it is null, never the configured request, which may be broader than what
+     * was granted.
+     *
+     * @param  list<string>|null  $grantedScopes  the scopes the grant currently carries
+     *
      * @throws OAuthTokenRequestFailed (502)
+     * @throws InvalidArgumentException when $grantedScopes is not a list of scope tokens
      */
-    public function refreshTokens(#[SensitiveParameter] string $refreshToken): OAuthTokens
+    public function refreshTokens(#[SensitiveParameter] string $refreshToken, ?array $grantedScopes = null): OAuthTokens
     {
+        if ($grantedScopes !== null && (! array_is_list($grantedScopes) || array_filter(
+            $grantedScopes,
+            static fn (mixed $scope): bool => ! is_string($scope) || preg_match('/^[\x21\x23-\x5B\x5D-\x7E]+$/', $scope) !== 1,
+        ) !== [])) {
+            throw new InvalidArgumentException('Granted scopes must be a list of OAuth scope tokens.');
+        }
+
         $server = $this->authorizationServer();
 
         return $this->requestTokens($server, $server->issuer(), $server->resource(), [
@@ -149,7 +165,7 @@ final class OAuthClient
             'client_id' => $server->value('client_id'),
             'client_secret' => $server->value('client_secret'),
             'refresh_token' => $refreshToken,
-        ], 'The authorization server refused the refresh token.');
+        ], 'The authorization server refused the refresh token.', $grantedScopes);
     }
 
     public function identityFromCallback(Request $request): OAuthIdentity
@@ -228,7 +244,7 @@ final class OAuthClient
 
             throw $reject(
                 OAuthCallbackFailure::AuthorizationDenied,
-                is_string($error) && preg_match('/^[a-z_]{1,64}$/', $error) === 1 ? $error : null,
+                self::oauthError($error),
             );
         }
 
@@ -241,14 +257,17 @@ final class OAuthClient
     }
 
     /**
-     * @param  array<string, string>  $parameters
+     * @param  array<string, string>  $parameters  carries the client secret and the code or
+     *                                             refresh token, so it never appears in a trace
+     * @param  list<string>|null  $scopesWhenOmitted  what a response without `scope` was granted
      */
     private function requestTokens(
         AuthorizationServer $server,
         string $issuer,
         ?string $resource,
-        array $parameters,
+        #[SensitiveParameter] array $parameters,
         string $refusal,
+        ?array $scopesWhenOmitted,
     ): OAuthTokens {
         if ($resource !== null) {
             $parameters['resource'] = $resource;
@@ -265,7 +284,7 @@ final class OAuthClient
 
             throw new OAuthTokenRequestFailed(
                 $refusal,
-                is_string($error) && preg_match('/^[a-z_]{1,64}$/', $error) === 1 ? $error : null,
+                self::oauthError($error),
                 definitive: $response->status() < 500,
             );
         }
@@ -282,7 +301,9 @@ final class OAuthClient
             || ($refreshToken !== null && (! is_string($refreshToken) || $refreshToken === ''))
             || ($expiresIn !== null && (! is_int($expiresIn) || $expiresIn <= 0))
             || ($scope !== null && ! is_string($scope))) {
-            throw new OAuthTokenRequestFailed('The identity provider returned an invalid token.');
+            // The server answered success, so it may have used the code or rotated the refresh
+            // token sent: as uncertain as no answer at all.
+            throw new OAuthTokenRequestFailed('The identity provider returned an invalid token.', definitive: false);
         }
 
         return new OAuthTokens(
@@ -292,11 +313,24 @@ final class OAuthClient
             accessToken: $accessToken,
             refreshToken: $refreshToken,
             expiresAt: $expiresIn === null ? null : CarbonImmutable::now()->addSeconds($expiresIn),
-            scopes: array_values(array_filter(
-                explode(' ', $scope ?? $server->requestedScope()),
-                static fn (string $value): bool => $value !== '',
-            )),
+            scopes: $scope === null ? $scopesWhenOmitted : self::scopeList($scope),
         );
+    }
+
+    /** @return list<string> */
+    private static function scopeList(string $scope): array
+    {
+        return array_values(array_filter(explode(' ', $scope), static fn (string $value): bool => $value !== ''));
+    }
+
+    /**
+     * An OAuth `error` value as RFC 6749 defines it (1*NQSCHAR: printable ASCII other than
+     * `"` and `\`), at most 64 characters; anything else is dropped. It is still data from
+     * another server: escape it wherever it is displayed.
+     */
+    private static function oauthError(mixed $error): ?string
+    {
+        return is_string($error) && preg_match('/^[\x20\x21\x23-\x5B\x5D-\x7E]{1,64}$/', $error) === 1 ? $error : null;
     }
 
     private function issuerRequired(AuthorizationServer $server): bool

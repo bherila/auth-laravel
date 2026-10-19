@@ -13,7 +13,9 @@ use SensitiveParameter;
 final readonly class OAuthTokens
 {
     /**
-     * @param  list<string>  $scopes  the granted scopes; the requested ones when the server omitted `scope` (RFC 6749 §5.1)
+     * @param  list<string>|null  $scopes  the granted scopes. When the server omitted `scope`: for a
+     *                                     code exchange, the requested ones (RFC 6749 §5.1); for a refresh, the
+     *                                     granted scopes the caller passed, or null (unchanged, not known here)
      */
     public function __construct(
         public string $server,
@@ -22,7 +24,7 @@ final readonly class OAuthTokens
         #[SensitiveParameter] public string $accessToken,
         #[SensitiveParameter] public ?string $refreshToken,
         public ?DateTimeImmutable $expiresAt,
-        public array $scopes,
+        public ?array $scopes,
     ) {}
 
     /** @return array<string, mixed> */

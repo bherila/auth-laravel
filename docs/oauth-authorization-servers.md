@@ -44,7 +44,7 @@ it was sent to, and RFC 9207 `iss` is checked before any code is exchanged.
 | `provider` | the key | The provider name an `OAuthIdentity` from this server carries. |
 
 `default` is the sign-in provider's name and cannot be used as a server key. Names are
-letters, digits, `_` and `-`.
+letters, digits, `_` and `-`, up to 64 characters; an all-digit name such as `1` works too.
 
 Every endpoint comes from configuration. With `advertised`, the RFC 8414 document at the
 configured issuer (`/.well-known/oauth-authorization-server`, with the issuer's path appended
@@ -84,8 +84,10 @@ public function callback(Request $request, OAuthClient $oauth): RedirectResponse
 ```
 
 `OAuthTokens` carries the server name, issuer, resource, access and refresh tokens, expiry and
-granted scopes (the requested ones when the server omits `scope`). Its token values are
-redacted from `var_dump`/`print_r`.
+granted scopes (the requested ones when a code exchange's response omits `scope`, per RFC 6749
+§5.1). Its token values are redacted from `var_dump`/`print_r`, and the token request's
+parameters are `#[\SensitiveParameter]`, so the client secret, code, verifier and refresh token
+never appear in an exception trace.
 
 ### What is checked, in order
 
@@ -103,7 +105,9 @@ application unless every check passes:
 6. `issuer_mismatch` / `issuer_missing`: RFC 9207. A present `iss` must equal the flow's
    issuer exactly, read from the raw query string; a missing one is refused when expected.
    This applies to error responses too.
-7. `authorization_denied`: the server answered with `error`.
+7. `authorization_denied`: the server answered with `error`. `providerError` is its value when
+   it fits RFC 6749's grammar (printable ASCII other than `"` and `\`, at most 64
+   characters), else null. It is still another server's text: escape it when displaying it.
 8. `code_missing`.
 
 The code is then exchanged at the configured token endpoint with the flow's verifier, callback
@@ -116,15 +120,19 @@ ten are kept.
 ## Refresh
 
 ```php
-$tokens = $oauth->forServer('svc')->refreshTokens($stored->refreshToken);
+$tokens = $oauth->forServer('svc')->refreshTokens($stored->refreshToken, $stored->scopes);
 ```
 
-Sends the refresh grant with the client credentials and configured resource. A server that
+Sends the refresh grant with the client credentials and configured resource. A response that
+omits `scope` leaves the grant unchanged (RFC 6749 §6): `$tokens->scopes` is then the granted
+scopes you passed, or null if you passed none. It is never filled from the configured `scope`,
+which may be broader than what was granted. A server that
 rotates refresh tokens revokes the whole family when an old one is reused, so persist the new
 token in the same transaction that read the old one (lock the row). On
-`OAuthTokenRequestFailed`, `$definitive` false (a 5xx or dropped connection) means the server
-may already have rotated: mark the connection for reconnection rather than retrying with the
-old token. `$oauthError` carries a well-formed error code such as `invalid_grant`.
+`OAuthTokenRequestFailed`, `$definitive` false (a 5xx, a dropped connection, or a success
+response without a usable bearer token) means the server may already have rotated: mark the
+connection for reconnection rather than retrying with the old token. `$oauthError` carries the
+error code (such as `invalid_grant`) when it fits RFC 6749's grammar.
 
 ## Same subject
 

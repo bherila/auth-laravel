@@ -209,7 +209,8 @@ final class AuthorizationServer
 
         $servers = config('bherila-auth.oauth_client.servers');
         foreach (is_array($servers) ? $servers : [] as $name => $settings) {
-            if ($name !== $this->name && is_array($settings)) {
+            // A numeric name such as "1" is an integer array key.
+            if ((string) $name !== $this->name && is_array($settings)) {
                 $others[] = $settings['redirect_uri'] ?? null;
             }
         }
