@@ -274,6 +274,7 @@ final class OAuthClient
         $tokenType = $response->json('token_type');
         $refreshToken = $response->json('refresh_token');
         $expiresIn = $response->json('expires_in');
+        $expiresIn = is_string($expiresIn) && ctype_digit($expiresIn) ? (int) $expiresIn : $expiresIn;
         $scope = $response->json('scope');
 
         if (! is_string($accessToken) || $accessToken === ''

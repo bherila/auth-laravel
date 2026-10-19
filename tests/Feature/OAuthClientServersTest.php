@@ -585,6 +585,16 @@ class OAuthClientServersTest extends TestCase
         $this->respond('svc', ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC])->assertStatus(502);
     }
 
+    public function test_a_numeric_string_lifetime_is_read_as_seconds(): void
+    {
+        $this->freezeTime();
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'expires_in' => '900'])]);
+
+        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('r');
+
+        $this->assertSame(900, $tokens->expiresAt?->getTimestamp() - now()->getTimestamp());
+    }
+
     public function test_a_non_bearer_token_is_refused(): void
     {
         Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'token_type' => 'mac'])]);
