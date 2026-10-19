@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.26.0 - 2026-10-19
 
 ### Several authorization servers for the OAuth client, with bound flows and RFC 9207 `iss`
 
