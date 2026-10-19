@@ -186,4 +186,126 @@ class OAuthClientTest extends TestCase
         $this->assertSame('https://app.example.test/', $query['post_logout_redirect_uri']);
     }
 
+    public function test_the_single_provider_redirect_is_unchanged(): void
+    {
+        $response = $this->get('/oauth/start-test');
+
+        parse_str((string) parse_url((string) $response->headers->get('Location'), PHP_URL_QUERY), $query);
+        $this->assertSame(
+            ['client_id', 'redirect_uri', 'response_type', 'scope', 'state', 'code_challenge', 'code_challenge_method'],
+            array_keys($query),
+        );
+        $this->assertSame('https://app.example.test/oauth/callback', $query['redirect_uri']);
+        $this->assertSame(session('oauth.login.state'), $query['state']);
+        $this->assertNull(session('oauth.flows'));
+    }
+
+    public function test_an_issuer_naming_the_provider_is_accepted(): void
+    {
+        $this->fakeProvider();
+        $query = $this->start();
+
+        $this->get('/oauth/callback-test?'.http_build_query([
+            'code' => 'code', 'state' => $query['state'], 'iss' => 'https://identity.example.test',
+        ]))->assertOk()->assertJsonPath('subject', '42');
+    }
+
+    public function test_an_issuer_naming_another_server_is_rejected_before_network_requests(): void
+    {
+        $this->fakeProvider();
+        $query = $this->start();
+
+        $this->get('/oauth/callback-test?'.http_build_query([
+            'code' => 'code', 'state' => $query['state'], 'iss' => 'https://attacker.example.test',
+        ]))->assertForbidden();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_configured_issuer_replaces_the_base_url_for_the_check(): void
+    {
+        config(['bherila-auth.oauth_client.issuer' => 'https://id.example.test']);
+        $this->fakeProvider();
+
+        $query = $this->start();
+        $this->get('/oauth/callback-test?'.http_build_query([
+            'code' => 'code', 'state' => $query['state'], 'iss' => 'https://identity.example.test',
+        ]))->assertForbidden();
+
+        $query = $this->start();
+        $this->get('/oauth/callback-test?'.http_build_query([
+            'code' => 'code', 'state' => $query['state'], 'iss' => 'https://id.example.test',
+        ]))->assertOk();
+    }
+
+    public function test_a_missing_issuer_is_rejected_when_the_provider_is_configured_to_send_it(): void
+    {
+        config(['bherila-auth.oauth_client.authorization_response_iss' => 'required']);
+        $this->fakeProvider();
+
+        // Also for a session seeded with only the legacy keys.
+        $this->withSession([
+            'oauth.login.state' => 'expected-state',
+            'oauth.login.code_verifier' => 'expected-verifier',
+        ])->get('/oauth/callback-test?state=expected-state&code=authorization-code')->assertForbidden();
+
+        $query = $this->start();
+        $this->get('/oauth/callback-test?'.http_build_query(['code' => 'code', 'state' => $query['state']]))
+            ->assertForbidden();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_replayed_state_is_rejected(): void
+    {
+        $this->fakeProvider();
+        $query = $this->start();
+        $callback = '/oauth/callback-test?'.http_build_query(['code' => 'code', 'state' => $query['state']]);
+
+        $this->get($callback)->assertOk();
+        $this->get($callback)->assertForbidden();
+
+        Http::assertSentCount(2);
+    }
+
+    public function test_a_sign_in_started_as_a_guest_is_not_completed_as_someone_else(): void
+    {
+        $this->fakeProvider();
+        $query = $this->start();
+
+        $this->actingAs(new \Illuminate\Auth\GenericUser(['id' => 9]));
+        $this->get('/oauth/callback-test?'.http_build_query(['code' => 'code', 'state' => $query['state']]))
+            ->assertForbidden();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_a_sign_in_started_in_another_session_is_rejected(): void
+    {
+        $this->fakeProvider();
+        $query = $this->start();
+        $this->flushSession();
+
+        $this->get('/oauth/callback-test?'.http_build_query(['code' => 'code', 'state' => $query['state']]))
+            ->assertForbidden();
+
+        Http::assertNothingSent();
+    }
+
+    private function fakeProvider(): void
+    {
+        Http::fake([
+            'identity.example.test/oauth/token' => Http::response(['access_token' => 'token']),
+            'identity.example.test/api/oauth/user' => Http::response($this->identityPayload(null)),
+        ]);
+    }
+
+    /** @return array<string, string> */
+    private function start(): array
+    {
+        $start = $this->get('/oauth/start-test');
+        parse_str((string) parse_url((string) $start->headers->get('Location'), PHP_URL_QUERY), $query);
+
+        return $query;
+    }
 }

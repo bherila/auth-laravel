@@ -39,6 +39,27 @@ return [
         // Relying-party initiated logout. Ending only the local session leaves the provider
         // still recognising the person, so the next sign-in returns them without a prompt.
         'end_session_path' => '/oauth/end-session',
+        // The provider's exact issuer identifier, compared byte for byte with an RFC 9207
+        // `iss` on the authorization response. Null uses base_url.
+        'issuer' => env('OAUTH_PROVIDER_ISSUER'),
+        // RFC 9207 authorization response `iss`: 'when_present' checks it when sent (the
+        // default here, unchanged for existing sign-in), 'required' refuses a response
+        // without it, 'advertised' requires it when the issuer's RFC 8414 metadata says
+        // `authorization_response_iss_parameter_supported`. A present `iss` is always checked.
+        'authorization_response_iss' => env('OAUTH_AUTHORIZATION_RESPONSE_ISS', 'when_present'),
+        // Seconds an authorization request may wait for its response before it is refused.
+        'pending_flow_ttl' => 1800,
+        // How long an issuer's metadata answer is remembered ('advertised' only).
+        'metadata_cache_seconds' => 3600,
+        // Further authorization servers this application calls APIs on for a person, by
+        // name (not 'default', which is the sign-in provider above). Use
+        // OAuthClient::forServer($name). Each needs its own redirect_uri, mounted at a
+        // route that calls that server's client. Keys: issuer (required, exact), client_id,
+        // client_secret, redirect_uri, scope, resource (RFC 8707, optional),
+        // authorization_response_iss (default 'advertised'), provider (default: the name),
+        // base_url (default: issuer), authorize_path, token_path, identity_path (only for
+        // identityFromCallback()). See README "Several authorization servers".
+        'servers' => [],
     ],
 
     // Enforce the identity provider's account status on credentials this application

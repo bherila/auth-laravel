@@ -2,20 +2,37 @@
 
 namespace BWH\Auth\OAuth;
 
+use BWH\Auth\OAuth\Client\AuthorizationServer;
+use BWH\Auth\OAuth\Client\AuthorizationServerMetadata;
+use BWH\Auth\OAuth\Client\PendingFlow;
+use Carbon\CarbonImmutable;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 
+/**
+ * Authorization-code + S256 PKCE client for the sign-in provider and, optionally, other
+ * authorization servers this application calls APIs on for a person.
+ *
+ * The container's instance is the sign-in provider (`oauth_client`); {@see forServer()}
+ * gives one for an entry of `oauth_client.servers`. Each server has its own static
+ * callback, and every pending flow is bound to the session and person that started it, the
+ * server (and exact issuer) it was sent to, the callback, the resource and the verifier.
+ * A response is checked against all of them, and against RFC 9207 `iss`, before its code is
+ * exchanged.
+ */
 final class OAuthClient
 {
-    private const string STATE_SESSION_KEY = 'oauth.login.state';
-
-    private const string VERIFIER_SESSION_KEY = 'oauth.login.code_verifier';
+    public function __construct(private readonly ?string $server = null) {}
 
     /**
-     * Whether a client has been issued for this application at the provider.
+     * Whether a client has been issued for this application at the provider, or, given a
+     * name, whether that entry of `oauth_client.servers` has a client id and issuer.
      *
      * Every other method here aborts 503 on a missing setting, which is the right answer
      * for a half-configured deploy but the wrong one for an application that is meant to
@@ -26,88 +43,267 @@ final class OAuthClient
      * `base_url` carries a default, so in practice this is a question about `client_id`;
      * both are checked because a blanked-out base URL would fail later and less clearly.
      */
-    public static function isConfigured(): bool
+    public static function isConfigured(?string $server = null): bool
     {
-        return self::configuredSetting('client_id') !== ''
-            && self::configuredSetting('base_url') !== '';
+        return AuthorizationServer::isConfigured($server);
     }
 
-    private static function configuredSetting(string $key): string
+    /** The client for a named entry of `oauth_client.servers` (not `default`, the sign-in provider). */
+    public function forServer(string $name): self
     {
-        $value = config("bherila-auth.oauth_client.{$key}");
+        return new self($name);
+    }
 
-        return is_string($value) ? trim($value) : '';
+    /** `default` for the sign-in provider, else the `oauth_client.servers` key. */
+    public function serverName(): string
+    {
+        return $this->server ?? AuthorizationServer::DEFAULT;
+    }
+
+    /** The exact issuer this server's authorization responses must name in `iss`. */
+    public function issuer(): string
+    {
+        return $this->authorizationServer()->issuer();
     }
 
     public function redirect(Request $request): RedirectResponse
     {
+        $server = $this->authorizationServer();
         $state = Str::random(40);
         $verifier = Str::random(96);
         $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
 
-        $request->session()->put([
-            self::STATE_SESSION_KEY => $state,
-            self::VERIFIER_SESSION_KEY => $verifier,
-        ]);
+        $flow = new PendingFlow(
+            server: $server->name,
+            issuer: $server->issuer(),
+            callback: $server->value('redirect_uri'),
+            resource: $server->resource(),
+            verifier: $verifier,
+            issuerRequired: $this->issuerRequired($server),
+            userBound: true,
+            user: $this->userKey($request),
+            startedAt: Carbon::now()->getTimestamp(),
+        );
 
-        return redirect()->away($this->endpoint('authorize_path').'?'.http_build_query([
-            'client_id' => $this->configuredValue('client_id'),
-            'redirect_uri' => $this->configuredValue('redirect_uri'),
+        $authorize = $server->endpoint('authorize_path');
+        $parameters = array_filter([
+            'client_id' => $server->value('client_id'),
+            'redirect_uri' => $flow->callback,
             'response_type' => 'code',
-            'scope' => $this->configuredValue('scope'),
+            'scope' => $server->value('scope'),
             'state' => $state,
             'code_challenge' => $challenge,
             'code_challenge_method' => 'S256',
-        ]));
+            'resource' => $flow->resource,
+        ], static fn (?string $value): bool => $value !== null);
+
+        $flow->store($request->session(), $state);
+
+        return redirect()->away($authorize.'?'.http_build_query($parameters));
+    }
+
+    /**
+     * Verify an authorization response and exchange its code for tokens.
+     *
+     * Every check runs before the code leaves this application: a pending flow for this
+     * `state` in this session (consumed whatever happens next), not expired, started for
+     * this server with its current issuer, callback and resource, arriving at this server's
+     * callback (named servers), from the same signed-in person, then RFC 9207 `iss`.
+     *
+     * @throws OAuthCallbackRejected (403) when the response is refused
+     * @throws OAuthTokenRequestFailed (502) when the server does not return a usable token
+     */
+    public function tokensFromCallback(Request $request): OAuthTokens
+    {
+        $server = $this->authorizationServer();
+        [$flow, $code] = $this->verifiedResponse($request, $server);
+
+        return $this->requestTokens($server, $flow->issuer, $flow->resource, [
+            'grant_type' => 'authorization_code',
+            'client_id' => $server->value('client_id'),
+            'client_secret' => $server->value('client_secret'),
+            'redirect_uri' => $flow->callback,
+            'code' => $code,
+            'code_verifier' => $flow->verifier,
+        ], 'The identity provider rejected the authorization code.');
     }
 
     public function identityFromCallback(Request $request): OAuthIdentity
     {
-        $expectedState = $request->session()->pull(self::STATE_SESSION_KEY);
-        $verifier = $request->session()->pull(self::VERIFIER_SESSION_KEY);
-        $state = $request->query('state');
-        $code = $request->query('code');
-
-        abort_unless(
-            is_string($expectedState)
-            && is_string($state)
-            && hash_equals($expectedState, $state)
-            && is_string($verifier)
-            && $verifier !== ''
-            && is_string($code)
-            && $code !== '',
-            403,
-            'The OAuth response could not be verified.',
-        );
-
-        $tokenResponse = Http::asForm()->acceptJson()->post($this->endpoint('token_path'), [
-            'grant_type' => 'authorization_code',
-            'client_id' => $this->configuredValue('client_id'),
-            'client_secret' => $this->configuredValue('client_secret'),
-            'redirect_uri' => $this->configuredValue('redirect_uri'),
-            'code' => $code,
-            'code_verifier' => $verifier,
-        ]);
-        abort_unless($tokenResponse->successful(), 502, 'The identity provider rejected the authorization code.');
-
-        $accessToken = $tokenResponse->json('access_token');
-        abort_unless(is_string($accessToken) && $accessToken !== '', 502, 'The identity provider returned an invalid token.');
+        $tokens = $this->tokensFromCallback($request);
 
         $identityResponse = Http::acceptJson()
-            ->withToken($accessToken)
-            ->get($this->endpoint('identity_path'));
+            ->withToken($tokens->accessToken)
+            ->get($this->authorizationServer()->endpoint('identity_path'));
 
         return $this->validatedIdentity($identityResponse);
     }
 
+    /**
+     * @return array{PendingFlow, string}
+     */
+    private function verifiedResponse(Request $request, AuthorizationServer $server): array
+    {
+        $query = $request->query;
+        $flow = PendingFlow::pull(
+            $request->session(),
+            $server->name,
+            $query->all()['state'] ?? null,
+            fn (string $verifier): PendingFlow => new PendingFlow(
+                server: $server->name,
+                issuer: $server->issuer(),
+                callback: $server->value('redirect_uri'),
+                resource: $server->resource(),
+                verifier: $verifier,
+                issuerRequired: $this->issuerRequired($server),
+                userBound: false,
+                user: null,
+                startedAt: null,
+            ),
+        );
+
+        $reject = static fn (OAuthCallbackFailure $reason, ?string $error = null) => new OAuthCallbackRejected($reason, $error);
+
+        if ($flow === null) {
+            throw $reject(OAuthCallbackFailure::StateMismatch);
+        }
+        if ($flow->isExpired()) {
+            throw $reject(OAuthCallbackFailure::Expired);
+        }
+        if ($flow->server !== $server->name
+            || $flow->issuer !== $server->issuer()
+            || $flow->callback !== $server->value('redirect_uri')
+            || $flow->resource !== $server->resource()) {
+            throw $reject(OAuthCallbackFailure::ServerMismatch);
+        }
+        // The sign-in provider's callback route has never been checked against its setting,
+        // and applications (and their tests) mount it at other paths; it is distinguished by
+        // its own session keys instead.
+        if (! $server->isDefault() && $request->getBaseUrl().$request->getPathInfo() !== $server->callbackPath()) {
+            throw $reject(OAuthCallbackFailure::CallbackMismatch);
+        }
+        if ($flow->userBound && $flow->user !== $this->userKey($request)) {
+            throw $reject(OAuthCallbackFailure::UserMismatch);
+        }
+
+        // RFC 9207 §2.4: an `iss` that is present must be the issuer the request went to, on
+        // error responses too; one that is expected must be present. Read from the raw query
+        // string, so input middleware that trims or nulls values cannot make one match.
+        $raw = $request->server->get('QUERY_STRING');
+        $raw = is_string($raw) ? HeaderUtils::parseQuery($raw) : $query->all();
+        if (array_key_exists('iss', $raw)) {
+            if ($raw['iss'] !== $flow->issuer) {
+                throw $reject(OAuthCallbackFailure::IssuerMismatch);
+            }
+        } elseif ($flow->issuerRequired) {
+            throw $reject(OAuthCallbackFailure::IssuerMissing);
+        }
+
+        if ($query->has('error')) {
+            $error = $query->all()['error'];
+
+            throw $reject(
+                OAuthCallbackFailure::AuthorizationDenied,
+                is_string($error) && preg_match('/^[a-z_]{1,64}$/', $error) === 1 ? $error : null,
+            );
+        }
+
+        $code = $query->all()['code'] ?? null;
+        if (! is_string($code) || $code === '') {
+            throw $reject(OAuthCallbackFailure::CodeMissing);
+        }
+
+        return [$flow, $code];
+    }
+
+    /**
+     * @param  array<string, string>  $parameters
+     */
+    private function requestTokens(
+        AuthorizationServer $server,
+        string $issuer,
+        ?string $resource,
+        array $parameters,
+        string $refusal,
+    ): OAuthTokens {
+        if ($resource !== null) {
+            $parameters['resource'] = $resource;
+        }
+
+        try {
+            $response = Http::asForm()->acceptJson()->post($server->endpoint('token_path'), $parameters);
+        } catch (ConnectionException) {
+            throw new OAuthTokenRequestFailed('The authorization server could not be reached.', definitive: false);
+        }
+
+        if (! $response->successful()) {
+            $error = $response->json('error');
+
+            throw new OAuthTokenRequestFailed(
+                $refusal,
+                is_string($error) && preg_match('/^[a-z_]{1,64}$/', $error) === 1 ? $error : null,
+                definitive: $response->status() < 500,
+            );
+        }
+
+        $accessToken = $response->json('access_token');
+        $tokenType = $response->json('token_type');
+        $refreshToken = $response->json('refresh_token');
+        $expiresIn = $response->json('expires_in');
+        $scope = $response->json('scope');
+
+        if (! is_string($accessToken) || $accessToken === ''
+            || ($tokenType !== null && (! is_string($tokenType) || Str::lower($tokenType) !== 'bearer'))
+            || ($refreshToken !== null && (! is_string($refreshToken) || $refreshToken === ''))
+            || ($expiresIn !== null && (! is_int($expiresIn) || $expiresIn <= 0))
+            || ($scope !== null && ! is_string($scope))) {
+            throw new OAuthTokenRequestFailed('The identity provider returned an invalid token.');
+        }
+
+        return new OAuthTokens(
+            server: $server->name,
+            issuer: $issuer,
+            resource: $resource,
+            accessToken: $accessToken,
+            refreshToken: $refreshToken,
+            expiresAt: $expiresIn === null ? null : CarbonImmutable::now()->addSeconds($expiresIn),
+            scopes: array_values(array_filter(
+                explode(' ', $scope ?? $server->requestedScope()),
+                static fn (string $value): bool => $value !== '',
+            )),
+        );
+    }
+
+    private function issuerRequired(AuthorizationServer $server): bool
+    {
+        return match ($server->issuerParameter()) {
+            AuthorizationServer::ISS_REQUIRED => true,
+            AuthorizationServer::ISS_ADVERTISED => AuthorizationServerMetadata::issuerParameterSupported($server),
+            default => false,
+        };
+    }
+
+    /** The signed-in person, as a string, or null for a guest. */
+    private function userKey(Request $request): ?string
+    {
+        $identifier = $request->user()?->getAuthIdentifier();
+
+        return is_scalar($identifier) ? (string) $identifier : null;
+    }
+
+    private function authorizationServer(): AuthorizationServer
+    {
+        return AuthorizationServer::resolve($this->server);
+    }
+
     public function providerName(): string
     {
-        return $this->configuredValue('provider');
+        return $this->authorizationServer()->value('provider');
     }
 
     public function providerBaseUrl(): string
     {
-        return $this->configuredValue('base_url');
+        return $this->authorizationServer()->value('base_url');
     }
 
     private function validatedIdentity(Response $response): OAuthIdentity
@@ -198,35 +394,11 @@ final class OAuthClient
      */
     public function endSessionUrl(string $returnTo): string
     {
-        return $this->endpoint('end_session_path').'?'.http_build_query([
-            'client_id' => $this->configuredValue('client_id'),
+        $server = $this->authorizationServer();
+
+        return $server->endpoint('end_session_path').'?'.http_build_query([
+            'client_id' => $server->value('client_id'),
             'post_logout_redirect_uri' => $returnTo,
         ]);
-    }
-
-    private function endpoint(string $pathKey): string
-    {
-        return $this->configuredValue('base_url').'/'.ltrim($this->configuredValue($pathKey), '/');
-    }
-
-    private function configuredValue(string $key): string
-    {
-        $value = config("bherila-auth.oauth_client.{$key}");
-        abort_unless(is_string($value) && $value !== '', 503, 'OAuth is not configured.');
-
-        if ($key === 'base_url') {
-            $value = rtrim($value, '/');
-            abort_unless(filter_var($value, FILTER_VALIDATE_URL) !== false, 503, 'OAuth is not configured.');
-        }
-
-        if ($key === 'redirect_uri') {
-            abort_unless(filter_var($value, FILTER_VALIDATE_URL) !== false, 503, 'OAuth is not configured.');
-        }
-
-        if ($key === 'provider') {
-            abort_unless($value === trim($value) && Str::length($value) <= 64, 503, 'OAuth is not configured.');
-        }
-
-        return $value;
     }
 }
