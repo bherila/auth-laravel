@@ -4,8 +4,10 @@ namespace BWH\Auth\Tests\Feature;
 
 use BWH\Auth\OAuth\OAuthCallbackRejected;
 use BWH\Auth\OAuth\OAuthClient;
+use BWH\Auth\OAuth\OAuthTokenRequestFailed;
 use BWH\Auth\Tests\TestCase;
 use Illuminate\Auth\GenericUser;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -672,5 +674,71 @@ class OAuthClientServersTest extends TestCase
         $this->get('/connections/svc/identity?'.http_build_query(['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC]))
             ->assertOk()
             ->assertExactJson(['provider' => 'svc', 'subject' => '42']);
+    }
+
+    public function test_a_refresh_uses_the_configured_endpoint_client_and_resource(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response([
+            'token_type' => 'Bearer', 'access_token' => 'next-access', 'refresh_token' => 'next-refresh', 'expires_in' => 900,
+        ])]);
+
+        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+
+        $this->assertSame('next-access', $tokens->accessToken);
+        $this->assertSame('next-refresh', $tokens->refreshToken);
+        $this->assertSame('svc', $tokens->server);
+        $this->assertSame(self::SVC, $tokens->issuer);
+        $this->assertSame(self::SVC.'/api/v1', $tokens->resource);
+        $this->assertSame(['finance:read', 'identity:read'], $tokens->scopes);
+        $this->assertNotNull($tokens->expiresAt);
+        Http::assertSent(fn (ClientRequest $request): bool => $request->url() === self::SVC.'/oauth/token'
+            && $request->data() === [
+                'grant_type' => 'refresh_token',
+                'client_id' => 'pf-at-svc',
+                'client_secret' => 'svc-secret',
+                'refresh_token' => 'old-refresh',
+                'resource' => self::SVC.'/api/v1',
+            ]);
+    }
+
+    public function test_a_refused_refresh_is_definitive(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['error' => 'invalid_grant'], 400)]);
+
+        try {
+            app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+            $this->fail('The refresh was accepted.');
+        } catch (OAuthTokenRequestFailed $failed) {
+            $this->assertSame(502, $failed->getStatusCode());
+            $this->assertSame('invalid_grant', $failed->oauthError);
+            $this->assertTrue($failed->definitive);
+        }
+    }
+
+    public function test_a_refresh_with_no_answer_is_ambiguous(): void
+    {
+        foreach ([
+            fn () => Http::response('unavailable', 503),
+            fn () => throw new ConnectionException('reset'),
+        ] as $answer) {
+            Http::fake([self::SVC.'/oauth/token' => $answer]);
+
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+                $this->fail('The refresh was accepted.');
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertFalse($failed->definitive);
+                $this->assertNull($failed->oauthError);
+            }
+        }
+    }
+
+    public function test_tokens_are_left_out_of_dumps(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'secret-access', 'refresh_token' => 'secret-refresh'])]);
+
+        $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+
+        $this->assertStringNotContainsString('secret-', print_r($tokens, true));
     }
 }

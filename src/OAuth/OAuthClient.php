@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use SensitiveParameter;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
 /**
@@ -126,6 +127,29 @@ final class OAuthClient
             'code' => $code,
             'code_verifier' => $flow->verifier,
         ], 'The identity provider rejected the authorization code.');
+    }
+
+    /**
+     * Exchange a refresh token at this server's configured token endpoint, for its
+     * configured resource.
+     *
+     * Servers that rotate refresh tokens revoke the whole family when an old one is reused,
+     * so persist the returned refresh token in the same transaction that sent the old one.
+     * When {@see OAuthTokenRequestFailed::$definitive} is false the server may have rotated
+     * already: do not retry with the old token.
+     *
+     * @throws OAuthTokenRequestFailed (502)
+     */
+    public function refreshTokens(#[SensitiveParameter] string $refreshToken): OAuthTokens
+    {
+        $server = $this->authorizationServer();
+
+        return $this->requestTokens($server, $server->issuer(), $server->resource(), [
+            'grant_type' => 'refresh_token',
+            'client_id' => $server->value('client_id'),
+            'client_secret' => $server->value('client_secret'),
+            'refresh_token' => $refreshToken,
+        ], 'The authorization server refused the refresh token.');
     }
 
     public function identityFromCallback(Request $request): OAuthIdentity
