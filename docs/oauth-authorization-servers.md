@@ -129,7 +129,9 @@ $tokens = $oauth->forServer('svc')->refreshTokens($stored->refreshToken, $stored
 Sends the refresh grant with the client credentials and configured resource. A server that does
 not rotate refresh tokens omits `refresh_token`; the one you sent stays valid (RFC 6749 §6), and
 `$tokens->refreshToken` is that token, so storing the result always keeps a usable refresh
-token. Compare it with the stored one if you only want to write on rotation. A response that
+token. Compare it with the stored one if you only want to write on rotation. A refresh token
+that is empty or not `1*VSCHAR`, or granted scopes that are not a list of scope tokens, throw
+`InvalidArgumentException` before anything is sent. A response that
 omits `scope` leaves the grant unchanged (RFC 6749 §6): `$tokens->scopes` is then the granted
 scopes you passed, or null if you passed none. It is never filled from the configured `scope`,
 which may be broader than what was granted. A server that

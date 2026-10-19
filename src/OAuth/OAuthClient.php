@@ -151,10 +151,15 @@ final class OAuthClient
      * @param  list<string>|null  $grantedScopes  the scopes the grant currently carries
      *
      * @throws OAuthTokenRequestFailed (502)
-     * @throws InvalidArgumentException when $grantedScopes is not a list of scope tokens
+     * @throws InvalidArgumentException when $refreshToken is not a non-empty 1*VSCHAR token, or
+     *                                  $grantedScopes is not a list of scope tokens; nothing is sent
      */
     public function refreshTokens(#[SensitiveParameter] string $refreshToken, ?array $grantedScopes = null): OAuthTokens
     {
+        if (! self::isToken($refreshToken)) {
+            throw new InvalidArgumentException('The refresh token is not a valid OAuth token.');
+        }
+
         if ($grantedScopes !== null && (! array_is_list($grantedScopes) || array_filter(
             $grantedScopes,
             static fn (mixed $scope): bool => ! is_string($scope) || preg_match('/^[\x21\x23-\x5B\x5D-\x7E]+\z/', $scope) !== 1,

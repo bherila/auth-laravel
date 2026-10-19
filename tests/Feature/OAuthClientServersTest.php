@@ -1040,4 +1040,20 @@ class OAuthClientServersTest extends TestCase
         $this->assertSame('a.b-c_d~e+f/g= h', $tokens->accessToken);
         $this->assertSame('!~', $tokens->refreshToken);
     }
+
+    public function test_an_invalid_refresh_token_is_refused_before_any_request(): void
+    {
+        Http::fake();
+
+        foreach (['', "r\n", "a\x00b", "caf\u{e9}"] as $refreshToken) {
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens($refreshToken);
+                $this->fail('An invalid refresh token was sent.');
+            } catch (\InvalidArgumentException $refused) {
+                $this->assertSame('The refresh token is not a valid OAuth token.', $refused->getMessage());
+            }
+        }
+
+        Http::assertNothingSent();
+    }
 }

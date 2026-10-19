@@ -11,7 +11,8 @@ the first entry here is in the git history.
 - `OAuthClient::forServer($name)` is a client of an entry of the new `oauth_client.servers`
   setting: an authorization server whose API the application calls for a person. Each entry has
   its exact `issuer`, client credentials, `scope`, optional RFC 8707 `resource` (any absolute
-  URI without a fragment, URNs included) and its own
+  URI without a fragment, URNs included, checked by component: brackets only around an IP
+  literal host) and its own
   static `redirect_uri` (two servers, or a server and the sign-in provider, sharing one is a
   503). The top-level `oauth_client` settings remain the sign-in provider, named `default`.
 - Every pending flow is bound to the session and signed-in person that started it, the server
@@ -32,7 +33,9 @@ the first entry here is in the git history.
   $grantedScopes)` sends a refresh grant with the configured client and resource. A refresh
   response without `scope` reports the granted scopes passed in, or null, never the configured
   request; one without `refresh_token` (the server does not rotate) carries the submitted
-  refresh token, which stays valid. A code exchange response without `scope` reports the scope
+  refresh token, which stays valid. A submitted refresh token that is not a non-empty
+  `1*VSCHAR` value, or malformed granted scopes, is an `InvalidArgumentException` before
+  anything is sent. A code exchange response without `scope` reports the scope
   the pending flow requested, not the setting at callback time. Access and refresh tokens must
   be `1*VSCHAR` (RFC 6749 Appendix A). `identityFromCallback()` also works for a named server
   that configures `identity_path`.
