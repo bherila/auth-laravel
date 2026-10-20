@@ -62,7 +62,9 @@ under a lock on the same store before checking bindings or exchanging a code. Ca
 eviction or flushing refuses the flow; it never falls back to session attributes.
 
 This prevents a stale session save from erasing a pending connect flow or reviving one already
-consumed. The existing user binding remains required, including refusal after signing out or
+consumed. Named connect routes require a signed-in user at both redirect and callback: anonymous
+callers have no user key that could distinguish their cache bindings. The existing user binding
+remains required, including refusal after signing out or
 switching users. Named flows are no longer tied to session attributes; the default sign-in
 flow retains its legacy session keys. Named flows already pending in session at deployment
 must be restarted.

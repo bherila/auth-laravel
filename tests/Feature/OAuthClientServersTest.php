@@ -30,6 +30,7 @@ class OAuthClientServersTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->actingAs(new GenericUser(['id' => 7]));
 
         config(['bherila-auth.oauth_client' => [
             'provider' => 'bherila',

@@ -701,7 +701,9 @@ so a response without it is refused too.
 To call other applications' APIs for a person, configure each as an entry of
 `oauth_client.servers` with its exact `issuer` and its own `redirect_uri`, and use
 `$oauth->forServer('svc')->redirect($request)`, `->tokensFromCallback($request)` (an
-`OAuthTokens`) and `->refreshTokens($refreshToken)`. Named pending flows live in a shared cache,
+`OAuthTokens`) and `->refreshTokens($refreshToken)`. Named connect flows require a signed-in
+user at both redirect and callback; guest sign-in through the default provider is unchanged.
+Named pending flows live in a shared cache,
 independently of concurrent session saves, and are bound to their person, server, issuer,
 callback, resource and verifier. They are consumed once under an atomic cache lock before any
 check or exchange. `oauth_client.pending_flow_cache_store` selects a store, or null uses the

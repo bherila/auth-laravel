@@ -71,6 +71,8 @@ final class OAuthClient
     public function redirect(Request $request): RedirectResponse
     {
         $server = $this->authorizationServer();
+        $user = $this->userKey($request);
+        abort_unless($server->isDefault() || ($user !== null && $user !== ''), 403, 'Sign in before connecting an authorization server.');
         $state = Str::random(40);
         $verifier = Str::random(96);
         $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
@@ -83,7 +85,7 @@ final class OAuthClient
             verifier: $verifier,
             issuerRequired: $this->issuerRequired($server),
             userBound: true,
-            user: $this->userKey($request),
+            user: $user,
             startedAt: Carbon::now()->getTimestamp(),
             scope: $server->value('scope'),
         );
@@ -232,7 +234,8 @@ final class OAuthClient
         if (! $server->isDefault() && $request->getBaseUrl().$request->getPathInfo() !== $server->callbackPath()) {
             throw $reject(OAuthCallbackFailure::CallbackMismatch);
         }
-        if ($flow->userBound && $flow->user !== $this->userKey($request)) {
+        $user = $this->userKey($request);
+        if ((! $server->isDefault() && ($user === null || $user === '')) || ($flow->userBound && $flow->user !== $user)) {
             throw $reject(OAuthCallbackFailure::UserMismatch);
         }
 
