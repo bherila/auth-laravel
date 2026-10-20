@@ -4,6 +4,7 @@ namespace BWH\Auth\OAuth;
 
 use BWH\Auth\OAuth\Client\AuthorizationServer;
 use BWH\Auth\OAuth\Client\AuthorizationServerMetadata;
+use BWH\Auth\OAuth\Client\OAuthHttpTransport;
 use BWH\Auth\OAuth\Client\PendingFlow;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\ConnectionException;
@@ -31,6 +32,10 @@ use Symfony\Component\HttpFoundation\HeaderUtils;
  */
 final class OAuthClient
 {
+    private readonly AuthorizationServer $explicitServer;
+
+    private readonly ?OAuthHttpTransport $transport;
+
     public function __construct(private readonly ?string $server = null) {}
 
     /**
@@ -57,7 +62,28 @@ final class OAuthClient
         return new self($name);
     }
 
-    /** `default` for the sign-in provider, else the `oauth_client.servers` key. */
+    /**
+     * A new named client with an immutable settings snapshot, without changing configuration.
+     * The caller supplies these same trusted settings again for the callback and refresh.
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    public function forServerSettings(string $name, #[SensitiveParameter] array $settings, ?OAuthHttpTransport $transport = null): self
+    {
+        $client = new self($name);
+        $client->explicitServer = AuthorizationServer::fromSettings($name, $settings);
+        $client->transport = $transport;
+
+        return $client;
+    }
+
+    /** @return array{server: string} */
+    public function __debugInfo(): array
+    {
+        return ['server' => $this->serverName()];
+    }
+
+    /** `default` for the sign-in provider, else the named server's key. */
     public function serverName(): string
     {
         return $this->server ?? AuthorizationServer::DEFAULT;
@@ -185,9 +211,10 @@ final class OAuthClient
     {
         $tokens = $this->tokensFromCallback($request);
 
-        $identityResponse = Http::acceptJson()
-            ->withToken($tokens->accessToken)
-            ->get($this->authorizationServer()->endpoint('identity_path'));
+        $url = $this->authorizationServer()->endpoint('identity_path');
+        $request = Http::acceptJson()->withToken($tokens->accessToken);
+        $outbound = ($this->transport ?? null)?->prepare($request, $url) ?? $request;
+        $identityResponse = $outbound->get($url);
 
         return $this->validatedIdentity($identityResponse);
     }
@@ -291,7 +318,10 @@ final class OAuthClient
         }
 
         try {
-            $response = Http::asForm()->acceptJson()->post($server->endpoint('token_path'), $parameters);
+            $url = $server->endpoint('token_path');
+            $request = Http::asForm()->acceptJson();
+            $request = ($this->transport ?? null)?->prepare($request, $url) ?? $request;
+            $response = $request->post($url, $parameters);
         } catch (ConnectionException) {
             throw new OAuthTokenRequestFailed('The authorization server could not be reached.', definitive: false);
         }
@@ -360,7 +390,7 @@ final class OAuthClient
     {
         return match ($server->issuerParameter()) {
             AuthorizationServer::ISS_REQUIRED => true,
-            AuthorizationServer::ISS_ADVERTISED => AuthorizationServerMetadata::issuerParameterSupported($server),
+            AuthorizationServer::ISS_ADVERTISED => AuthorizationServerMetadata::issuerParameterSupported($server, $this->transport ?? null),
             default => false,
         };
     }
@@ -375,7 +405,7 @@ final class OAuthClient
 
     private function authorizationServer(): AuthorizationServer
     {
-        return AuthorizationServer::resolve($this->server);
+        return $this->explicitServer ?? AuthorizationServer::resolve($this->server);
     }
 
     public function providerName(): string

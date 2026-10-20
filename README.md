@@ -714,6 +714,11 @@ exchanged. `SameSubject::matchesUser($owner, $provider, $subject)` confirms that
 token belongs to is the local owner's. See
 [docs/oauth-authorization-servers.md](docs/oauth-authorization-servers.md).
 
+For per-connection settings and outbound request policy, use
+`forServerSettings($name, $settings, $transport)`; it returns an isolated named client without
+changing global configuration. The optional `OAuthHttpTransport` prepares metadata, token,
+refresh and identity requests. See [explicit settings and HTTP policy](docs/oauth-authorization-servers.md#explicit-settings-and-per-client-http-policy).
+
 #### Signing out, and the application list
 
 Two things every relying party needs, and which four of them had drifted apart on before
