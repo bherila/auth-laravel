@@ -23,10 +23,10 @@ use Symfony\Component\HttpFoundation\HeaderUtils;
  *
  * The container's instance is the sign-in provider (`oauth_client`); {@see forServer()}
  * gives one for an entry of `oauth_client.servers`. Each server has its own static
- * callback, and every pending flow is bound to the session and person that started it, the
+ * callback, and every pending flow is bound to the person that started it, the
  * server (and exact issuer) it was sent to, the callback, the resource and the verifier.
  * A response is checked against all of them, and against RFC 9207 `iss`, before its code is
- * exchanged.
+ * exchanged. Named flows live in cache; the sign-in provider retains its session binding.
  */
 final class OAuthClient
 {
@@ -109,7 +109,8 @@ final class OAuthClient
      * Verify an authorization response and exchange its code for tokens.
      *
      * Every check runs before the code leaves this application: a pending flow for this
-     * `state` in this session (consumed whatever happens next), not expired, started for
+     * `state` in the named-flow cache or legacy sign-in session (consumed whatever happens
+     * next), not expired, started for
      * this server with its current issuer, callback and resource, arriving at this server's
      * callback (named servers), from the same signed-in person, then RFC 9207 `iss`.
      *

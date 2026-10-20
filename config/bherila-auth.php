@@ -49,6 +49,9 @@ return [
         'authorization_response_iss' => env('OAUTH_AUTHORIZATION_RESPONSE_ISS', 'when_present'),
         // Seconds an authorization request may wait for its response before it is refused.
         'pending_flow_ttl' => 1800,
+        // Named-server pending flows use this cache store (null: Laravel's default). It must
+        // support atomic locks and be shared by every process serving connect callbacks.
+        'pending_flow_cache_store' => env('BHERILA_AUTH_OAUTH_PENDING_FLOW_CACHE_STORE'),
         // How long an issuer's metadata answer is remembered ('advertised' only).
         'metadata_cache_seconds' => 3600,
         // Further authorization servers this application calls APIs on for a person, by

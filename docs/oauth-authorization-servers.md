@@ -54,7 +54,18 @@ after it) is read when a flow starts, must name exactly that issuer, and only it
 issuer is a 503 before the person is sent anywhere.
 
 Shared settings: `oauth_client.pending_flow_ttl` (1800 seconds) is how long a flow may wait for
-its response.
+its response. Named pending flows are cached under a SHA-256 hash of their random state, using
+`oauth_client.pending_flow_cache_store` (`BHERILA_AUTH_OAUTH_PENDING_FLOW_CACHE_STORE`), or
+Laravel's configured default cache store when null. Use a persistent store shared by all
+processes serving connect callbacks, with atomic lock support. A callback consumes its entry
+under a lock on the same store before checking bindings or exchanging a code. Cache expiry,
+eviction or flushing refuses the flow; it never falls back to session attributes.
+
+This prevents a stale session save from erasing a pending connect flow or reviving one already
+consumed. The existing user binding remains required, including refusal after signing out or
+switching users. Named flows are no longer tied to session attributes; the default sign-in
+flow retains its legacy session keys. Named flows already pending in session at deployment
+must be restarted.
 
 ## Connect and complete
 
@@ -97,9 +108,9 @@ never appear in an exception trace.
 The response is refused with `OAuthCallbackRejected` (a 403) before its code leaves the
 application unless every check passes:
 
-1. `state_mismatch`: this session has a pending flow for the response's `state`. The flow is
-   removed now, whatever follows, so a response cannot be replayed and a response carried
-   into another browser finds nothing.
+1. `state_mismatch`: the named-flow cache has a pending flow for the response's `state`. The
+   flow is consumed now, whatever follows, so concurrent callbacks and restored session
+   snapshots cannot replay it. An expired or evicted entry is missing and is refused here.
 2. `expired`: the flow is younger than `pending_flow_ttl`.
 3. `server_mismatch`: the flow was started for this server, and its issuer, callback and
    resource are still this server's settings.
@@ -117,8 +128,8 @@ The code is then exchanged at the configured token endpoint with the flow's veri
 and resource. A refusal, or a response without a bearer `access_token`, is an
 `OAuthTokenRequestFailed` (a 502).
 
-Several flows (to different servers, or in several tabs) can be pending in one session; at most
-ten are kept.
+Several named flows (to different servers, or in several tabs) can be pending independently
+until their cache TTL expires; session saves do not overwrite them.
 
 ## Refresh
 
