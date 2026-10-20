@@ -44,7 +44,14 @@ final class CredentialLineages
         return (bool) config('bherila-auth.oauth_server.revocation.enabled', false);
     }
 
-    /** Wrap a new issuance decision, including any remote identity check. */
+    /**
+     * Wrap a new issuance decision, including any remote identity check.
+     *
+     * @template T
+     *
+     * @param  Closure(): T  $issue
+     * @return T
+     */
     public function duringIssue(Closure $issue): mixed
     {
         if (! self::enabled()) {
@@ -215,6 +222,11 @@ final class CredentialLineages
     /**
      * Raise an owner/client barrier and revoke existing rows in one transaction.
      * A later, fresh authorization may create a new connection at the new sequence.
+     *
+     * @template T
+     *
+     * @param  Closure(): T  $revoke
+     * @return T
      */
     public function revokingOwner(string|int $owner, ?string $client, Closure $revoke): mixed
     {
@@ -241,7 +253,14 @@ final class CredentialLineages
         });
     }
 
-    /** Revoke just this connection and all rotations, preserving sibling logins. */
+    /**
+     * Revoke just this connection and all rotations, preserving sibling logins.
+     *
+     * @template T
+     *
+     * @param  Closure(list<string>): T  $revoke
+     * @return T
+     */
     public function revokingConnection(string|int $owner, string $accessId, Closure $revoke): mixed
     {
         $this->requireEnabled();
