@@ -183,6 +183,26 @@ final class OAuthCredentialLineagesTest extends TestCase
         $this->exchange($client, $this->authorize($user, $client))->assertOk();
     }
 
+    public function test_an_exchange_cannot_fall_back_to_a_new_lineage_when_its_validated_parent_context_is_missing(): void
+    {
+        [$user, $client] = $this->userAndClient();
+        $first = $this->exchange($client, $this->authorize($user, $client))->assertOk();
+        app()->bind(RefreshTokenRepository::class, fn () => new class(app('events')) extends ResourceRefreshTokenRepository
+        {
+            protected function isApplicationRefreshTokenRevoked(string $tokenId): bool
+            {
+                // Model a custom/old repository losing the carried parent.
+                app(CredentialLineages::class)->begin(request());
+
+                return false;
+            }
+        });
+        app()->forgetInstance(AuthorizationServer::class);
+        Route::getRoutes()->getByName('passport.token')?->flushController();
+        $this->refresh($client, $first)->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+        $this->assertSame(1, Passport::token()->newQuery()->count());
+    }
+
     public function test_revocation_between_access_and_refresh_persistence_leaves_no_live_child(): void
     {
         [$user, $client] = $this->userAndClient();

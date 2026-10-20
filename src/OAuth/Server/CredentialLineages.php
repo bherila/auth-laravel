@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Laravel\Passport\Passport;
+use League\OAuth2\Server\Entities\AccessTokenEntityInterface;
 use League\OAuth2\Server\Exception\OAuthServerException;
 use RuntimeException;
 use WeakMap;
@@ -91,6 +92,11 @@ final class CredentialLineages
         $request = $this->request();
         $sequence = $request?->attributes->get(self::SNAPSHOT);
         $parent = $request?->attributes->get(self::PARENT);
+        if ($entity instanceof AccessTokenEntityInterface
+            && in_array($request?->input('grant_type'), ['authorization_code', 'refresh_token'], true)
+            && ! is_string($parent)) {
+            throw OAuthServerException::invalidGrant();
+        }
         $this->issues[$entity] = new CredentialIssueContext(
             is_int($sequence) ? $sequence : $this->sequence(),
             is_string($parent) ? $parent : null,
