@@ -4,6 +4,27 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.26.3 - 2026-10-20
+
+### Optional opaque token-response context
+
+- `OAuthClient::forServerSettings($name, $settings, $transport, tokenResponseContext: [...])`
+  accepts an immutable opt-in allow-list of up to 16 distinct top-level response field names.
+  Names use `[A-Za-z][A-Za-z0-9_]{0,63}`; OAuth token, error and credential fields are reserved.
+  Default clients and clients without an allow-list continue to ignore extra response fields.
+- After standard token validation, opted-in fields enter `OAuthTokens::$context` on code
+  exchange and refresh. Values must be null or strings of 0–2048 printable ASCII bytes
+  (space through `~`). Malformed opted-in values throw `OAuthTokenRequestFailed` with
+  `definitive: false`, because the code or rotating refresh token may already have been used.
+- Missing fields stay absent, including on refresh: previous context is never carried forward.
+  Null and an empty string remain distinct from absence. Context is omitted from diagnostic
+  dumps and its constructor parameter is sensitive. Applications remain responsible for its
+  meaning, identifier validation, authorization and encrypted persistence.
+- **Adoption:** none for existing clients or `OAuthTokens` constructors, which default to an
+  empty context. Global settings, scopes, pending-flow storage and binding checks are unchanged.
+  No migration. See
+  [the explicit-settings guide](docs/oauth-authorization-servers.md#explicit-settings-and-per-client-http-policy).
+
 ## v0.26.2 - 2026-10-20
 
 ### Explicit named-server settings and optional per-client HTTP policy
