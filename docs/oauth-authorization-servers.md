@@ -129,6 +129,22 @@ user binding, expiry and single-use consumption remain unchanged. The transport 
 secret are never added to a pending flow. Default sign-in and `forServer()` retain their
 existing behavior and use Laravel's HTTP client.
 
+To retain opaque token-response context, opt in explicitly with the fourth argument:
+`forServerSettings('records', $settings, $transport, tokenResponseContext: ['patient', 'encounter'])`.
+The immutable allow-list permits at most 16 distinct ASCII names matching
+`[A-Za-z][A-Za-z0-9_]{0,63}`; OAuth token, error and credential field names are reserved
+(case-insensitively). After ordinary token validation, only listed top-level fields enter
+`OAuthTokens::$context`. Values must be null or strings of 0–2048 ASCII bytes from space
+through `~`; controls, non-ASCII text, arrays and other types are refused as an uncertain
+`OAuthTokenRequestFailed` (`definitive: false`), because the code or rotating refresh token
+may already have been used. Unknown fields remain ignored, including for clients without an
+allow-list. Missing fields stay absent on both exchange and refresh: never carry an old
+selection forward when the server omits it. Null and an empty string remain distinct from
+absence. Context is omitted from diagnostic dumps; it remains sensitive, untrusted server data
+whose meaning, identifier validation, authorization and encrypted persistence belong to the
+application. Existing constructors default to an empty context; no global settings, scopes,
+pending-flow storage or binding checks change.
+
 ## Connect and complete
 
 ```php
