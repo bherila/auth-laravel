@@ -97,6 +97,8 @@ return [
     // merely by being installed.
     'oauth_server' => [
         'enabled' => false,
+        // Opt in after migrating Passport's connection. Lineage records outlive token purge.
+        'revocation' => ['enabled' => false],
         'issuer' => env('APP_URL', 'http://localhost'),
         'resource' => rtrim((string) env('APP_URL', 'http://localhost'), '/').'/api/v1',
         'authorization_endpoint' => rtrim((string) env('APP_URL', 'http://localhost'), '/').'/oauth/authorize',

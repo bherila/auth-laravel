@@ -67,6 +67,8 @@ class AuthServiceProvider extends ServiceProvider
 
         $this->app->singletonIf(\BWH\Auth\OAuth\Invitations\ApplicationInvitations::class, \BWH\Auth\OAuth\Invitations\ApplicationInvitationClient::class);
 
+        $this->app->singleton(\BWH\Auth\OAuth\Server\CredentialLineages::class);
+
         $this->registerOAuthServerBindings();
     }
 
@@ -172,6 +174,20 @@ class AuthServiceProvider extends ServiceProvider
             });
         }
 
+        if (\BWH\Auth\OAuth\Server\CredentialLineages::enabled() && class_exists(Passport::class)) {
+            $this->app->booted(function (): void {
+                foreach (['passport.token', 'passport.authorizations.authorize', 'passport.authorizations.approve', 'passport.personal.tokens.store'] as $routeName) {
+                    $route = Route::getRoutes()->getByName($routeName);
+                    if ($route !== null) {
+                        $route->setAction(array_replace($route->getAction(), ['middleware' => [
+                            \BWH\Auth\Http\Middleware\CaptureOAuthRevocationContext::class,
+                            ...$route->middleware(),
+                        ]]));
+                    }
+                }
+            });
+        }
+
         if ($this->oauthServerEnabled()
             && config('bherila-auth.oauth_server.authorization_response_issuer.enabled', false)) {
             $this->app->booted(function (): void {
@@ -200,7 +216,7 @@ class AuthServiceProvider extends ServiceProvider
         $bindings = [
             PassportAccessTokenRepository::class => ResourceAccessTokenRepository::class,
         ];
-        if ($this->oauthServerEnabled()) {
+        if ($this->oauthServerEnabled() || \BWH\Auth\OAuth\Server\CredentialLineages::enabled()) {
             $bindings += [
                 PassportAuthCodeRepository::class => ResourceAuthCodeRepository::class,
                 PassportRefreshTokenRepository::class => ResourceRefreshTokenRepository::class,

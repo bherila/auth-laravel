@@ -4,6 +4,29 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.27.0 - 2026-10-20
+
+### Opt-in durable OAuth credential revocation
+
+- Database-backed connection lineages and owner/client revocation sequences guard
+  authorization-code, access-token and refresh-token persistence in the same
+  transaction as the write. Previously validated grants cannot outwait revocation;
+  no cache TTL or token decryption is needed.
+- `CredentialLineages::revokingOwner()` and `revokingConnection()` wrap application
+  row revocation and audit selection. Connection revocation follows every tracked
+  rotation while preserving same-client sibling connections. Existing
+  `OAuthCredentialOwners` revocation methods adopt the owner barrier automatically.
+- Fresh authorization after broad revocation remains possible. Legacy grants are
+  registered once by the migration at sequence zero, including attributable
+  refresh tokens whose access row was purged. Later unregistered writes and unknown
+  owner/client grants fail closed rather than being adopted into fresh lineages.
+- **Adoption:** migrate Passport's connection, enable
+  `oauth_server.revocation.enabled`, use the guarded revocation operations, and wrap
+  custom issuance decisions in `duringIssue()`. The default remains off. Guard data
+  survives Passport purge and migration rollback. Coordinate rollout with issuance
+  paused so old processes cannot bypass the new repository guards. See
+  [durable credential revocation](docs/oauth-credential-revocation.md).
+
 ## v0.26.3 - 2026-10-20
 
 ### Optional opaque token-response context

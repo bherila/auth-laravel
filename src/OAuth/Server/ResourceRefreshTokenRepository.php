@@ -2,10 +2,13 @@
 
 namespace BWH\Auth\OAuth\Server;
 
+use BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy;
+use BWH\Auth\OAuth\Credentials\OAuthCredentialOwners;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Laravel\Passport\Bridge\RefreshTokenRepository as PassportRefreshTokenRepository;
 use Laravel\Passport\Events\RefreshTokenCreated;
 use Laravel\Passport\Passport;
-use Laravel\Passport\Bridge\RefreshTokenRepository as PassportRefreshTokenRepository;
 use League\OAuth2\Server\Entities\RefreshTokenEntityInterface;
 use League\OAuth2\Server\Repositories\RefreshTokenRepositoryInterface;
 use RuntimeException;
@@ -43,7 +46,8 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             throw new RuntimeException("The {$model->getTable()}.{$resourceColumn} column is required.");
         }
 
-        $this->persistResourceRefreshToken($refreshTokenEntity, $resource, $hasResourceColumn);
+        app(CredentialLineages::class)->persistRefresh($refreshTokenEntity, $model,
+            fn () => $this->persistResourceRefreshToken($refreshTokenEntity, $resource, $hasResourceColumn));
     }
 
     protected function persistResourceRefreshToken(
@@ -71,7 +75,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
         $stamp = $this->providerIdentityStamp($model, $accessTokenId);
         // Checked again here: an account disabled (and its credentials revoked) between the new
         // access token and this row must not end up holding a fresh, unrevoked refresh token.
-        app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->assertMayHold($stamp[ProviderIdentityTokens::OWNER_COLUMN] ?? null);
+        app(OAuthCredentialOwners::class)->assertMayHold($stamp[ProviderIdentityTokens::OWNER_COLUMN] ?? null);
         $attributes += $stamp;
 
         $model->forceFill($attributes)->save();
@@ -129,7 +133,7 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
      * token belongs to, and hands that stamp to the new token. An unavailable provider
      * throws before the grant revokes anything, so the refresh token is not consumed.
      */
-    private function providerIdentityRevoked(\Illuminate\Database\Eloquent\Model $refreshToken): bool
+    private function providerIdentityRevoked(Model $refreshToken): bool
     {
         // The refresh token's own record, which outlives its access token (expired access
         // tokens may be purged long before the refresh token expires).
@@ -137,13 +141,21 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             ? $refreshToken
             : Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
         $tokens = app(ProviderIdentityTokens::class);
+        if ($credential === null && CredentialLineages::enabled()) {
+            $owner = app(CredentialLineages::class)->ownerOf('refresh', (string) $refreshToken->getKey());
+            if ($owner !== null) {
+                $credential = clone $refreshToken;
+                $credential->setAttribute(ProviderIdentityTokens::OWNER_COLUMN, $owner);
+            }
+        }
         if ($credential === null) {
-            return ProviderIdentityTokens::enabled() || app()->bound(\BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy::class);
+            return ProviderIdentityTokens::enabled() || CredentialLineages::enabled() || app()->bound(CredentialOwnerPolicy::class);
         }
         $owner = $credential->getAttribute('user_id') ?? $credential->getAttribute(ProviderIdentityTokens::OWNER_COLUMN);
         // Refused before the grant revokes anything, so a refused refresh token is not consumed.
-        if (app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->refused($owner)
-            || $tokens->revoked($credential, fresh: true)) {
+        if (app(OAuthCredentialOwners::class)->refused($owner)
+            || $tokens->revoked($credential, fresh: true)
+            || ! app(CredentialLineages::class)->carry('refresh', $refreshToken)) {
             return true;
         }
         $tokens->carry($this->request(), $credential);
@@ -157,12 +169,12 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
      *
      * @return array<string, string|int>
      */
-    private function providerIdentityStamp(\Illuminate\Database\Eloquent\Model $model, string $accessTokenId): array
+    private function providerIdentityStamp(Model $model, string $accessTokenId): array
     {
         $schema = $model->getConnection()->getSchemaBuilder();
         if (! $schema->hasColumn($model->getTable(), ProviderIdentityTokens::OWNER_COLUMN)) {
             // Either check needs the owner once the access token is purged.
-            if (ProviderIdentityTokens::enabled() || app()->bound(\BWH\Auth\OAuth\Credentials\CredentialOwnerPolicy::class)) {
+            if (ProviderIdentityTokens::enabled() || app()->bound(CredentialOwnerPolicy::class)) {
                 throw new RuntimeException("The {$model->getTable()} provider identity columns are required.");
             }
 
