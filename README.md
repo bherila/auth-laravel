@@ -701,8 +701,15 @@ so a response without it is refused too.
 To call other applications' APIs for a person, configure each as an entry of
 `oauth_client.servers` with its exact `issuer` and its own `redirect_uri`, and use
 `$oauth->forServer('svc')->redirect($request)`, `->tokensFromCallback($request)` (an
-`OAuthTokens`) and `->refreshTokens($refreshToken)`. Every pending flow is bound to its session,
-person, server, issuer, callback, resource and verifier, and `iss` is checked before the code is
+`OAuthTokens`) and `->refreshTokens($refreshToken)`. Named connect flows require a signed-in
+user at both redirect and callback; guest sign-in through the default provider is unchanged.
+Named pending flows live in a shared cache,
+independently of concurrent session saves, and are bound to their person, server, issuer,
+callback, resource and verifier. They are consumed once under an atomic cache lock before any
+check or exchange. `oauth_client.pending_flow_cache_store` selects a store, or null uses the
+configured default; use a persistent shared store with atomic locks. Throttle named connect
+routes, and isolate cache namespaces when authentication IDs overlap across identity realms.
+The TTL limits retention, not entry count. `iss` is checked before the code is
 exchanged. `SameSubject::matchesUser($owner, $provider, $subject)` confirms that the account a
 token belongs to is the local owner's. See
 [docs/oauth-authorization-servers.md](docs/oauth-authorization-servers.md).

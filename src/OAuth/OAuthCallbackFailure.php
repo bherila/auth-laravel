@@ -5,7 +5,7 @@ namespace BWH\Auth\OAuth;
 /** Why {@see OAuthClient} refused an authorization response before exchanging its code. */
 enum OAuthCallbackFailure: string
 {
-    /** No pending flow in this session carries the response's `state`: forged, replayed, or from another session. */
+    /** No pending cache/session flow carries the response's `state`: missing, expired from cache, or replayed. */
     case StateMismatch = 'state_mismatch';
 
     /** The flow was started longer ago than `oauth_client.pending_flow_ttl` allows. */

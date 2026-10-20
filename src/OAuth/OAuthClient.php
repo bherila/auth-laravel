@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use SensitiveParameter;
+use Stringable;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
 /**
@@ -23,10 +24,10 @@ use Symfony\Component\HttpFoundation\HeaderUtils;
  *
  * The container's instance is the sign-in provider (`oauth_client`); {@see forServer()}
  * gives one for an entry of `oauth_client.servers`. Each server has its own static
- * callback, and every pending flow is bound to the session and person that started it, the
+ * callback, and every pending flow is bound to the person that started it, the
  * server (and exact issuer) it was sent to, the callback, the resource and the verifier.
  * A response is checked against all of them, and against RFC 9207 `iss`, before its code is
- * exchanged.
+ * exchanged. Named flows live in cache; the sign-in provider retains its session binding.
  */
 final class OAuthClient
 {
@@ -71,6 +72,8 @@ final class OAuthClient
     public function redirect(Request $request): RedirectResponse
     {
         $server = $this->authorizationServer();
+        $user = $this->userKey($request);
+        abort_unless($server->isDefault() || ($user !== null && $user !== ''), 403, 'Sign in before connecting an authorization server.');
         $state = Str::random(40);
         $verifier = Str::random(96);
         $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
@@ -83,7 +86,7 @@ final class OAuthClient
             verifier: $verifier,
             issuerRequired: $this->issuerRequired($server),
             userBound: true,
-            user: $this->userKey($request),
+            user: $user,
             startedAt: Carbon::now()->getTimestamp(),
             scope: $server->value('scope'),
         );
@@ -109,7 +112,8 @@ final class OAuthClient
      * Verify an authorization response and exchange its code for tokens.
      *
      * Every check runs before the code leaves this application: a pending flow for this
-     * `state` in this session (consumed whatever happens next), not expired, started for
+     * `state` in the named-flow cache or legacy sign-in session (consumed whatever happens
+     * next), not expired, started for
      * this server with its current issuer, callback and resource, arriving at this server's
      * callback (named servers), from the same signed-in person, then RFC 9207 `iss`.
      *
@@ -231,7 +235,8 @@ final class OAuthClient
         if (! $server->isDefault() && $request->getBaseUrl().$request->getPathInfo() !== $server->callbackPath()) {
             throw $reject(OAuthCallbackFailure::CallbackMismatch);
         }
-        if ($flow->userBound && $flow->user !== $this->userKey($request)) {
+        $user = $this->userKey($request);
+        if ((! $server->isDefault() && ($user === null || $user === '')) || ($flow->userBound && $flow->user !== $user)) {
             throw $reject(OAuthCallbackFailure::UserMismatch);
         }
 
@@ -365,7 +370,7 @@ final class OAuthClient
     {
         $identifier = $request->user()?->getAuthIdentifier();
 
-        return is_scalar($identifier) ? (string) $identifier : null;
+        return is_scalar($identifier) || $identifier instanceof Stringable ? (string) $identifier : null;
     }
 
     private function authorizationServer(): AuthorizationServer

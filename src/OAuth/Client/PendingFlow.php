@@ -2,22 +2,19 @@
 
 namespace BWH\Auth\OAuth\Client;
 
+use Illuminate\Cache\Repository;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 /**
- * An authorization request this session sent and has not yet seen answered.
+ * An authorization request that has not yet been answered.
  *
- * It records everything the answer is checked against: the server it was sent to (by name
- * and exact issuer), the callback and resource it named, the PKCE verifier, whether `iss`
- * must be present, and who was signed in; and the scope it requested, which is what a token
- * response that omits `scope` was granted (RFC 6749 §5.1). It lives in the session that started it, so a
- * response carried into another browser finds nothing, and it is removed on first use,
- * whatever the outcome, so a response cannot be replayed.
- *
- * Flows to the sign-in provider keep the session keys applications and their tests have
- * always used for the state and verifier, with the rest alongside; flows to other servers
- * are kept by state, so several can be pending at once.
+ * It records the server and exact issuer, callback, resource, PKCE verifier, required `iss`,
+ * signed-in person, start time and requested scope. Named-server flows live in the configured
+ * cache independently of session saves, and are consumed under a cache lock before any check
+ * or token exchange. Sign-in flows retain their legacy session keys and behavior.
  *
  * @internal
  */
@@ -29,9 +26,7 @@ final readonly class PendingFlow
 
     public const string LEGACY_BINDING_KEY = 'oauth.login.binding';
 
-    public const string FLOWS_KEY = 'oauth.flows';
-
-    private const int MAX_PENDING = 10;
+    private const string CACHE_PREFIX = 'bherila-auth:oauth-client:pending-flow:';
 
     public function __construct(
         public string $server,
@@ -58,20 +53,11 @@ final readonly class PendingFlow
             return;
         }
 
-        $flows = $session->get(self::FLOWS_KEY);
-        $flows = array_filter(
-            is_array($flows) ? $flows : [],
-            static fn (mixed $flow): bool => is_array($flow) && is_int($flow['started_at'] ?? null) && ! self::expired($flow['started_at']),
-        );
-        uasort($flows, static fn (array $a, array $b): int => $a['started_at'] <=> $b['started_at']);
-        $flows = array_slice($flows, -(self::MAX_PENDING - 1), null, true);
-        $flows[self::key($state)] = $this->binding() + ['verifier' => $this->verifier];
-
-        $session->put(self::FLOWS_KEY, $flows);
+        self::cache()->put(self::key($state), $this->binding() + ['verifier' => $this->verifier], self::ttl());
     }
 
     /**
-     * Remove and return the flow a response's state names, if this session has one.
+     * Consume a named-server cache entry, or the sign-in provider's legacy session flow.
      *
      * For the sign-in provider, a session holding only the legacy state and verifier (one
      * started before this binding existed, or seeded by an application's test) yields a
@@ -99,14 +85,13 @@ final readonly class PendingFlow
             return null;
         }
 
-        $flows = $session->get(self::FLOWS_KEY);
-        if (! is_array($flows) || ! array_key_exists(self::key($state), $flows)) {
-            return null;
-        }
-
-        $binding = $flows[self::key($state)];
-        unset($flows[self::key($state)]);
-        $session->put(self::FLOWS_KEY, $flows);
+        $cache = self::cache();
+        $store = $cache->getStore();
+        abort_unless($store instanceof LockProvider, 503, 'Named OAuth flows require a cache store with atomic locks.');
+        // Repository::pull may use get followed by forget; a competing callback must not
+        // read the same binding between those operations, even when it later fails a check.
+        $key = self::key($state);
+        $binding = $store->lock($key.':consume', 10)->get(fn (): mixed => $cache->pull($key));
 
         return is_array($binding) ? self::fromBinding($binding, $binding['verifier'] ?? null) : null;
     }
@@ -162,14 +147,23 @@ final readonly class PendingFlow
 
     private static function key(string $state): string
     {
-        return hash('sha256', $state);
+        return self::CACHE_PREFIX.hash('sha256', $state);
+    }
+
+    private static function cache(): Repository
+    {
+        return Cache::store(config('bherila-auth.oauth_client.pending_flow_cache_store'));
+    }
+
+    private static function ttl(): int
+    {
+        $ttl = config('bherila-auth.oauth_client.pending_flow_ttl', 1800);
+
+        return is_int($ttl) && $ttl > 0 ? $ttl : 1800;
     }
 
     private static function expired(int $startedAt): bool
     {
-        $ttl = config('bherila-auth.oauth_client.pending_flow_ttl', 1800);
-        $ttl = is_int($ttl) && $ttl > 0 ? $ttl : 1800;
-
-        return Carbon::now()->getTimestamp() - $startedAt > $ttl;
+        return Carbon::now()->getTimestamp() - $startedAt > self::ttl();
     }
 }

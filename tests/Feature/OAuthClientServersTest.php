@@ -30,6 +30,7 @@ class OAuthClientServersTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->actingAs(new GenericUser(['id' => 7]));
 
         config(['bherila-auth.oauth_client' => [
             'provider' => 'bherila',
@@ -444,19 +445,19 @@ class OAuthClientServersTest extends TestCase
         $this->assertNoTokenRequest();
     }
 
-    public function test_a_flow_started_in_another_session_is_rejected(): void
+    public function test_named_flows_survive_reset_session_attributes_for_the_same_user(): void
     {
         $this->fakeServers();
+        $this->actingAs(new GenericUser(['id' => 7]));
         $query = $this->startFlow('svc');
 
-        // The victim's browser has its own session; the attacker's state is not in it.
+        // A stale session save must not erase the same person's pending named-server flow.
         $this->flushSession();
 
         $this->respond('svc', ['code' => 'attacker-code', 'state' => $query['state'], 'iss' => self::SVC])
-            ->assertForbidden()
-            ->assertJsonPath('rejected', 'state_mismatch');
+            ->assertOk();
 
-        $this->assertNoTokenRequest();
+        Http::assertSentCount(1);
     }
 
     public function test_a_flow_is_bound_to_the_user_who_started_it(): void
@@ -503,7 +504,7 @@ class OAuthClientServersTest extends TestCase
 
         $this->respond('svc', ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC])
             ->assertForbidden()
-            ->assertJsonPath('rejected', 'expired');
+            ->assertJsonPath('rejected', 'state_mismatch');
 
         $this->assertNoTokenRequest();
     }
@@ -574,13 +575,13 @@ class OAuthClientServersTest extends TestCase
             ->assertOk()->assertJsonPath('access_token', 'svc-access');
     }
 
-    public function test_pending_flows_per_session_are_bounded(): void
+    public function test_pending_named_flows_do_not_write_session_attributes(): void
     {
         for ($i = 0; $i < 20; $i++) {
             $this->startFlow('svc');
         }
 
-        $this->assertLessThanOrEqual(10, count(session('oauth.flows')));
+        $this->assertNull(session('oauth.flows'));
     }
 
     public function test_a_rejected_token_exchange_is_a_bad_gateway(): void
