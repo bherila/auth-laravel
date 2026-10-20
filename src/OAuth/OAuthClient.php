@@ -36,6 +36,9 @@ final class OAuthClient
 
     private readonly ?OAuthHttpTransport $transport;
 
+    /** @var list<string> */
+    private readonly array $tokenResponseContext;
+
     public function __construct(private readonly ?string $server = null) {}
 
     /**
@@ -67,12 +70,15 @@ final class OAuthClient
      * The caller supplies these same trusted settings again for the callback and refresh.
      *
      * @param  array<string, mixed>  $settings
+     * @param  list<string>  $tokenResponseContext  Optional extra response fields, never OAuth credentials or protocol fields.
      */
-    public function forServerSettings(string $name, #[SensitiveParameter] array $settings, ?OAuthHttpTransport $transport = null): self
+    public function forServerSettings(string $name, #[SensitiveParameter] array $settings, ?OAuthHttpTransport $transport = null, array $tokenResponseContext = []): self
     {
+        self::validateContextNames($tokenResponseContext);
         $client = new self($name);
         $client->explicitServer = AuthorizationServer::fromSettings($name, $settings);
         $client->transport = $transport;
+        $client->tokenResponseContext = $tokenResponseContext;
 
         return $client;
     }
@@ -361,7 +367,52 @@ final class OAuthClient
             refreshToken: $refreshToken ?? $refreshTokenWhenOmitted,
             expiresAt: $expiresIn === null ? null : CarbonImmutable::now()->addSeconds($expiresIn),
             scopes: $scope === null ? $scopesWhenOmitted : self::scopeList($scope),
+            context: $this->responseContext($response),
         );
+    }
+
+    /** @param array<mixed> $names */
+    private static function validateContextNames(array $names): void
+    {
+        $reserved = [
+            'access_token', 'refresh_token', 'id_token', 'token_type', 'expires_in', 'scope',
+            'error', 'error_description', 'error_uri', 'client_id', 'client_secret', 'client_assertion',
+            'client_assertion_type', 'password', 'username', 'code', 'code_verifier', 'code_challenge',
+            'code_challenge_method', 'grant_type', 'redirect_uri', 'state', 'iss', 'issuer', 'resource',
+            'aud', 'authorization', 'assertion', 'device_code', 'user_code',
+        ];
+        if (! array_is_list($names) || count($names) > 16) {
+            throw new InvalidArgumentException('Token response context names are invalid.');
+        }
+        $seen = [];
+        foreach ($names as $name) {
+            if (! is_string($name) || preg_match('/^[A-Za-z][A-Za-z0-9_]{0,63}\z/', $name) !== 1
+                || in_array(strtolower($name), $reserved, true) || isset($seen[$name])) {
+                throw new InvalidArgumentException('Token response context names are invalid.');
+            }
+            $seen[$name] = true;
+        }
+    }
+
+    /** @return array<string, string|null> */
+    private function responseContext(#[SensitiveParameter] Response $response): array
+    {
+        $context = [];
+        foreach ($this->tokenResponseContext ?? [] as $name) {
+            // Read literal top-level keys: a context name is not a Laravel dot path.
+            $body = $response->json();
+            if (! is_array($body) || ! array_key_exists($name, $body)) {
+                continue;
+            }
+            $value = $body[$name];
+            if ($value !== null && (! is_string($value) || strlen($value) > 2048
+                || preg_match('/^[\x20-\x7e]*\z/', $value) !== 1)) {
+                throw new OAuthTokenRequestFailed('The authorization server returned invalid token context.', definitive: false);
+            }
+            $context[$name] = $value;
+        }
+
+        return $context;
     }
 
     /** @return list<string> */

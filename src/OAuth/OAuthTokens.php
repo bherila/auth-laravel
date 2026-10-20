@@ -16,6 +16,7 @@ final readonly class OAuthTokens
      * @param  list<string>|null  $scopes  the granted scopes. When the server omitted `scope`: for a
      *                                     code exchange, the requested ones (RFC 6749 §5.1); for a refresh, the
      *                                     granted scopes the caller passed, or null (unchanged, not known here)
+     * @param  array<string, string|null>  $context  Explicitly opted-in token-response context; sensitive, untrusted server data.
      */
     public function __construct(
         public string $server,
@@ -25,6 +26,7 @@ final readonly class OAuthTokens
         #[SensitiveParameter] public ?string $refreshToken,
         public ?DateTimeImmutable $expiresAt,
         public ?array $scopes,
+        #[SensitiveParameter] public array $context = [],
     ) {}
 
     /** @return array<string, mixed> */
