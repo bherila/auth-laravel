@@ -4,6 +4,29 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.26.1 - 2026-10-20
+
+### Prevent session-save races in named-server OAuth flows
+
+- Pending named-server flows now live in cache independently of session saves. An overlapping
+  request saving an older session snapshot can no longer erase a pending flow or restore one
+  already consumed. A same-store atomic lock protects consumption before binding checks or
+  token exchange, preventing concurrent callbacks from exchanging the same flow twice.
+- Named connect redirects and callbacks require a nonempty authenticated user identifier,
+  including `Stringable` identifiers. Existing server, issuer, callback, resource, PKCE and
+  user bindings remain enforced. Default sign-in retains its legacy session behavior.
+- **Upgrade:** use a persistent cache store shared by every process serving connect callbacks,
+  with atomic lock support. Named flows use Laravel's default cache store unless
+  `oauth_client.pending_flow_cache_store` (`BHERILA_AUTH_OAUTH_PENDING_FLOW_CACHE_STORE`)
+  selects another. Cache expiry, eviction or flushing refuses the callback. Restart named
+  flows already pending in session when deploying this release. No migration.
+- Throttle named connect routes: the TTL bounds retention, not the number of entries. User
+  identifiers must be globally unique across identity realms sharing the named-server/cache
+  namespace; isolate cache namespaces when identifiers can overlap. Package-level admission
+  limits and configurable identity namespaces remain tracked in
+  [#111](https://github.com/bherila/auth-laravel/issues/111). See
+  [the integration guide](docs/oauth-authorization-servers.md) for configuration details.
+
 ## v0.26.0 - 2026-10-19
 
 ### Several authorization servers for the OAuth client, with bound flows and RFC 9207 `iss`
