@@ -17,7 +17,7 @@ use RuntimeException;
  */
 class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements AuthCodeRepositoryInterface
 {
-    final public function getNewAuthCode(): AuthCodeEntityInterface
+    public function getNewAuthCode(): AuthCodeEntityInterface
     {
         $code = parent::getNewAuthCode();
         app(CredentialLineages::class)->capture($code);

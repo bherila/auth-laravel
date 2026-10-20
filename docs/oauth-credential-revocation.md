@@ -71,7 +71,8 @@ The helper restores the prior request context in `finally`, including on failure
 Custom OAuth endpoints must install the snapshot middleware before their grant
 checks. Manually constructing an entity and bypassing repository allocation has
 no issuance context and fails closed when enabled. Custom repository subclasses
-retain the protected persistence hooks; the final public methods enforce the
+retain existing allocation overrides and protected persistence hooks; the final
+public persistence methods enforce the
 guard around those hooks. All credential models and writes must use Passport's
 connection. Cross-connection models are refused.
 

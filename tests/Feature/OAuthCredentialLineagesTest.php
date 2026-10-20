@@ -32,6 +32,7 @@ use Laravel\Passport\Events\AccessTokenCreated;
 use Laravel\Passport\Passport;
 use Laravel\Passport\PassportServiceProvider;
 use League\OAuth2\Server\AuthorizationServer;
+use League\OAuth2\Server\Entities\AuthCodeEntityInterface;
 use League\OAuth2\Server\Exception\OAuthServerException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -91,6 +92,24 @@ final class OAuthCredentialLineagesTest extends TestCase
         Passport::useAccessTokenEntity(AccessToken::class);
         Passport::useClientModel(Client::class);
         parent::tearDown();
+    }
+
+    public function test_existing_auth_code_allocation_overrides_remain_compatible_with_the_guard_disabled(): void
+    {
+        config(['bherila-auth.oauth_server.revocation.enabled' => false]);
+        $repository = new class extends ResourceAuthCodeRepository
+        {
+            public bool $allocated = false;
+
+            public function getNewAuthCode(): AuthCodeEntityInterface
+            {
+                $this->allocated = true;
+
+                return parent::getNewAuthCode();
+            }
+        };
+        $this->assertInstanceOf(AuthCodeEntityInterface::class, $repository->getNewAuthCode());
+        $this->assertTrue($repository->allocated);
     }
 
     public function test_rotations_and_purge_keep_one_durable_connection_without_revoking_siblings(): void
