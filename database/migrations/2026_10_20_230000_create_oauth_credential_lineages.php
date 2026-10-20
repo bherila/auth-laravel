@@ -129,6 +129,7 @@ return new class extends Migration
         });
     }
 
+    /** @return array{id: string, owner_key: string, client_key: string, owner_id: ?string, client_id: string, issued_sequence: int, revoked: bool} */
     private function legacyLineage(?string $owner, string $client): array
     {
         return ['id' => (string) Str::uuid(),
@@ -137,6 +138,7 @@ return new class extends Migration
             'owner_id' => $owner, 'client_id' => $client, 'issued_sequence' => 0, 'revoked' => false];
     }
 
+    /** @return array{credential_key: string, lineage_id: string, kind: string, credential_id: string} */
     private function legacyMember(string $kind, string $id, string $lineage): array
     {
         return ['credential_key' => $this->credentialKey($kind, $id), 'lineage_id' => $lineage, 'kind' => $kind, 'credential_id' => $id];
