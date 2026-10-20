@@ -84,14 +84,21 @@ reverse order in application code.
 
 ## Migration, retention and release
 
-Legacy credentials are adopted at sequence zero on their first validated code or
-refresh exchange; they never acquire a newer revocation sequence. A refresh can
-be adopted after its access row is purged if its own owner/client metadata remains.
-Unknown-owner/client refresh tokens fail closed while enforcement is enabled.
-Lineages cannot reconstruct rotations completed before adoption. During rollout,
-pause issuance, migrate, deploy the new repositories and revoker in every process,
-then enable issuance again. This prevents an older process from writing an
-untracked credential beside a new revoker.
+The migration registers existing identifiable credentials at sequence zero in
+batches of 100. It includes attributable refresh tokens whose access rows have
+already been purged, and retains their parent membership. Registration is marked
+complete once; replaying the migration never enrolls later rows. New repositories
+register their own credentials atomically. An unregistered credential, including
+an older process's late write, fails closed on use/exchange. This prevents lazy
+adoption from turning a revoked connection's untracked child into a new lineage.
+
+Unknown-owner/client refreshes require fresh authorization. Rotations completed
+before registration cannot be reconstructed; existing access/refresh families are
+registered independently. Pause issuance and drain old grants, migrate, deploy
+the new repositories/revoker in every process, then enable issuance. Credentials
+issued with enforcement disabled after this one-time migration are unregistered
+and require fresh authorization when enforcement is enabled later. Do not remove
+the completion marker to enroll new rows under live traffic.
 
 `passport:purge` may remove expired/revoked Passport rows without removing lineage,
 membership or scope records. These tables contain credential identifiers and

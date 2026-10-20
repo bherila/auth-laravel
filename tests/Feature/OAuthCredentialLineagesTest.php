@@ -18,6 +18,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Testing\TestResponse;
 use Laravel\Passport\Bridge\AccessToken;
 use Laravel\Passport\Bridge\AccessTokenRepository;
@@ -254,6 +255,7 @@ final class OAuthCredentialLineagesTest extends TestCase
         $this->assertSame(0, DB::table('oauth_credential_members')->count());
         Passport::token()->newQuery()->whereKey($old)->update(['expires_at' => now()->subDays(32)]);
         $this->artisan('passport:purge', ['--expired' => true, '--hours' => 744])->assertSuccessful();
+        $this->registerLegacyCutover();
         config(['bherila-auth.oauth_server.revocation.enabled' => true]);
         $rotated = $this->refresh($client, $first)->assertOk();
         $this->assertSame($this->lineageFor($old), $this->lineageFor($this->id($rotated)));
@@ -267,12 +269,13 @@ final class OAuthCredentialLineagesTest extends TestCase
         [$user, $client] = $this->userAndClient();
         config(['bherila-auth.oauth_server.revocation.enabled' => false]);
         $first = $this->exchange($client, $this->authorize($user, $client))->assertOk();
+        $this->registerLegacyCutover();
         config(['bherila-auth.oauth_server.revocation.enabled' => true]);
         // Intentionally leave Passport rows untouched to prove the durable
         // barrier, rather than Passport's revoked flag, refuses adoption.
         app(CredentialLineages::class)->revokingOwner($user->id, null, fn () => null);
         $this->refresh($client, $first)->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
-        $this->assertSame(0, DB::table('oauth_credential_members')->count());
+        $this->assertSame(1, Passport::token()->newQuery()->count());
     }
 
     public function test_unattributed_legacy_refreshes_cannot_bypass_the_guard_with_provider_checks_off(): void
@@ -286,6 +289,59 @@ final class OAuthCredentialLineagesTest extends TestCase
         $this->refresh($client, $first)->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
         $this->assertSame(0, Passport::token()->newQuery()->count());
         $this->assertSame(0, DB::table('oauth_credential_members')->count());
+    }
+
+    public function test_a_late_untracked_rotation_from_an_old_writer_is_refused_and_migration_replay_does_not_enroll_it(): void
+    {
+        [$user, $client] = $this->userAndClient();
+        $first = $this->exchange($client, $this->authorize($user, $client))->assertOk();
+        app(CredentialLineages::class)->revokingConnection($user->id, $this->id($first), fn () => null);
+        // An old process cannot see the durable lineage barrier. Its late
+        // writes are not registered and must never be adopted by the new code.
+        config(['bherila-auth.oauth_server.revocation.enabled' => false]);
+        $untracked = $this->refresh($client, $first)->assertOk();
+        config(['bherila-auth.oauth_server.revocation.enabled' => true]);
+        $migration = require __DIR__.'/../../database/migrations/2026_10_20_230000_create_oauth_credential_lineages.php';
+        $migration->up();
+        $this->assertTrue(app(CredentialLineages::class)->revoked(Passport::token()->newQuery()->findOrFail($this->id($untracked))));
+        $this->refresh($client, $untracked)->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+        $this->assertSame(3, DB::table('oauth_credential_members')->count());
+    }
+
+    public function test_migrated_legacy_siblings_remain_independent(): void
+    {
+        [$user, $client] = $this->userAndClient();
+        config(['bherila-auth.oauth_server.revocation.enabled' => false]);
+        $first = $this->exchange($client, $this->authorize($user, $client))->assertOk();
+        $sibling = $this->exchange($client, $this->authorize($user, $client))->assertOk();
+        $this->registerLegacyCutover();
+        config(['bherila-auth.oauth_server.revocation.enabled' => true]);
+        app(CredentialLineages::class)->revokingConnection($user->id, $this->id($first), fn () => null);
+        $this->refresh($client, $first)->assertStatus(400);
+        $this->refresh($client, $sibling)->assertOk();
+    }
+
+    public function test_the_cutover_registers_multiple_batches_with_attributable_orphan_refreshes(): void
+    {
+        [$user, $client] = $this->userAndClient();
+        $access = [];
+        $refreshes = [];
+        for ($i = 1; $i <= 205; $i++) {
+            $id = str_pad(dechex($i), 80, '0', STR_PAD_LEFT);
+            $access[] = ['id' => $id, 'user_id' => $user->id, 'client_id' => $client->id, 'scopes' => '[]', 'revoked' => false, 'expires_at' => now()->addHour()];
+            $refreshes[] = ['id' => $id, 'access_token_id' => $id, 'provider_user_id' => (string) $user->id, 'client_id' => $client->id, 'revoked' => false, 'expires_at' => now()->addDay()];
+        }
+        foreach (array_chunk($access, 100) as $batch) {
+            DB::table('oauth_access_tokens')->insert($batch);
+        }
+        foreach (array_chunk($refreshes, 100) as $batch) {
+            DB::table('oauth_refresh_tokens')->insert($batch);
+        }
+        Passport::token()->newQuery()->whereKey($access[0]['id'])->delete();
+        $this->registerLegacyCutover();
+        $this->assertSame(205, DB::table('oauth_credential_lineages')->count());
+        $this->assertSame(410, DB::table('oauth_credential_members')->count());
+        $this->assertSame($this->lineageFor($access[0]['id']), DB::table('oauth_credential_members')->where('kind', 'refresh')->where('credential_id', $access[0]['id'])->value('lineage_id'));
     }
 
     public function test_a_connection_cannot_be_revoked_under_another_owner(): void
@@ -339,6 +395,16 @@ final class OAuthCredentialLineagesTest extends TestCase
         }
         $this->assertSame(0, DB::table('oauth_credential_lineages')->where('revoked', true)->count());
         $this->refresh($client, $first)->assertOk();
+    }
+
+    /** Model the actual one-time migration with credentials already present. */
+    private function registerLegacyCutover(): void
+    {
+        Schema::drop('oauth_credential_members');
+        Schema::drop('oauth_credential_lineages');
+        Schema::drop('oauth_credential_revocations');
+        $migration = require __DIR__.'/../../database/migrations/2026_10_20_230000_create_oauth_credential_lineages.php';
+        $migration->up();
     }
 
     private function userAndClient(string $email = 'lineage@example.test'): array

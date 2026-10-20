@@ -17,8 +17,9 @@ the first entry here is in the git history.
   rotation while preserving same-client sibling connections. Existing
   `OAuthCredentialOwners` revocation methods adopt the owner barrier automatically.
 - Fresh authorization after broad revocation remains possible. Legacy grants are
-  adopted at sequence zero, including attributable refresh tokens whose access row
-  was purged; unknown-owner/client legacy refreshes fail closed when opted in.
+  registered once by the migration at sequence zero, including attributable
+  refresh tokens whose access row was purged. Later unregistered writes and unknown
+  owner/client grants fail closed rather than being adopted into fresh lineages.
 - **Adoption:** migrate Passport's connection, enable
   `oauth_server.revocation.enabled`, use the guarded revocation operations, and wrap
   custom issuance decisions in `duringIssue()`. The default remains off. Guard data

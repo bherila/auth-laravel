@@ -130,6 +130,7 @@ final class CredentialLineages
             return;
         }
         $this->sameConnection($model);
+        $this->assertReady();
         $access = $entity->getAccessToken();
         $owner = $access->getUserIdentifier();
         $owner = $owner === null || $owner === '' ? null : (string) $owner;
@@ -149,7 +150,7 @@ final class CredentialLineages
 
     /**
      * Validate a parent under the guard, carrying its identity before rotation.
-     * Legacy rows are adopted at sequence zero, never into a newer revocation.
+     * The migration registers legacy rows at sequence zero; unknown later rows refuse.
      */
     public function carry(string $kind, Model $credential): bool
     {
@@ -157,17 +158,19 @@ final class CredentialLineages
             return true;
         }
         $this->sameConnection($credential);
-        $owner = $credential->getAttribute('user_id') ?? $credential->getAttribute(ProviderIdentityTokens::OWNER_COLUMN);
-        $client = $credential->getAttribute('client_id');
-        if ($kind === 'refresh' && ($owner === null || $client === null)) {
-            $access = Passport::token()->newQuery()->whereKey($credential->getAttribute('access_token_id'))->first();
-            $owner ??= $access?->getAttribute('user_id');
-            $client ??= $access?->getAttribute('client_id');
-        }
-        if ($owner === null || ! is_string($client) || $client === '') {
+        if (! $this->ready()) {
             return false;
         }
-        $owner = (string) $owner;
+        $hint = $this->findMember($kind, (string) $credential->getKey());
+        if ($hint === null) {
+            return false;
+        }
+        $lineage = $this->lineage($hint->lineage_id);
+        $owner = $lineage->owner_id;
+        $client = $lineage->client_id;
+        if ($owner === null || $client === '') {
+            return false;
+        }
         try {
             return $this->connection()->transaction(function () use ($kind, $credential, $owner, $client): bool {
                 $this->lockOwner($owner);
@@ -176,14 +179,14 @@ final class CredentialLineages
                     return false;
                 }
                 $member = $this->findMember($kind, (string) $credential->getKey(), true);
-                if ($member === null && $kind === 'refresh') {
-                    $parentId = (string) $current->getAttribute('access_token_id');
-                    $parent = $this->findMember('access', $parentId, true);
-                    $lineage = $parent === null ? $this->newLineage($owner, $client, 0) : $this->lineage($parent->lineage_id, true);
-                    $this->assertActive($lineage, $owner, $client);
-                    $this->member('access', $parentId, $lineage->id);
-                } else {
-                    $lineage = $member === null ? $this->newLineage($owner, $client, 0) : $this->lineage($member->lineage_id, true);
+                if ($member === null) {
+                    return false;
+                }
+                $lineage = $this->lineage($member->lineage_id, true);
+                $storedOwner = $current->getAttribute('user_id') ?? $current->getAttribute(ProviderIdentityTokens::OWNER_COLUMN);
+                $storedClient = $current->getAttribute('client_id');
+                if (($storedOwner !== null && (string) $storedOwner !== $owner) || ($storedClient !== null && (string) $storedClient !== $client)) {
+                    return false;
                 }
                 $this->assertActive($lineage, $owner, $client);
                 $this->member($kind, (string) $credential->getKey(), $lineage->id);
@@ -196,19 +199,32 @@ final class CredentialLineages
         }
     }
 
+    /** A registered grant retains its owner even after Passport purges its parent. */
+    public function ownerOf(string $kind, string $id): ?string
+    {
+        if (! self::enabled() || ! $this->ready()) {
+            return null;
+        }
+        $member = $this->findMember($kind, $id);
+
+        return $member === null ? null : $this->lineage($member->lineage_id)->owner_id;
+    }
+
     /** Bearer checks retain the durable guard even if an application missed a row. */
     public function revoked(Model $access): bool
     {
         if (! self::enabled()) {
             return false;
         }
+        if (! $this->ready()) {
+            return true;
+        }
         $member = $this->findMember('access', (string) $access->getKey());
         $owner = $access->getAttribute('user_id');
         $owner = $owner === null ? null : (string) $owner;
         $client = (string) $access->getAttribute('client_id');
         if ($member === null) {
-            return $this->scopeSequence($this->ownerKey($owner)) > 0
-                || $this->scopeSequence($this->clientKey($owner, $client)) > 0;
+            return true;
         }
         try {
             $this->assertActive($this->lineage($member->lineage_id), $owner, $client, false);
@@ -348,9 +364,22 @@ final class CredentialLineages
 
     private function sequence(): int
     {
+        $this->assertReady();
         $sequence = $this->connection()->table(self::SCOPES)->where('scope_key', $this->clockKey())->value('sequence');
 
         return $sequence === null ? throw new RuntimeException('The credential revocation migration is required.') : (int) $sequence;
+    }
+
+    private function ready(): bool
+    {
+        return $this->connection()->table(self::SCOPES)->where('scope_key', hash('sha256', 'bherila-auth.legacy-credentials-registered'))->exists();
+    }
+
+    private function assertReady(): void
+    {
+        if (! $this->ready()) {
+            throw new RuntimeException('The credential revocation registration migration must complete first.');
+        }
     }
 
     private function scopeSequence(string $key, bool $current = false): int
@@ -400,6 +429,7 @@ final class CredentialLineages
         if (! self::enabled()) {
             throw new RuntimeException('Durable credential revocation is disabled.');
         }
+        $this->assertReady();
         $this->sameConnection(Passport::authCode());
         $this->sameConnection(Passport::refreshToken());
     }

@@ -141,6 +141,13 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             ? $refreshToken
             : Passport::token()->newQuery()->whereKey($refreshToken->getAttribute('access_token_id'))->first();
         $tokens = app(ProviderIdentityTokens::class);
+        if ($credential === null && CredentialLineages::enabled()) {
+            $owner = app(CredentialLineages::class)->ownerOf('refresh', (string) $refreshToken->getKey());
+            if ($owner !== null) {
+                $credential = clone $refreshToken;
+                $credential->setAttribute(ProviderIdentityTokens::OWNER_COLUMN, $owner);
+            }
+        }
         if ($credential === null) {
             return ProviderIdentityTokens::enabled() || CredentialLineages::enabled() || app()->bound(CredentialOwnerPolicy::class);
         }
