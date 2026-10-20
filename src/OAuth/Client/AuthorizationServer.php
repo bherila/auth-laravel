@@ -3,12 +3,14 @@
 namespace BWH\Auth\OAuth\Client;
 
 use Illuminate\Support\Str;
+use SensitiveParameter;
 
 /**
- * One authorization server this application is a client of, read from configuration.
+ * One authorization server this application is a client of, from configuration or explicit settings.
  *
  * The sign-in provider is the top-level `oauth_client` settings, named `default`; every
- * other server is an entry of `oauth_client.servers`. Settings are checked when read, and a
+ * other server uses the same named settings from `oauth_client.servers` or an explicit snapshot.
+ * Settings are checked when read, and a
  * missing or malformed one is a 503, as it always was for the sign-in provider: a
  * half-configured deploy is an outage, not something to guess around.
  *
@@ -35,7 +37,7 @@ final class AuthorizationServer
     /** @param  array<string, mixed>  $settings */
     private function __construct(
         public readonly string $name,
-        private readonly array $settings,
+        #[SensitiveParameter] private readonly array $settings,
     ) {}
 
     public static function resolve(?string $name): self
@@ -49,6 +51,13 @@ final class AuthorizationServer
         $settings = self::namedSettings($name);
         abort_unless($settings !== null, 503, 'OAuth is not configured.');
 
+        return self::fromSettings($name, $settings);
+    }
+
+    /** @param  array<string, mixed>  $settings */
+    public static function fromSettings(string $name, #[SensitiveParameter] array $settings): self
+    {
+        abort_unless(self::validName($name), 503, 'OAuth is not configured.');
         $server = new self($name, $settings);
         $server->assertOwnCallback();
 
@@ -74,7 +83,7 @@ final class AuthorizationServer
     {
         // `default` is the sign-in provider's name; a server entry under it would be two
         // servers answering to one name.
-        if ($name === self::DEFAULT || preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/', $name) !== 1) {
+        if (! self::validName($name)) {
             return null;
         }
 
@@ -82,6 +91,11 @@ final class AuthorizationServer
         $settings = is_array($servers) ? ($servers[$name] ?? null) : null;
 
         return is_array($settings) ? $settings : null;
+    }
+
+    private static function validName(string $name): bool
+    {
+        return $name !== self::DEFAULT && preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/', $name) === 1;
     }
 
     public function isDefault(): bool

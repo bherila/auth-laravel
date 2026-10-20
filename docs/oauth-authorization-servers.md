@@ -3,7 +3,8 @@
 `BWH\Auth\OAuth\OAuthClient` signs people in through one provider, the top-level
 `oauth_client` settings. An application can also be an OAuth client of other
 authorization servers, for example to call a sibling application's API for the person who
-connected it. Each of those is an entry of `oauth_client.servers`.
+connected it. Named servers can come from `oauth_client.servers` or an explicit per-client
+settings snapshot.
 
 Being a client of more than one server opens the issuer mix-up attack: a response, or a code,
 from one server is presented as if it came from another, and the code (with the PKCE
@@ -46,7 +47,7 @@ it was sent to, and RFC 9207 `iss` is checked before any code is exchanged.
 `default` is the sign-in provider's name and cannot be used as a server key. Names are
 letters, digits, `_` and `-`, up to 64 characters; an all-digit name such as `1` works too.
 
-Every endpoint comes from configuration. With `advertised`, the RFC 8414 document at the
+Every endpoint comes from application-supplied settings. With `advertised`, the RFC 8414 document at the
 configured issuer (`/.well-known/oauth-authorization-server`, with the issuer's path appended
 after it) is read when a flow starts, must name exactly that issuer, and only its
 `authorization_response_iss_parameter_supported` flag is used; the answer is cached for
@@ -75,6 +76,58 @@ those keys must be globally unique across identity realms sharing a named server
 namespace. Use isolated cache namespaces when tenant or guard identifiers can overlap.
 Package-level admission limits and a configurable identity namespace remain tracked in
 [#111](https://github.com/bherila/auth-laravel/issues/111); this change does not implement them.
+
+## Explicit settings and per-client HTTP policy
+
+For an application's connect flow for a named authorization server, use a fresh client with
+an immutable settings snapshot instead of temporarily changing global configuration:
+
+```php
+$client = $oauth->forServerSettings('records', [
+    'issuer' => $connection->issuer,
+    'client_id' => $connection->clientId,
+    'client_secret' => $connection->clientSecret,
+    'redirect_uri' => $callbackUrl,
+    'scope' => 'records:read',
+    'resource' => $connection->resource,
+    'authorization_response_iss' => 'required',
+], $transport); // optional OAuthHttpTransport; omit for the existing Laravel HTTP client
+```
+
+The settings use the same keys and validation as configured named servers. Reserved/invalid
+names and callbacks shared with another configured server remain refused. The factory does
+not register a global server, change `isConfigured()` or affect any existing client. Recreate
+it from the same trusted connection settings for redirect, callback and refresh; never obtain
+those settings from callback query parameters. The application owns encrypted credential
+storage, access control and connection replacement. Do not serialize client objects or secrets.
+
+Implement `BWH\Auth\OAuth\Client\OAuthHttpTransport` to apply a network policy to this client:
+
+```php
+public function prepare(
+    Illuminate\Http\Client\PendingRequest $request,
+    string $url,
+): Illuminate\Http\Client\PendingRequest {
+    // Check this exact destination and apply the application's network policy.
+    return $this->outboundPolicy->prepare($request, $url);
+}
+```
+
+The hook receives the exact URL and a request whose protocol headers and default options are
+already set. It runs immediately before each outgoing metadata, code-exchange, refresh or
+identity request; cached metadata needs no request. Preserve the supplied headers/body handling.
+The returned request can enforce address checks/DNS pinning, redirect refusal, shorter timeouts
+and bounded response reading. Throw to refuse a request; the package never falls back to an
+unrestricted client. Metadata defaults still refuse redirects and use five-second timeouts;
+a supplied transport may tighten those defaults. Code exchange and refresh retain form bodies,
+and identity retains its bearer authorization header.
+
+This extension provides the policy seam; it does not implement a host allow-list, discovery
+endpoint selection or connection security policy for the application. Metadata still must name
+the exact issuer and cannot replace configured endpoints. Pending-flow fields, PKCE, `iss`,
+user binding, expiry and single-use consumption remain unchanged. The transport and client
+secret are never added to a pending flow. Default sign-in and `forServer()` retain their
+existing behavior and use Laravel's HTTP client.
 
 ## Connect and complete
 

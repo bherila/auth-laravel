@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Http;
  */
 final class AuthorizationServerMetadata
 {
-    public static function issuerParameterSupported(AuthorizationServer $server): bool
+    public static function issuerParameterSupported(AuthorizationServer $server, ?OAuthHttpTransport $transport = null): bool
     {
         $issuer = $server->issuer();
         $key = 'bherila-auth:oauth-client:iss-supported:'.hash('sha256', $issuer);
@@ -30,11 +30,10 @@ final class AuthorizationServerMetadata
         }
 
         try {
-            $response = Http::acceptJson()
-                ->timeout(5)
-                ->connectTimeout(5)
-                ->withoutRedirecting()
-                ->get(self::url($issuer));
+            $url = self::url($issuer);
+            $request = Http::acceptJson()->timeout(5)->connectTimeout(5)->withoutRedirecting();
+            $request = $transport?->prepare($request, $url) ?? $request;
+            $response = $request->get($url);
         } catch (ConnectionException) {
             abort(503, 'The authorization server metadata could not be verified.');
         }
