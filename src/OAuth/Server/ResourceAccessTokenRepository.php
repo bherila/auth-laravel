@@ -5,13 +5,15 @@ namespace BWH\Auth\OAuth\Server;
 use BWH\Auth\OAuth\Credentials\OAuthCredentialOwners;
 use BWH\Auth\OAuth\Introspection\OAuthIntrospectionValidationContext;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Laravel\Passport\Bridge\AccessTokenRepository as PassportAccessTokenRepository;
 use Laravel\Passport\Events\AccessTokenCreated;
 use Laravel\Passport\Events\AccessTokenRevoked;
 use Laravel\Passport\Passport;
-use Laravel\Passport\Bridge\AccessTokenRepository as PassportAccessTokenRepository;
 use League\OAuth2\Server\Entities\AccessTokenEntityInterface;
 use League\OAuth2\Server\Entities\ClientEntityInterface;
+use League\OAuth2\Server\Exception\OAuthServerException;
 use League\OAuth2\Server\Repositories\AccessTokenRepositoryInterface;
 use RuntimeException;
 use Throwable;
@@ -37,10 +39,14 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         ?string $userIdentifier = null,
     ): AccessTokenEntityInterface {
         if (! $this->oauthServerEnabled()) {
-            return parent::getNewToken($clientEntity, $scopes, $userIdentifier);
+            $token = parent::getNewToken($clientEntity, $scopes, $userIdentifier);
+            app(CredentialLineages::class)->capture($token);
+
+            return $token;
         }
 
         $token = new ResourceAccessToken($userIdentifier, $scopes, $clientEntity);
+        app(CredentialLineages::class)->capture($token);
         $request = $this->request();
         $requestResource = $this->requestResource($request);
         $resource = $request === null
@@ -63,7 +69,8 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     final public function persistNewAccessToken(AccessTokenEntityInterface $accessTokenEntity): void
     {
         if (! $this->oauthServerEnabled()) {
-            $this->persistUnboundAccessToken($accessTokenEntity);
+            app(CredentialLineages::class)->persist('access', $accessTokenEntity, Passport::token(),
+                fn () => $this->persistUnboundAccessToken($accessTokenEntity));
             // Recorded on this path too, so stale-client pruning never mistakes
             // a client that just got a token for an unused one.
             $this->recordDynamicClientUse($accessTokenEntity->getClient()->getIdentifier());
@@ -98,7 +105,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
         // The last line for a grant whose original scopes are no longer known (a purged access
         // token): a resource never receives a token with scopes outside its ceiling.
         if ($resource !== null && ! OAuthResourceIndicator::scopesAllowedFor($resource, $accessTokenEntity->getScopes())) {
-            throw \League\OAuth2\Server\Exception\OAuthServerException::invalidScope(
+            throw OAuthServerException::invalidScope(
                 implode(' ', OAuthResourceIndicator::scopeIdentifiers($accessTokenEntity->getScopes())),
             );
         }
@@ -109,7 +116,8 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
             throw new RuntimeException("The {$model->getTable()}.{$resourceColumn} column is required.");
         }
 
-        $this->persistResourceAccessToken($accessTokenEntity, $resource, $hasResourceColumn);
+        app(CredentialLineages::class)->persist('access', $accessTokenEntity, $model,
+            fn () => $this->persistResourceAccessToken($accessTokenEntity, $resource, $hasResourceColumn));
     }
 
     /**
@@ -167,7 +175,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
      *
      * @return array<string, string|int>
      */
-    final protected function providerIdentityStamp(\Illuminate\Database\Eloquent\Model $model, string|int|null $userId): array
+    final protected function providerIdentityStamp(Model $model, string|int|null $userId): array
     {
         $stamp = app(ProviderIdentityTokens::class)->stampForIssue($this->request(), $userId);
         if ($stamp === null) {
@@ -194,7 +202,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     final public function isAccessTokenRevoked(string $tokenId): bool
     {
         $model = Passport::token()->newQuery()->whereKey($tokenId)->first();
-        if ($model === null || (bool) $model->getAttribute('revoked')) {
+        if ($model === null || (bool) $model->getAttribute('revoked') || app(CredentialLineages::class)->revoked($model)) {
             return true;
         }
 
@@ -271,7 +279,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
     }
 
     /** The application's credential-owner policy, then the provider identity's status. */
-    private function ownerOrIdentityRevoked(\Illuminate\Database\Eloquent\Model $token): bool
+    private function ownerOrIdentityRevoked(Model $token): bool
     {
         return app(OAuthCredentialOwners::class)->refused($token->getAttribute('user_id'))
             || app(ProviderIdentityTokens::class)->revoked($token);

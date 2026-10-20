@@ -2,9 +2,11 @@
 
 namespace BWH\Auth\OAuth\Server;
 
+use BWH\Auth\OAuth\Credentials\OAuthCredentialOwners;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
-use Laravel\Passport\Passport;
 use Laravel\Passport\Bridge\AuthCodeRepository as PassportAuthCodeRepository;
+use Laravel\Passport\Passport;
 use League\OAuth2\Server\Entities\AuthCodeEntityInterface;
 use League\OAuth2\Server\Repositories\AuthCodeRepositoryInterface;
 use RuntimeException;
@@ -15,6 +17,14 @@ use RuntimeException;
  */
 class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements AuthCodeRepositoryInterface
 {
+    final public function getNewAuthCode(): AuthCodeEntityInterface
+    {
+        $code = parent::getNewAuthCode();
+        app(CredentialLineages::class)->capture($code);
+
+        return $code;
+    }
+
     final public function persistNewAuthCode(AuthCodeEntityInterface $authCodeEntity): void
     {
         $model = Passport::authCode();
@@ -45,12 +55,8 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
             throw new RuntimeException("The {$model->getTable()}.{$resourceColumn} column is required.");
         }
 
-        $this->persistResourceAuthCode(
-            $authCodeEntity,
-            $resource,
-            $hasResourceColumn,
-            $scopeIdentifiers,
-        );
+        app(CredentialLineages::class)->persist('code', $authCodeEntity, $model,
+            fn () => $this->persistResourceAuthCode($authCodeEntity, $resource, $hasResourceColumn, $scopeIdentifiers));
     }
 
     /**
@@ -77,7 +83,7 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
         if ($hasResourceColumn) {
             $attributes[$resourceColumn] = $resource;
         }
-        app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->assertMayHold($authCodeEntity->getUserIdentifier());
+        app(OAuthCredentialOwners::class)->assertMayHold($authCodeEntity->getUserIdentifier());
         $attributes += $this->providerIdentityStamp($model, $authCodeEntity->getUserIdentifier());
 
         $model->forceFill($attributes)->save();
@@ -89,7 +95,7 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
      *
      * @return array<string, string|int>
      */
-    final protected function providerIdentityStamp(\Illuminate\Database\Eloquent\Model $model, string|int|null $userId): array
+    final protected function providerIdentityStamp(Model $model, string|int|null $userId): array
     {
         $stamp = app(ProviderIdentityTokens::class)->stampForIssue($this->request(), $userId);
         if ($stamp === null) {
@@ -147,11 +153,12 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
     }
 
     /** Refuses a code whose person was ended at the provider, and hands its stamp to the token. */
-    private function providerIdentityRevoked(\Illuminate\Database\Eloquent\Model $code): bool
+    private function providerIdentityRevoked(Model $code): bool
     {
         $tokens = app(ProviderIdentityTokens::class);
-        if (app(\BWH\Auth\OAuth\Credentials\OAuthCredentialOwners::class)->refused($code->getAttribute('user_id'))
-            || $tokens->revoked($code, remote: false)) {
+        if (app(OAuthCredentialOwners::class)->refused($code->getAttribute('user_id'))
+            || $tokens->revoked($code, remote: false)
+            || ! app(CredentialLineages::class)->carry('code', $code)) {
             return true;
         }
         $tokens->carry($this->request(), $code);

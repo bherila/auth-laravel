@@ -2,8 +2,11 @@
 
 namespace BWH\Auth\OAuth\Credentials;
 
+use BWH\Auth\OAuth\Server\CredentialLineages;
+use BWH\Auth\OAuth\Server\ProviderIdentityTokens;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\UserProvider;
+use Laravel\Passport\Bridge\AccessTokenRepository;
 use Laravel\Passport\Passport;
 use RuntimeException;
 
@@ -56,20 +59,30 @@ final class OAuthCredentialOwners
      */
     public function revokeAllForOwnerId(string|int $id): int
     {
+        if (CredentialLineages::enabled()) {
+            return app(CredentialLineages::class)->revokingOwner($id, null,
+                fn (): int => $this->revokeRowsForOwnerId($id));
+        }
+
+        return $this->revokeRowsForOwnerId($id);
+    }
+
+    private function revokeRowsForOwnerId(string|int $id): int
+    {
         $tokenIds = Passport::token()->newQuery()->where('user_id', $id)->pluck('id');
 
         // Refresh tokens by their access token, and by their own owner record, which outlives
         // a purged access token.
         $refreshTokens = Passport::refreshToken();
         $refresh = $refreshTokens->newQuery()->whereIn('access_token_id', $tokenIds);
-        if ($refreshTokens->getConnection()->getSchemaBuilder()->hasColumn($refreshTokens->getTable(), \BWH\Auth\OAuth\Server\ProviderIdentityTokens::OWNER_COLUMN)) {
-            $refresh->orWhere(\BWH\Auth\OAuth\Server\ProviderIdentityTokens::OWNER_COLUMN, (string) $id);
+        if ($refreshTokens->getConnection()->getSchemaBuilder()->hasColumn($refreshTokens->getTable(), ProviderIdentityTokens::OWNER_COLUMN)) {
+            $refresh->orWhere(ProviderIdentityTokens::OWNER_COLUMN, (string) $id);
         }
         $refresh->update(['revoked' => true]);
         Passport::authCode()->newQuery()->where('user_id', $id)->update(['revoked' => true]);
 
         // Through the repository, one token at a time, so revocation listeners hear of each.
-        $repository = app(\Laravel\Passport\Bridge\AccessTokenRepository::class);
+        $repository = app(AccessTokenRepository::class);
         $live = Passport::token()->newQuery()->where('user_id', $id)->where('revoked', false)->pluck('id');
         foreach ($live as $tokenId) {
             $repository->revokeAccessToken((string) $tokenId);
