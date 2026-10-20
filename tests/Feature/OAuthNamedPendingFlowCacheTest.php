@@ -251,6 +251,25 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_stringable_authentication_identifiers_bind_and_complete_the_named_flow(): void
+    {
+        $identifier = new class implements \Stringable
+        {
+            public function __toString(): string
+            {
+                return 'synthetic-user-7';
+            }
+        };
+        $session = $this->newSession();
+        $query = $this->start($session, $identifier);
+        $key = 'bherila-auth:oauth-client:pending-flow:'.hash('sha256', $query['state']);
+        $this->assertSame('synthetic-user-7', Cache::store('pending')->get($key)['user']);
+        $tokens = app(OAuthClient::class)->forServer('records')->tokensFromCallback($this->callbackRequest($session, $query['state'], clone $identifier));
+
+        $this->assertSame('synthetic-access', $tokens->accessToken);
+        Http::assertSentCount(1);
+    }
+
     private function newSession(): Store
     {
         $session = new Store('synthetic-session', new ArraySessionHandler(120));
@@ -261,7 +280,7 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
     }
 
     /** @return array<string, string> */
-    private function start(Store $session, ?int $user = 7): array
+    private function start(Store $session, int|string|\Stringable|null $user = 7): array
     {
         $request = Request::create('https://client.example.test/connect/records');
         $request->setLaravelSession($session);
@@ -272,7 +291,7 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
         return $query;
     }
 
-    private function callbackRequest(Store $session, string $state, ?int $user = 7): Request
+    private function callbackRequest(Store $session, string $state, int|string|\Stringable|null $user = 7): Request
     {
         $request = Request::create('https://client.example.test/connect/records/callback', 'GET', ['state' => $state, 'code' => 'synthetic-code', 'iss' => 'https://authorization.example.test']);
         $request->setLaravelSession($session);

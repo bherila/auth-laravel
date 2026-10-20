@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use SensitiveParameter;
+use Stringable;
 use Symfony\Component\HttpFoundation\HeaderUtils;
 
 /**
@@ -369,7 +370,7 @@ final class OAuthClient
     {
         $identifier = $request->user()?->getAuthIdentifier();
 
-        return is_scalar($identifier) ? (string) $identifier : null;
+        return is_scalar($identifier) || $identifier instanceof Stringable ? (string) $identifier : null;
     }
 
     private function authorizationServer(): AuthorizationServer
