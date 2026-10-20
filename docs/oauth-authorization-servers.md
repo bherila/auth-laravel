@@ -69,6 +69,13 @@ switching users. Named flows are no longer tied to session attributes; the defau
 flow retains its legacy session keys. Named flows already pending in session at deployment
 must be restarted.
 
+The TTL bounds retention, not the number of entries. Consuming applications should throttle
+named connect routes. The user binding compares the string form of `getAuthIdentifier()`;
+those keys must be globally unique across identity realms sharing a named server and cache
+namespace. Use isolated cache namespaces when tenant or guard identifiers can overlap.
+Package-level admission limits and a configurable identity namespace remain tracked in
+[#111](https://github.com/bherila/auth-laravel/issues/111); this change does not implement them.
+
 ## Connect and complete
 
 ```php

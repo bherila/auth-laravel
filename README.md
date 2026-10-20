@@ -707,7 +707,9 @@ Named pending flows live in a shared cache,
 independently of concurrent session saves, and are bound to their person, server, issuer,
 callback, resource and verifier. They are consumed once under an atomic cache lock before any
 check or exchange. `oauth_client.pending_flow_cache_store` selects a store, or null uses the
-configured default; use a persistent shared store with atomic locks. `iss` is checked before the code is
+configured default; use a persistent shared store with atomic locks. Throttle named connect
+routes, and isolate cache namespaces when authentication IDs overlap across identity realms.
+The TTL limits retention, not entry count. `iss` is checked before the code is
 exchanged. `SameSubject::matchesUser($owner, $provider, $subject)` confirms that the account a
 token belongs to is the local owner's. See
 [docs/oauth-authorization-servers.md](docs/oauth-authorization-servers.md).
