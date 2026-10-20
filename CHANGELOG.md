@@ -4,6 +4,31 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.26.2 - 2026-10-20
+
+### Explicit named-server settings and optional per-client HTTP policy
+
+- `OAuthClient::forServerSettings($name, $settings, $transport)` creates an isolated named
+  client with an immutable settings snapshot, without changing global configuration or other
+  clients. Recreate it from the same trusted stored settings for redirect, callback and refresh;
+  never take those settings from callback query parameters. Client diagnostics redact explicit
+  credentials.
+- The optional `BWH\Auth\OAuth\Client\OAuthHttpTransport::prepare(PendingRequest $request,
+  string $url): PendingRequest` hook receives the exact destination after protocol headers and
+  request defaults are set, immediately before metadata, code-exchange, refresh and identity
+  requests. Implementations must preserve the supplied protocol headers and body handling.
+  A refusal never falls back to an unrestricted transport.
+- The calling application owns its destination and SSRF policy, including address validation,
+  DNS pinning, redirect refusal, timeouts and response-size limits. The hook supplies an extension
+  point; it does not make arbitrary instance URLs safe or let discovery replace configured
+  endpoints. Metadata must still name the exact issuer.
+- Default sign-in, configured `forServer()` clients, validation, PKCE, issuer checks and
+  pending-flow binding, expiry and single-use consumption retain their existing behavior. The
+  transport and client secret are not stored in pending flows.
+- **Adoption:** none for existing clients. Applications opting in own encrypted credential
+  storage and access control. No migration. See
+  [the explicit-settings guide](docs/oauth-authorization-servers.md#explicit-settings-and-per-client-http-policy).
+
 ## v0.26.1 - 2026-10-20
 
 ### Prevent session-save races in named-server OAuth flows
