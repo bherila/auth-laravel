@@ -12,8 +12,8 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
- * The signed-in person's API tokens and OAuth apps, as JSON for the
- * credentials UI.
+ * The signed-in person's API tokens, OAuth apps and connected OAuth clients,
+ * as JSON for the credentials UI.
  *
  * Browser routes on purpose (session + CSRF), never API operations, so no
  * OAuth credential can mint another. Each new secret travels once, in the
@@ -135,6 +135,28 @@ final class ApiCredentialController extends Controller
         $credentials->deleteApp($this->user($request), $client);
 
         return $this->noStore(['data' => ['deleted' => true]]);
+    }
+
+    /**
+     * The OAuth clients holding a live grant for the signed-in person, dynamically
+     * registered agents included, each with a finished disconnect URL.
+     */
+    public function connections(Request $request, ApiCredentialService $credentials): JsonResponse
+    {
+        return $this->noStore([
+            'data' => array_map(static fn (array $client): array => [
+                ...$client,
+                'revoke_href' => route('bherila-auth.credentials.connections.destroy', ['client' => $client['id']], absolute: false),
+            ], $credentials->connectedClients($this->user($request))),
+        ]);
+    }
+
+    /** Revoke the signed-in person's grants to one client. Idempotent. */
+    public function destroyConnection(Request $request, string $client, ApiCredentialService $credentials): JsonResponse
+    {
+        $revoked = $credentials->disconnectClient($this->user($request), $client);
+
+        return $this->noStore(['data' => ['revoked' => true, 'revoked_access_tokens' => $revoked]]);
     }
 
     private function user(Request $request): Authenticatable

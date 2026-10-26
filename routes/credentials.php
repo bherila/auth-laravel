@@ -14,3 +14,6 @@ Route::delete('/tokens/{token}', [ApiCredentialController::class, 'destroyToken'
 Route::post('/apps', [ApiCredentialController::class, 'storeApp'])
     ->middleware([EnsureOAuthServerEnabled::class, 'throttle:10,1'])->name('bherila-auth.credentials.apps.store');
 Route::delete('/apps/{client}', [ApiCredentialController::class, 'destroyApp'])->name('bherila-auth.credentials.apps.destroy');
+// The OAuth clients holding the person's live grants, dynamic clients included.
+Route::get('/connections', [ApiCredentialController::class, 'connections'])->name('bherila-auth.credentials.connections.index');
+Route::delete('/connections/{client}', [ApiCredentialController::class, 'destroyConnection'])->name('bherila-auth.credentials.connections.destroy');
