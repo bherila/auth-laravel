@@ -14,7 +14,9 @@
         );
         $requested = [];
         foreach ($scopes as $requestedScope) {
-            $requested[(string) $requestedScope->id] = (string) $requestedScope->description;
+            if (isset($requestedScope->id)) {
+                $requested[(string) $requestedScope->id] = (string) ($requestedScope->description ?? '');
+            }
         }
         $scopeGroups = app(\BWH\Auth\OAuth\Credentials\ScopePresentationResolver::class)->groups($requested);
     @endphp
