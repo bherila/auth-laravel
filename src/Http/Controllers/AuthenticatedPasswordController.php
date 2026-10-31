@@ -3,6 +3,7 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Mail\PasswordResetNoticeMail;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
@@ -28,6 +29,10 @@ class AuthenticatedPasswordController extends Controller
 
         if (! $user instanceof Authenticatable) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        if (! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request)) {
+            return response()->json(['message' => __('This account signs in through single sign-on.')], 403);
         }
 
         if (! Hash::check($validated['current_password'], $user->getAuthPassword())) {

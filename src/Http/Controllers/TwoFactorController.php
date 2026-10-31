@@ -3,6 +3,7 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Models\TwoFactorAttempt;
 use BWH\Auth\Services\TwoFactorService;
@@ -169,6 +170,17 @@ class TwoFactorController extends Controller
             ]);
 
             return $this->failure($request, $attempt, 'Your account is not active.');
+        }
+
+        // The first factor was a local password; an account that may not use one must not
+        // finish signing in with it, whenever its challenge was created.
+        if (! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request)) {
+            $request->session()->forget([
+                config('bherila-auth.two_factor.session_user_key', 'bherila_auth_2fa_user_id'),
+                config('bherila-auth.two_factor.session_remember_key', 'bherila_auth_2fa_remember'),
+            ]);
+
+            return $this->failure($request, $attempt, 'This account signs in through single sign-on.');
         }
 
         Auth::login($user, (bool) $request->session()->pull(config('bherila-auth.two_factor.session_remember_key', 'bherila_auth_2fa_remember'), false));

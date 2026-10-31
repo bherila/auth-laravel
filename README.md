@@ -12,6 +12,8 @@ Includes:
 - OAuth 2.0 authorization-code client mechanics with PKCE and validated identity responses, for the
   sign-in provider and [further authorization servers](docs/oauth-authorization-servers.md), with
   per-server callbacks, bound pending flows and RFC 9207 `iss` checked before the code exchange
+- [Shared identity-provider sign-in](docs/relying-party-login.md): the login controller, subject-bound account
+  resolution, `oauth:bind-subject`, the binding-column migration and the opt-in local-credential policy
 - Opt-in [provider browser-session generation verification](docs/provider-session-verification.md)
 - Opt-in [identity tombstone consumption](docs/identity-tombstones.md): apply the identity provider's deletions
   through an application-bound handler and acknowledge each one after local deletion commits
@@ -788,7 +790,7 @@ Bind `BWH\Auth\Contracts\AuthAuditLogger` only when an app wants to override the
 
 ### canLogin() — the single gate for account state
 
-`AuthUserPolicy::canLogin()` is the **single source of truth** for "is this account allowed to proceed through any login flow." The default implementation duck-types `$user->canLogin()` and falls back to checking `$user->is_disabled`. Apps with additional account-state columns (e.g. `approved_at`, `email_verified_at`, or a role whitelist) must bind a custom policy and encode **all** conditions in `canLogin()`:
+`AuthUserPolicy::canLogin()` is the **single source of truth** for "is this account allowed to proceed through any login flow." The default implementation duck-types `$user->canLogin()` and falls back to checking `$user->is_disabled`. Apps with additional account-state columns (e.g. `approved_at`, `email_verified_at`, or a role whitelist) must bind a custom policy and encode **all** conditions in `canLogin()`. It gates the identity-provider callback too, so never use it to mean "not bound to the provider". That is [`LocalCredentialPolicy`](docs/relying-party-login.md#local-credentials-for-provider-bound-accounts):
 
 ```php
 // app/Auth/AppUserPolicy.php

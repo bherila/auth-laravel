@@ -6,6 +6,41 @@ the first entry here is in the git history.
 
 ## Unreleased
 
+### Shared identity-provider sign-in
+
+- `RelyingPartyLoginController` provides `redirect`, `callback` and `logout` for applications
+  that sign in through the identity provider. It replaces the per-application
+  `OAuthLoginController` copies.
+  - The callback resolves the account through `SubjectBoundAccounts`, gates it on
+    `AuthUserPolicy::canLogin()`, records the provider-session baseline (503 with
+    `Retry-After` when enforcement cannot verify it), remembers the application list,
+    audits, and lands on the intended page.
+  - Hooks: `landingUrl`, `afterSignIn`, `signsOutLocallyOnly`, `afterSignOutUrl`,
+    `unknownIdentityResponse`, `disabledAccountResponse`, `$remember` and `$returnParameter`.
+  - Inertia visits get `X-Inertia-Location`.
+- `SubjectBoundAccounts` holds the account rules:
+  - Resolve on (provider, subject) only.
+  - Lock and check the holder of an address before writing it, and refuse with a 409.
+  - Adopt a concurrent winner only when its profile matches.
+  - Fill in a delegated-access placeholder committed mid-sign-in.
+  - Conflicts are logged by row id only.
+- `RelyingPartyAccounts` (`oauth_login.accounts`) is the per-application model, lock, and
+  new-account / refresh / adoption attributes. `provisionsNewAccounts()` returning false refuses an
+  unknown subject (`AccountNotProvisioned`) instead of creating an account.
+- `oauth:bind-subject {user} {subject} {--provider=}` links an existing account to its
+  subject. It never re-points an account, never gives a subject to a second account, and
+  refuses a non-canonical integer id.
+- `LocalCredentialPolicy` (`local_credentials.provider_bound`, default `allow`): with
+  `refuse`, provider-bound accounts cannot use the package's password-reset, change-password,
+  passkey or two-factor paths. Unbound accounts are unaffected.
+- `OAuthIdentityColumns` and the publishable `bherila-auth-oauth-identity-migration` add the
+  binding columns if missing, and make them compare exactly (`VARBINARY` on MySQL/MariaDB).
+- `BWH\Auth\Support\IntendedUrl` keeps only same-site return destinations.
+- **Adoption:** optional, and nothing changes until an application opts in. See
+  [docs/relying-party-login.md](docs/relying-party-login.md). An application that overrode
+  `canLogin()` to mean "not provider-bound" must move that rule to
+  `local_credentials.provider_bound = refuse` before routing to the shared callback.
+
 ### List and disconnect connected OAuth clients
 
 - `ApiCredentialService::connectedClients($user)` lists every OAuth client holding the

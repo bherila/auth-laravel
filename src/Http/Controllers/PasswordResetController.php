@@ -3,6 +3,7 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Mail\PasswordResetConfirmationMail;
 use BWH\Auth\Mail\PasswordResetNoticeMail;
@@ -39,6 +40,12 @@ class PasswordResetController extends Controller
         // a token when one was created too recently, so this endpoint keeps the framework's
         // reset throttling and constant-time behaviour instead of bypassing both.
         Password::broker()->sendResetLink($this->brokerCredentials($validated), function ($user, string $token) use ($request): void {
+            // Nothing is sent to an account that may not hold a local password, and the
+            // response below stays the same, so this does not reveal which accounts those are.
+            if ($user instanceof Authenticatable && ! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request)) {
+                return;
+            }
+
             $emailAttribute = config('bherila-auth.users.email_attribute', 'email');
             $email = data_get($user, $emailAttribute);
             $resetUrl = $this->resetUrl($token, (string) $email);
@@ -71,7 +78,16 @@ class PasswordResetController extends Controller
         ]);
 
         $resetUser = null;
-        $status = Password::broker()->reset($this->brokerCredentials($validated), function ($user, string $password) use (&$resetUser): void {
+        $refused = false;
+        $status = Password::broker()->reset($this->brokerCredentials($validated), function ($user, string $password) use (&$resetUser, &$refused, $request): void {
+            // A token issued before the account was bound to the provider (or before the
+            // application started refusing local credentials) must not set a password now.
+            if ($user instanceof Authenticatable && ! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request)) {
+                $refused = true;
+
+                return;
+            }
+
             $attributes = [
                 'password' => Hash::make($password),
                 'remember_token' => Str::random(60),
@@ -93,6 +109,13 @@ class PasswordResetController extends Controller
 
             $resetUser = $user;
         });
+
+        if ($refused) {
+            return response()->json([
+                'success' => false,
+                'message' => __('This account signs in through single sign-on.'),
+            ], 422);
+        }
 
         if ($status !== Password::PASSWORD_RESET) {
             return response()->json([
