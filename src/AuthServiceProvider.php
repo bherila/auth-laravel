@@ -50,6 +50,8 @@ class AuthServiceProvider extends ServiceProvider
         }
 
         $this->app->bind(AuthUserPolicy::class, DefaultAuthUserPolicy::class);
+        $this->app->bindIf(\BWH\Auth\Contracts\LocalCredentialPolicy::class, \BWH\Auth\Services\ConfiguredLocalCredentialPolicy::class);
+        $this->app->singletonIf(\BWH\Auth\OAuth\Login\SubjectBoundAccounts::class);
         $this->app->bind(AuthAuditLogger::class, function ($app) {
             return config('bherila-auth.audit.driver') === 'database'
                 ? $app->make(DatabaseAuthAuditLogger::class)
@@ -99,6 +101,10 @@ class AuthServiceProvider extends ServiceProvider
         ], 'bherila-auth-identity-tombstone-migrations');
 
         $this->publishes([
+            __DIR__.'/../database/oauth-identity-migrations/add_oauth_identity_to_users_table.php.stub' => database_path('migrations/'.date('Y_m_d_His').'_add_oauth_identity_to_users_table.php'),
+        ], 'bherila-auth-oauth-identity-migration');
+
+        $this->publishes([
             __DIR__.'/../resources/views' => resource_path('views/vendor/bherila-auth'),
         ], 'bherila-auth-views');
 
@@ -138,7 +144,7 @@ class AuthServiceProvider extends ServiceProvider
         // Registered whether or not a handler is bound, so a scheduled run without one
         // reports the missing handler rather than an unknown command.
         if ($this->app->runningInConsole()) {
-            $this->commands([\BWH\Auth\Console\ConsumeIdentityTombstonesCommand::class]);
+            $this->commands([\BWH\Auth\Console\ConsumeIdentityTombstonesCommand::class, \BWH\Auth\Console\BindOAuthSubjectCommand::class]);
         }
 
         // Opt-in: an application that manages trusted proxies itself, or has no

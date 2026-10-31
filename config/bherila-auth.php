@@ -69,6 +69,22 @@ return [
     // holds for a provider-bound account: browser sessions (RequireActiveProviderSession)
     // and, where wired, bearer tokens. Off by default; enable only after the login callback
     // calls ProviderSession::establish(). See docs/provider-session-verification.md.
+    // Sign-in through the identity provider (BWH\Auth\Http\Controllers\RelyingPartyLoginController).
+    'oauth_login' => [
+        // A BWH\Auth\OAuth\Login\RelyingPartyAccounts subclass: the model, columns, new-account
+        // and refresh attributes. Null uses the defaults for a stock `users` table.
+        'accounts' => null,
+    ],
+
+    // Local credentials: passwords, password resets, passkeys and two-factor password sign-in.
+    'local_credentials' => [
+        // 'allow' (default): an account bound to the identity provider keeps any local
+        // credential path the application offers. 'refuse': a bound account signs in only
+        // through the provider; unbound accounts (break-glass) are unaffected. See
+        // BWH\Auth\Contracts\LocalCredentialPolicy.
+        'provider_bound' => env('BHERILA_AUTH_LOCAL_CREDENTIALS_PROVIDER_BOUND', 'allow'),
+    ],
+
     'provider_identity' => [
         'enabled' => (bool) env('BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED', false),
         // One status observation per provider subject is shared by every credential of that

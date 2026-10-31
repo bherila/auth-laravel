@@ -3,6 +3,7 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Events\PasskeyDeleted;
 use BWH\Auth\Events\PasskeyLoginFailed;
@@ -36,11 +37,15 @@ class PasskeyController extends Controller
 
     public function registrationOptions(Request $request): JsonResponse
     {
+        $this->refuseUnlessLocalCredentialsAllowed($request);
+
         return response()->json($this->webAuthnService->generateRegistrationOptions($request->user(), $request));
     }
 
     public function register(Request $request): JsonResponse
     {
+        $this->refuseUnlessLocalCredentialsAllowed($request);
+
         $validated = $request->validate([
             'credential' => ['required', 'array'],
             'name' => ['nullable', 'string', 'max:255'],
@@ -101,7 +106,8 @@ class PasskeyController extends Controller
         try {
             [$user, $credential] = $this->webAuthnService->verifyAuthenticationResponse($request, $validated['credential']);
 
-            if (! $this->userPolicy->canPasskeyLogin($user, $request)) {
+            if (! $this->userPolicy->canPasskeyLogin($user, $request)
+                || ! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request)) {
                 throw new \RuntimeException('User is not allowed to log in.');
             }
 
@@ -121,5 +127,18 @@ class PasskeyController extends Controller
 
             return response()->json(['error' => 'Authentication failed: '.$throwable->getMessage()], 422);
         }
+    }
+
+    /** A passkey is a local credential: an account that may not hold one cannot add one. */
+    private function refuseUnlessLocalCredentialsAllowed(Request $request): void
+    {
+        $user = $request->user();
+
+        abort_if(
+            $user instanceof \Illuminate\Contracts\Auth\Authenticatable
+                && ! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request),
+            403,
+            __('This account signs in through single sign-on.'),
+        );
     }
 }
