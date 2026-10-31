@@ -4,6 +4,30 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### List and disconnect connected OAuth clients
+
+- `ApiCredentialService::connectedClients($user)` lists every OAuth client holding the
+  person's unrevoked, unexpired access or refresh tokens, including dynamically registered
+  (MCP) clients that were never listed before. Each entry carries `id`, `name`, `kind`
+  (`dynamic`, `user_registered` or `first_party`, also `ApiCredentialService::KIND_*`),
+  `scopes`, `redirect_uris`, `created_at` and `last_issued_at`. No secret is returned.
+  Personal-access and revoked clients are left out.
+- `ApiCredentialService::disconnectClient($user, $clientId)` revokes that person's
+  authorization codes, access tokens and refresh tokens for the client, including refresh
+  tokens whose access row was purged. Other people's grants and the client registration
+  are untouched; it is idempotent and returns the number of access tokens revoked. With
+  durable revocation enabled it raises the owner/client barrier.
+- New session routes under `credentials.prefix`: `GET /connections`
+  (`bherila-auth.credentials.connections.index`) and `DELETE /connections/{client}`
+  (`bherila-auth.credentials.connections.destroy`). The existing index payload is unchanged.
+- `last_issued_at` is the latest token issuance (authorization or refresh) for the person
+  and client. No per-request use tracking is added.
+- **Adoption:** none. No migration and no configuration change; routes appear where the
+  credential routes are already enabled. See
+  [connected clients](README.md#connected-clients-agents).
+
 ## v0.27.0 - 2026-10-20
 
 ### Opt-in durable OAuth credential revocation

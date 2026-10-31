@@ -2,7 +2,9 @@
 
 namespace BWH\Auth\OAuth\Credentials;
 
+use BWH\Auth\OAuth\Server\CredentialLineages;
 use BWH\Auth\OAuth\Server\OAuthResourceIndicator;
+use BWH\Auth\OAuth\Server\ProviderIdentityTokens;
 use Carbon\CarbonImmutable;
 use DateInterval;
 use DomainException;
@@ -39,9 +41,22 @@ use Throwable;
  * reach an MCP endpoint only with a static bearer key; such a token is held to
  * `credentials.personal_token_connection_max_lifetime`. OAuth apps never are:
  * they reach a connection through the authorization-code flow and its consent.
+ *
+ * It also lists the OAuth clients a person has connected - including clients
+ * that registered themselves dynamically, as MCP agents do - and disconnects
+ * one, revoking only that person's grants to it.
  */
 final class ApiCredentialService
 {
+    /** A client that registered itself through dynamic client registration (RFC 7591). */
+    public const string KIND_DYNAMIC = 'dynamic';
+
+    /** A client a signed-in person registered: the person who connected it, or someone else. */
+    public const string KIND_USER_REGISTERED = 'user_registered';
+
+    /** An ownerless client the application itself provisioned. */
+    public const string KIND_FIRST_PARTY = 'first_party';
+
     public function __construct(
         private readonly ClientRepository $clients,
         private readonly CredentialOwnerResolver $owners,
@@ -337,6 +352,185 @@ final class ApiCredentialService
             }
             $client->forceFill(['revoked' => true])->save();
         });
+    }
+
+    /**
+     * Every OAuth client that holds a live grant for this person: an unrevoked,
+     * unexpired access token, or an unrevoked, unexpired refresh token (also one
+     * whose access-token row has been purged). Dynamically registered clients are
+     * included. Personal-access clients are not - personal tokens are listed and
+     * revoked one by one through tokens() - and neither are revoked clients, whose
+     * tokens Passport already refuses.
+     *
+     * `scopes` is the union of the scopes on the person's live grants that still
+     * name them. `created_at` is when the client was registered. `last_issued_at`
+     * is when a token was last issued to this person for the client, by
+     * authorization or refresh: Passport does not record each bearer use, so this
+     * is the latest point the client is known to have been active. No client
+     * secret, hashed or otherwise, is ever returned.
+     *
+     * @return list<array{id: string, name: string, kind: 'dynamic'|'user_registered'|'first_party', scopes: list<string>, redirect_uris: list<string>, created_at: string|null, last_issued_at: string|null}>
+     */
+    public function connectedClients(Authenticatable $user): array
+    {
+        $ownerId = $this->owners->owner($user)->getAuthIdentifier();
+        $now = Date::now();
+        /** @var array<string, array{scopes: list<string>, last: CarbonImmutable|null}> $grants */
+        $grants = [];
+        $remember = function (string $clientId, mixed $scopes, mixed $issuedAt) use (&$grants): void {
+            $grant = $grants[$clientId] ?? ['scopes' => [], 'last' => null];
+            $grant['scopes'] = array_values(array_unique([...$grant['scopes'], ...$this->storedScopes($scopes)]));
+            if ($issuedAt !== null && $issuedAt !== '') {
+                $issued = CarbonImmutable::parse($issuedAt);
+                $grant['last'] = $grant['last'] === null || $issued->greaterThan($grant['last']) ? $issued : $grant['last'];
+            }
+            $grants[$clientId] = $grant;
+        };
+
+        $tokens = Passport::token();
+        foreach ($tokens->newQuery()->toBase()
+            ->where('user_id', $ownerId)
+            ->where('revoked', false)
+            ->where('expires_at', '>', $now)
+            ->get(['client_id', 'scopes', 'created_at']) as $row) {
+            $remember((string) $row->client_id, $row->scopes, $row->created_at);
+        }
+
+        $refreshTokens = Passport::refreshToken();
+        $refreshTable = $refreshTokens->getTable();
+        $hasClient = $this->hasColumn($refreshTokens, 'client_id');
+        $hasOwner = $this->hasColumn($refreshTokens, ProviderIdentityTokens::OWNER_COLUMN);
+        $refresh = $refreshTokens->getConnection()->table($refreshTable.' as refresh')
+            ->leftJoin($tokens->getTable().' as access', 'access.'.$tokens->getKeyName(), '=', 'refresh.access_token_id')
+            ->where('refresh.revoked', false)
+            ->where('refresh.expires_at', '>', $now)
+            ->where(function ($query) use ($ownerId, $hasOwner): void {
+                $query->where('access.user_id', $ownerId);
+                if ($hasOwner) {
+                    // The refresh token's own owner record outlives a purged access row.
+                    $query->orWhere('refresh.'.ProviderIdentityTokens::OWNER_COLUMN, (string) $ownerId);
+                }
+            });
+        $columns = ['access.client_id as access_client_id', 'access.user_id as access_user_id', 'access.scopes as access_scopes', 'access.created_at as access_created_at'];
+        if ($hasClient) {
+            $columns[] = 'refresh.client_id as refresh_client_id';
+        }
+        foreach ($refresh->get($columns) as $row) {
+            // A linked access row names its owner; never take another person's grant on the
+            // strength of a refresh-token owner record that disagrees with it.
+            if ($row->access_user_id !== null && (string) $row->access_user_id !== (string) $ownerId) {
+                continue;
+            }
+            $clientId = $hasClient && $row->refresh_client_id !== null ? $row->refresh_client_id : $row->access_client_id;
+            if ($clientId !== null && $clientId !== '') {
+                $remember((string) $clientId, $row->access_scopes, $row->access_created_at);
+            }
+        }
+
+        if ($grants === []) {
+            return [];
+        }
+
+        $connected = [];
+        foreach (Passport::client()->newQuery()->whereKey(array_map('strval', array_keys($grants)))->where('revoked', false)->get() as $client) {
+            if ($client->hasGrantType('personal_access')) {
+                continue;
+            }
+            $grant = $grants[(string) $client->getKey()];
+            $scopes = $grant['scopes'];
+            sort($scopes);
+            $connected[] = [
+                'id' => (string) $client->getKey(),
+                'name' => (string) $client->name,
+                'kind' => $this->registrationKind($client),
+                'scopes' => $scopes,
+                'redirect_uris' => array_values(array_map('strval', (array) $client->getAttribute('redirect_uris'))),
+                'created_at' => $client->created_at?->toIso8601String(),
+                'last_issued_at' => $grant['last']?->toIso8601String(),
+            ];
+        }
+        usort($connected, static fn (array $a, array $b): int => [$b['last_issued_at'] ?? '', $a['name'], $a['id']] <=> [$a['last_issued_at'] ?? '', $b['name'], $b['id']]);
+
+        return $connected;
+    }
+
+    /**
+     * Disconnect a client from this person: revoke every authorization code,
+     * access token and refresh token of theirs it holds, effective on the next
+     * request. Other people's grants to the same client and the client's
+     * registration are left alone, so the person can connect it again later.
+     * Idempotent: an unknown client, one already disconnected, or a personal-access
+     * client (whose tokens revokeToken() handles) changes nothing.
+     * With durable revocation enabled, it also raises the owner/client barrier so
+     * a grant already in flight cannot be persisted afterwards.
+     *
+     * Returns how many live access tokens it revoked.
+     */
+    public function disconnectClient(Authenticatable $user, string $clientId): int
+    {
+        $ownerId = $this->owners->owner($user)->getAuthIdentifier();
+        $client = Passport::client()->newQuery()->whereKey($clientId)->first();
+        // Personal tokens are revoked one by one through revokeToken(), never wholesale.
+        if (! $client instanceof Client || $client->hasGrantType('personal_access')) {
+            return 0;
+        }
+        $clientId = (string) $client->getKey();
+        $revoke = fn (): int => $this->revokeClientGrants($ownerId, $clientId);
+
+        if (CredentialLineages::enabled()) {
+            return app(CredentialLineages::class)->revokingOwner($ownerId, $clientId, $revoke);
+        }
+
+        return Passport::token()->getConnection()->transaction($revoke);
+    }
+
+    private function revokeClientGrants(string|int $ownerId, string $clientId): int
+    {
+        $tokens = Passport::token();
+        $owned = fn () => $tokens->newQuery()->where('user_id', $ownerId)->where('client_id', $clientId);
+
+        $refreshTokens = Passport::refreshToken();
+        $refresh = $refreshTokens->newQuery()->where('revoked', false)->where(function ($query) use ($owned, $refreshTokens, $ownerId, $clientId): void {
+            $query->whereIn('access_token_id', $owned()->select(Passport::token()->getKeyName()));
+            // A refresh token whose access row was purged, by its own owner and client records.
+            // Only once that row is gone: a linked access row names its owner, and one that
+            // names someone else outranks an owner record that disagrees with it.
+            if ($this->hasColumn($refreshTokens, 'client_id') && $this->hasColumn($refreshTokens, ProviderIdentityTokens::OWNER_COLUMN)) {
+                $tokens = Passport::token();
+                $query->orWhere(fn ($orphan) => $orphan
+                    ->where('client_id', $clientId)
+                    ->where(ProviderIdentityTokens::OWNER_COLUMN, (string) $ownerId)
+                    ->whereNotExists(fn ($access) => $access
+                        ->from($tokens->getTable())
+                        ->whereColumn($tokens->getTable().'.'.$tokens->getKeyName(), $refreshTokens->getTable().'.access_token_id')));
+            }
+        });
+        $refresh->update(['revoked' => true]);
+        Passport::authCode()->newQuery()->where('user_id', $ownerId)->where('client_id', $clientId)->where('revoked', false)->update(['revoked' => true]);
+
+        $live = $owned()->where('revoked', false)->pluck($tokens->getKeyName());
+        foreach ($live as $tokenId) {
+            // One at a time through the repository so AccessTokenRevoked fires.
+            $this->accessTokens->revokeAccessToken((string) $tokenId);
+        }
+
+        return $live->count();
+    }
+
+    /** @return self::KIND_* */
+    private function registrationKind(Client $client): string
+    {
+        $registeredAt = config('bherila-auth.oauth_server.dynamic_clients.registered_at_column', 'dynamically_registered_at');
+        if (is_string($registeredAt) && $registeredAt !== '' && ($client->getAttributes()[$registeredAt] ?? null) !== null) {
+            return self::KIND_DYNAMIC;
+        }
+
+        return $client->firstParty() ? self::KIND_FIRST_PARTY : self::KIND_USER_REGISTERED;
+    }
+
+    private function hasColumn(Model $model, string $column): bool
+    {
+        return $model->getConnection()->getSchemaBuilder()->hasColumn($model->getTable(), $column);
     }
 
     /**

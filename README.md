@@ -625,10 +625,20 @@ Some agent connectors run the OAuth authorization-code flow; others ask for an A
 | `DELETE /tokens/{id}` | Revoke a token |
 | `POST /apps` | Register an OAuth app |
 | `DELETE /apps/{id}` | Delete an app |
+| `GET /connections` | Every OAuth client holding the person's live grants, dynamic clients included |
+| `DELETE /connections/{id}` | Disconnect a client: revoke only the person's grants to it |
 
 All return JSON. Each new secret appears once, in a `201` no-store body. While the OAuth server is switched off, the two `POST` routes answer 404 and the index returns null issuance URLs.
 
 Bind `GrantableScopes` to offer only the scopes your REST operations use. Bind `CredentialOwnerResolver`, or set `credentials.owner_model`, when your API guard loads a different model from the web guard.
+
+#### Connected clients (agents)
+
+`ApiCredentialService::connectedClients($user)` (and `GET /connections`) lists every OAuth client that holds an unrevoked, unexpired access or refresh token for the person, including clients that registered themselves dynamically, as MCP agents do. Each entry has `id`, `name`, `kind` (`dynamic`, `user_registered` or `first_party`; constants `ApiCredentialService::KIND_*`), `scopes` (the union over the person's live grants), `redirect_uris`, `created_at` (the client's registration), `last_issued_at` and, over HTTP, a finished `revoke_href`. No client secret is ever included. Personal-access clients are left out (personal tokens are listed and revoked individually under `/tokens`), as are revoked clients.
+
+`last_issued_at` is when a token was last issued to this person for the client, by authorization or refresh. Passport does not record each bearer use, and the package does not add a write to every request to do so; for an agent that refreshes, the last issuance is within one access-token lifetime of its last activity. A client name chosen at dynamic registration is unverified: show `kind` and the redirect URIs next to it.
+
+`ApiCredentialService::disconnectClient($user, $clientId)` (and `DELETE /connections/{id}`) revokes the person's authorization codes, access tokens and refresh tokens for that client, including refresh tokens whose access row was purged, and returns the number of live access tokens revoked. It never touches other people's grants to the same client or the client registration, so the person can connect it again. It is idempotent, and an unknown client is a no-op, so the answer does not reveal whether a client exists. With [durable revocation](docs/oauth-credential-revocation.md) enabled it runs under `CredentialLineages::revokingOwner($owner, $clientId, ...)`, so a grant already validated cannot be persisted afterwards. Like the other credential routes, both are session routes: an OAuth token cannot list or disconnect clients.
 
 #### Refresh-token client ownership
 
