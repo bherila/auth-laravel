@@ -63,14 +63,18 @@ final class OAuthIdentityColumns
 
         if (! $hasProvider) {
             $schema->table($table, fn (Blueprint $blueprint) => self::add($blueprint, $after));
-        } elseif (! self::hasUniqueIndex($table, $connection)) {
-            // The unique index is the final guard against two accounts holding one binding
-            // (two concurrent binds on a database without gap locks). Creating it fails, and
-            // so refuses the migration, if duplicates already exist.
-            $schema->table($table, fn (Blueprint $blueprint) => $blueprint->unique([$provider, $subject], self::UNIQUE_INDEX));
         }
 
+        // Exact comparison first: under a case-insensitive collation the index below would
+        // refuse distinct subjects such as `Alice` and `alice`.
         self::makeCaseSensitive($table, $connection);
+
+        if (! self::hasUniqueIndex($table, $connection)) {
+            // The unique index is the final guard against two accounts holding one binding
+            // (two concurrent binds on a database without gap locks). Creating it fails, and
+            // so refuses the migration, if byte-identical bindings already exist.
+            $schema->table($table, fn (Blueprint $blueprint) => $blueprint->unique([$provider, $subject], self::UNIQUE_INDEX));
+        }
     }
 
     /** On MySQL or MariaDB, store both columns as VARBINARY; elsewhere nothing to do. */

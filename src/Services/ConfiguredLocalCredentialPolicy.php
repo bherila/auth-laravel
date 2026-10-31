@@ -6,6 +6,7 @@ use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\OAuth\Session\ProviderBindingResolver;
 use BWH\Auth\OAuth\Session\ProviderSessionExpired;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 
 /**
@@ -36,7 +37,19 @@ final class ConfiguredLocalCredentialPolicy implements LocalCredentialPolicy
         try {
             return $this->bindings->binding($user) === null;
         } catch (ProviderSessionExpired) {
-            return false;
+            // A persisted account whose binding columns were never loaded (created in this
+            // request, or selected without them) is read again rather than refused: the
+            // stored row is the answer. Anything still unreadable is refused.
+            $stored = $user instanceof Model && $user->exists ? $user->fresh() : null;
+            if ($stored === null || $stored === $user) {
+                return false;
+            }
+
+            try {
+                return $this->bindings->binding($stored) === null;
+            } catch (ProviderSessionExpired) {
+                return false;
+            }
         }
     }
 }

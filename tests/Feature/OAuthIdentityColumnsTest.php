@@ -48,6 +48,7 @@ class OAuthIdentityColumnsTest extends TestCase
         DB::table('users')->insert(['name' => 'B', 'email' => 'b@example.test', 'password' => 'x', 'oauth_provider' => 'p', 'oauth_subject' => 's']);
     }
 
+    /** Byte-identical: genuinely the same binding twice, which no conversion can make unique. */
     public function test_ensure_refuses_when_existing_bindings_are_already_duplicated(): void
     {
         Schema::table('users', function (Blueprint $table): void {

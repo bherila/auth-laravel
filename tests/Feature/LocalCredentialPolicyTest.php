@@ -261,12 +261,27 @@ final class LocalCredentialPolicyTest extends TestCase
         $this->assertTrue($policy->mayUseLocalCredentials($this->user(false), $request));
     }
 
-    public function test_policy_refuses_a_user_whose_binding_columns_were_not_loaded(): void
+    public function test_policy_reads_the_stored_binding_when_the_columns_were_not_loaded(): void
     {
         $this->refuse();
-        $user = User::query()->select(['id', 'email', 'password'])->findOrFail($this->user(false)->getKey());
+        $policy = $this->app->make(LocalCredentialPolicy::class);
 
-        $this->assertFalse($this->app->make(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, Request::create('/')));
+        // Selected without the binding columns, as `User::create()` or a narrow select leaves a
+        // model: the stored row decides, rather than refusing every such account.
+        $unbound = User::query()->select(['id', 'email', 'password'])->findOrFail($this->user(false)->getKey());
+        $bound = User::query()->select(['id', 'email', 'password'])->findOrFail($this->user(true)->getKey());
+
+        $this->assertTrue($policy->mayUseLocalCredentials($unbound, Request::create('/')));
+        $this->assertFalse($policy->mayUseLocalCredentials($bound, Request::create('/')));
+    }
+
+    public function test_policy_refuses_an_unsaved_account_whose_binding_cannot_be_read(): void
+    {
+        $this->refuse();
+
+        $unsaved = new User(['email' => 'unsaved@example.test']);
+
+        $this->assertFalse($this->app->make(LocalCredentialPolicy::class)->mayUseLocalCredentials($unsaved, Request::create('/')));
     }
 
     public function test_an_invalid_setting_throws(): void
