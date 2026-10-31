@@ -493,10 +493,16 @@ final class ApiCredentialService
         $refresh = $refreshTokens->newQuery()->where('revoked', false)->where(function ($query) use ($owned, $refreshTokens, $ownerId, $clientId): void {
             $query->whereIn('access_token_id', $owned()->select(Passport::token()->getKeyName()));
             // A refresh token whose access row was purged, by its own owner and client records.
+            // Only once that row is gone: a linked access row names its owner, and one that
+            // names someone else outranks an owner record that disagrees with it.
             if ($this->hasColumn($refreshTokens, 'client_id') && $this->hasColumn($refreshTokens, ProviderIdentityTokens::OWNER_COLUMN)) {
+                $tokens = Passport::token();
                 $query->orWhere(fn ($orphan) => $orphan
                     ->where('client_id', $clientId)
-                    ->where(ProviderIdentityTokens::OWNER_COLUMN, (string) $ownerId));
+                    ->where(ProviderIdentityTokens::OWNER_COLUMN, (string) $ownerId)
+                    ->whereNotExists(fn ($access) => $access
+                        ->from($tokens->getTable())
+                        ->whereColumn($tokens->getTable().'.'.$tokens->getKeyName(), $refreshTokens->getTable().'.access_token_id')));
             }
         });
         $refresh->update(['revoked' => true]);

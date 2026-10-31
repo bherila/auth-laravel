@@ -6,6 +6,7 @@ use BWH\Auth\AuthServiceProvider;
 use BWH\Auth\Http\Middleware\ExpectOAuthResource;
 use BWH\Auth\OAuth\Credentials\ApiCredentialService;
 use BWH\Auth\OAuth\Server\AgentOAuthServer;
+use BWH\Auth\OAuth\Server\ProviderIdentityTokens;
 use BWH\Auth\Testing\AssertsAgentOAuthContract;
 use BWH\Auth\Tests\Fixtures\User;
 use BWH\Auth\Tests\TestCase;
@@ -217,6 +218,22 @@ final class ConnectedClientsTest extends TestCase
         $this->assertTrue((bool) $refresh->fresh()->revoked);
         $this->assertFalse((bool) $theirRefresh->fresh()->revoked, "Another person's orphaned refresh token survives");
         $this->refresh($agent, $mine['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+        $this->refresh($agent, $theirs['refresh_token'])->assertOk();
+    }
+
+    public function test_an_owner_record_disagreeing_with_a_linked_access_row_is_not_taken(): void
+    {
+        $agent = $this->registerDynamicClient('Shared agent');
+        $this->agentOAuthCodeFlow($this->user, $agent, 'mcp:use', self::REDIRECT)->assertOk();
+        $theirs = $this->agentOAuthCodeFlow($this->other, $agent, 'mcp:use', self::REDIRECT)->assertOk()->json();
+        $theirAccess = Passport::token()->newQuery()->where('user_id', $this->other->id)->sole();
+        $theirRefresh = Passport::refreshToken()->newQuery()->where('access_token_id', $theirAccess->getKey())->sole();
+        // Inconsistent records: their refresh token claims this person, but its live access row is theirs.
+        $theirRefresh->forceFill([ProviderIdentityTokens::OWNER_COLUMN => (string) $this->user->id])->save();
+
+        $this->actingAs($this->user)->deleteJson(self::BASE.'/connections/'.$agent)->assertOk();
+
+        $this->assertFalse((bool) $theirRefresh->fresh()->revoked, 'The linked access row names its owner');
         $this->refresh($agent, $theirs['refresh_token'])->assertOk();
     }
 
