@@ -170,6 +170,43 @@ class RelyingPartyLoginControllerTest extends TestCase
         $this->assertDatabaseHas('auth_audit_log', ['user_id' => $user->id, 'event' => AuthAuditLog::EVENT_LOGIN_FAILED, 'auth_method' => 'oauth']);
     }
 
+    public function test_an_application_that_never_provisions_refuses_an_unknown_subject_and_writes_nothing(): void
+    {
+        config(['bherila-auth.oauth_login.accounts' => NeverProvisions::class]);
+        $existing = $this->account('Someone', 'someone@example.test');
+
+        $this->signIn('unknown-subject', 'Someone', 'someone@example.test', controller: ExplainsRefusals::class)
+            ->assertRedirect('/login');
+
+        $this->assertGuest();
+        $this->assertSame(1, User::query()->count());
+        $this->assertNull($existing->refresh()->oauth_subject);
+        $this->assertSame('unknown', session('refused'));
+        $this->assertDatabaseHas('auth_audit_log', ['event' => AuthAuditLog::EVENT_LOGIN_FAILED, 'reason' => 'No local account for provider subject']);
+    }
+
+    public function test_an_application_that_never_provisions_still_signs_in_a_linked_account(): void
+    {
+        config(['bherila-auth.oauth_login.accounts' => NeverProvisions::class]);
+        $linked = $this->account('Linked', 'linked@example.test', 'linked-subject');
+
+        $this->signIn('linked-subject', 'Linked', 'linked@example.test')->assertRedirect('/');
+
+        $this->assertAuthenticatedAs($linked);
+    }
+
+    public function test_a_disabled_account_can_be_answered_with_the_application_page(): void
+    {
+        $user = $this->account('Disabled', 'disabled@example.test', 'subject-disabled');
+        $user->forceFill(['is_disabled' => true])->save();
+
+        $this->signIn('subject-disabled', 'Disabled', 'disabled@example.test', controller: ExplainsRefusals::class)
+            ->assertRedirect('/login');
+
+        $this->assertGuest();
+        $this->assertSame('disabled', session('refused'));
+    }
+
     public function test_a_lost_race_adopts_the_winning_row_when_it_asserts_the_same_profile(): void
     {
         $this->raceWith([
@@ -420,5 +457,26 @@ class KeepsConfirmedAddress extends RelyingPartyAccounts
     public function refreshedAttributes(Model $account, OAuthIdentity $identity): array
     {
         return ['name' => $identity->name];
+    }
+}
+
+class NeverProvisions extends RelyingPartyAccounts
+{
+    public function provisionsNewAccounts(): bool
+    {
+        return false;
+    }
+}
+
+class ExplainsRefusals extends TestLoginController
+{
+    protected function unknownIdentityResponse(Request $request, OAuthIdentity $identity): \Symfony\Component\HttpFoundation\Response
+    {
+        return redirect('/login')->with('refused', 'unknown');
+    }
+
+    protected function disabledAccountResponse(Request $request, Authenticatable $account): \Symfony\Component\HttpFoundation\Response
+    {
+        return redirect('/login')->with('refused', 'disabled');
     }
 }

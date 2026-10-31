@@ -16,7 +16,7 @@ the first entry here is in the git history.
     `Retry-After` when enforcement cannot verify it), remembers the application list,
     audits, and lands on the intended page.
   - Hooks: `landingUrl`, `afterSignIn`, `signsOutLocallyOnly`, `afterSignOutUrl`,
-    `$remember` and `$returnParameter`.
+    `unknownIdentityResponse`, `disabledAccountResponse`, `$remember` and `$returnParameter`.
   - Inertia visits get `X-Inertia-Location`.
 - `SubjectBoundAccounts` holds the account rules:
   - Resolve on (provider, subject) only.
@@ -25,7 +25,8 @@ the first entry here is in the git history.
   - Fill in a delegated-access placeholder committed mid-sign-in.
   - Conflicts are logged by row id only.
 - `RelyingPartyAccounts` (`oauth_login.accounts`) is the per-application model, lock, and
-  new-account / refresh / adoption attributes.
+  new-account / refresh / adoption attributes. `provisionsNewAccounts()` returning false refuses an
+  unknown subject (`AccountNotProvisioned`) instead of creating an account.
 - `oauth:bind-subject {user} {subject} {--provider=}` links an existing account to its
   subject. It never re-points an account, never gives a subject to a second account, and
   refuses a non-canonical integer id.

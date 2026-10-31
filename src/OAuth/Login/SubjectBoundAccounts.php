@@ -23,6 +23,8 @@ use Illuminate\Support\Facades\DB;
  *  - A write that loses a race on a unique index adopts the row that won only when that row
  *    already carries the profile this sign-in asserts. Otherwise the two requests disagree
  *    about the account and neither wins silently.
+ *  - An application that does not create accounts at sign-in refuses an unknown subject
+ *    ({@see AccountNotProvisioned}) and never writes.
  *  - A placeholder that delegated provisioning committed for this subject after the first read
  *    ({@see PendingAccount}) is resolved once more through the same locked path, so it is
  *    filled in rather than refused.
@@ -69,6 +71,10 @@ final class SubjectBoundAccounts
     private function resolveLocked(OAuthIdentity $identity, RelyingPartyAccounts $accounts): Model
     {
         $account = $this->bound($identity, $accounts, lock: true);
+
+        if ($account === null && ! $accounts->provisionsNewAccounts()) {
+            throw new AccountNotProvisioned($identity->provider);
+        }
 
         $attributes = $account === null
             ? $accounts->newAccountAttributes($identity)

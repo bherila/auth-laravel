@@ -92,6 +92,18 @@ class RelyingPartyAccounts
     }
 
     /**
+     * Whether a sign-in for a subject with no local account creates one.
+     *
+     * Return false for an application whose accounts are made only by an operator, or by
+     * delegated provisioning: an unknown subject is then refused ({@see AccountNotProvisioned})
+     * and an existing account is linked with `oauth:bind-subject`.
+     */
+    public function provisionsNewAccounts(): bool
+    {
+        return true;
+    }
+
+    /**
      * Attributes for an account created at its first sign-in, apart from the binding,
      * which is always added and cannot be overridden here.
      *

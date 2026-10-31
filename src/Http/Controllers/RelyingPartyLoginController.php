@@ -6,6 +6,7 @@ use BWH\Auth\Concerns\LogsAuthEvents;
 use BWH\Auth\Concerns\SignsOutThroughProvider;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\OAuth\Login\AccountConflict;
+use BWH\Auth\OAuth\Login\AccountNotProvisioned;
 use BWH\Auth\OAuth\Login\RelyingPartyAccounts;
 use BWH\Auth\OAuth\Login\SubjectBoundAccounts;
 use BWH\Auth\OAuth\OAuthClient;
@@ -78,6 +79,10 @@ abstract class RelyingPartyLoginController extends Controller
             $this->auditLoginFailed($request, null, null, 'Identity could not be linked: '.$conflict->reason, 'oauth');
 
             throw $conflict;
+        } catch (AccountNotProvisioned) {
+            $this->auditLoginFailed($request, null, null, 'No local account for provider subject', 'oauth');
+
+            return $this->unknownIdentityResponse($request, $identity);
         }
 
         if (! $account instanceof Authenticatable) {
@@ -86,7 +91,8 @@ abstract class RelyingPartyLoginController extends Controller
 
         if (! app(AuthUserPolicy::class)->canLogin($account, $request)) {
             $this->auditLoginFailed($request, $account, null, 'Account disabled', 'oauth');
-            abort(403, 'This account is disabled.');
+
+            return $this->disabledAccountResponse($request, $account);
         }
 
         $guard = $this->sessionGuard();
@@ -160,6 +166,24 @@ abstract class RelyingPartyLoginController extends Controller
     protected function afterSignIn(Request $request, Authenticatable $account, OAuthIdentity $identity): void
     {
         //
+    }
+
+    /**
+     * The answer to a sign-in for a subject with no local account, when the application does
+     * not create accounts at sign-in. Nothing has been written and no session exists.
+     */
+    protected function unknownIdentityResponse(Request $request, OAuthIdentity $identity): Response
+    {
+        abort(403, 'This account is not set up for this application.');
+    }
+
+    /**
+     * The answer to a sign-in {@see AuthUserPolicy::canLogin()} refused. No session exists.
+     * Override to send the person back to a page that explains, rather than an error page.
+     */
+    protected function disabledAccountResponse(Request $request, Authenticatable $account): Response
+    {
+        abort(403, 'This account is disabled.');
     }
 
     /**

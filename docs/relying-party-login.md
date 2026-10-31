@@ -85,6 +85,7 @@ In order:
 | `newAccountAttributes($identity)` | name, email, `email_verified_at = now()`, random password | extra defaults (a role), other columns (`alias`), `email_verified_at = null` |
 | `refreshedAttributes($account, $identity)` | name, email, `email_verified_at = now()` | keeping an address the person confirmed locally: leave the email out, and the collision check is skipped |
 | `assertsSameProfile($account, $identity)` | same name and address (case-insensitive) | the columns the application refreshes |
+| `provisionsNewAccounts()` | `true` | `false` for an application whose accounts are made only by an operator or by delegated provisioning: an unknown subject is refused before anything is written, and the controller answers with `unknownIdentityResponse()`. Accounts are linked with `oauth:bind-subject`. |
 
 The binding columns are always written by the package and are dropped from any attribute
 array the application returns, so they need not be fillable.
@@ -94,6 +95,8 @@ array the application returns, so they need not be fillable.
 | Hook | Default |
 | --- | --- |
 | `landingUrl($request, $account)` | `/` |
+| `unknownIdentityResponse($request, $identity)` | 403. Only reached when `provisionsNewAccounts()` is false. |
+| `disabledAccountResponse($request, $account)` | 403 "This account is disabled." Override to send the person to a page that explains. |
 | `afterSignIn($request, $account, $identity)` | nothing. Runs only for a sign-in that completed. |
 | `signsOutLocallyOnly($request, $user)` | `false`. Return `true` for a session that never involved the provider (Google, a break-glass password), so signing out does not end the person's sessions in every sibling application. |
 | `afterSignOutUrl($request)` | `url('/')` |
