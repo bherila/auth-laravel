@@ -12,6 +12,11 @@
             (string) ($consentConfig[$key] ?? $fallback),
             [':app' => $appName, ':client' => $clientName],
         );
+        $requested = [];
+        foreach ($scopes as $requestedScope) {
+            $requested[(string) $requestedScope->id] = (string) $requestedScope->description;
+        }
+        $scopeGroups = app(\BWH\Auth\OAuth\Credentials\ScopePresentationResolver::class)->groups($requested);
     @endphp
     <title>{{ $copy('heading', 'Connect :client to :app?') }}</title>
     <style>
@@ -41,6 +46,12 @@
             .deny { background: #374151; color: #e5e7eb; }
         }
     </style>
+@if ($scopeGroups !== [])
+    <style>
+        .scope-group h3 { font-size: .95rem; margin: 1rem 0 .25rem; }
+        .scope-group.sensitive ul { border-left: 4px solid #c99700; }
+    </style>
+@endif
 </head>
 <body>
 @inject('consent', 'BWH\Auth\OAuth\Server\OAuthConsentPresenter')
@@ -62,6 +73,24 @@
         </p>
     @endif
     <h2>Requested permissions</h2>
+@if ($scopeGroups !== [])
+        @foreach ($scopeGroups as $group)
+            <section class="{{ $group['sensitive'] ? 'scope-group sensitive' : 'scope-group' }}">
+                <h3>{{ $group['label'] }}</h3>
+                @if (is_string($group['description']) && $group['description'] !== '')
+                    <p>{{ $group['description'] }}</p>
+                @endif
+                @if ($group['sensitive'])
+                    <p class="warning">{{ $copy('sensitive_notice', 'These permissions allow sensitive actions. Only approve them if you need them.') }}</p>
+                @endif
+                <ul>
+                    @foreach ($group['scopes'] as $scopeId)
+                        <li>{{ $requested[$scopeId] }}</li>
+                    @endforeach
+                </ul>
+            </section>
+        @endforeach
+@else
     <ul>
         @forelse ($scopes as $scope)
             <li>{{ $scope->description }}</li>
@@ -69,6 +98,7 @@
             <li>No additional permissions requested.</li>
         @endforelse
     </ul>
+@endif
     @if (is_string($consentConfig['policy_notice'] ?? null) && $consentConfig['policy_notice'] !== '')
         <p class="policy">{{ $copy('policy_notice', '') }}</p>
     @endif

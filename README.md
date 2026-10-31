@@ -642,6 +642,33 @@ Bind `GrantableScopes` to offer only the scopes your REST operations use. Bind `
 
 `ApiCredentialService::disconnectClient($user, $clientId)` (and `DELETE /connections/{id}`) revokes the person's authorization codes, access tokens and refresh tokens for that client, including refresh tokens whose access row was purged, and returns the number of live access tokens revoked. It never touches other people's grants to the same client or the client registration, so the person can connect it again. It is idempotent, and an unknown client is a no-op, so the answer does not reveal whether a client exists. With [durable revocation](docs/oauth-credential-revocation.md) enabled it runs under `CredentialLineages::revokingOwner($owner, $clientId, ...)`, so a grant already validated cannot be persisted afterwards. Like the other credential routes, both are session routes: an OAuth token cannot list or disconnect clients.
 
+#### Scope groups and presets
+
+Optional presentation for credential UIs and the consent screen. Bind `ScopePresentation` (default `UngroupedScopePresentation`: nothing changes):
+
+```php
+$this->app->bind(ScopePresentation::class, fn () => new class implements ScopePresentation {
+    public function groups(): array
+    {
+        return [
+            new ScopeGroup('time', 'Time', ['time:read', 'time:write']),
+            new ScopeGroup('admin', 'Admin', ['billing:deliver'], sensitive: true, description: 'Send to clients, move money'),
+        ];
+    }
+
+    public function presets(): array
+    {
+        return [new ScopePreset('time_logging', 'Time logging', 'Log your own time', ['identity:read', 'time:read', 'time:write'])];
+    }
+});
+```
+
+Validation (first use; `LogicException` naming the id or scope): every scope is in the scope catalog; a scope is in at most one group; group ids and preset ids are unique and match `[a-z0-9_]+`; a preset is not empty; a preset contains no scope from a sensitive group.
+
+Per surface, groups keep only offered scopes in declared order, drop empty groups, and add a final `other` group (`consent.ungrouped_label`) for offered scopes in no group. A preset appears only where every one of its scopes is offered. The index adds `scope_groups` and `scope_presets`, plus `token_scope_groups` and `token_scope_presets` beside `token_scopes`, only when groups or presets are bound; `token_connection_scopes` stays ungrouped. A group is `{id, label, description, sensitive, scopes}`, a preset `{id, label, description, scopes}`; `scopes` are ids from the sibling list.
+
+Presentation only: grants store explicit scopes, and `POST /tokens` and `POST /apps` still accept only offered scope ids (a group or preset id gets 422). When groups are bound, the consent screen lists requested scopes in `<section class="scope-group">` sections (`scope-group sensitive` with a `consent.sensitive_notice` warning), ungrouped ones under "Other permissions"; all text is escaped. Nothing is narrowed on consent.
+
 #### Refresh-token client ownership
 
 Publish and run `2026_10_11_120000_add_client_id_to_oauth_refresh_tokens` before purging more expired access-token rows. It adds a nullable, indexed `client_id` to the refresh-token table on the Passport connection and backfills rows whose access token still exists. An existing application-owned column and its non-null values are preserved; rollback retains the column.

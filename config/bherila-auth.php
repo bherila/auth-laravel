@@ -176,6 +176,9 @@ return [
             'policy_notice' => 'Your current permissions still apply to every request.',
             'approve_label' => 'Authorize',
             'deny_label' => 'Cancel',
+            // Only used when the application binds a ScopePresentation with groups.
+            'ungrouped_label' => 'Other permissions',
+            'sensitive_notice' => 'These permissions allow sensitive actions. Only approve them if you need them.',
         ],
         // A person's own API tokens and OAuth apps (OAuth\Credentials). Opt-in;
         // routes are session routes under `prefix` with `middleware`.

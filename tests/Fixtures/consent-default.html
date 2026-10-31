@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+        <title>Connect Example Agent to Laravel?</title>
+    <style>
+        :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        * { box-sizing: border-box; }
+        body { align-items: center; background: #f4f1eb; color: #1f2937; display: flex; justify-content: center; margin: 0; min-height: 100vh; padding: 1.5rem; }
+        main { background: #fff; border: 1px solid #d6d3d1; border-radius: 1rem; box-shadow: 0 1rem 3rem rgb(15 23 42 / .08); max-width: 38rem; padding: 2rem; width: 100%; }
+        h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 .75rem; }
+        h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+        p { line-height: 1.5; }
+        ul { background: #f8fafc; border-radius: .75rem; margin: .5rem 0; padding: 1rem 1rem 1rem 2rem; }
+        li + li { margin-top: .5rem; }
+        .identity, .policy { color: #57534e; font-size: .9rem; }
+        .warning { background: #fff8db; border-left: 4px solid #c99700; border-radius: .25rem; padding: .8rem; }
+        .redirect { display: block; overflow-wrap: anywhere; padding-top: .35rem; }
+        .actions { display: flex; gap: .75rem; justify-content: flex-end; margin-top: 1.5rem; }
+        button { border: 0; border-radius: .6rem; cursor: pointer; font: inherit; font-weight: 650; padding: .7rem 1rem; }
+        button:focus-visible { outline: 3px solid #38bdf8; outline-offset: 2px; }
+        .approve { background: #0f766e; color: #fff; }
+        .deny { background: #e7e5e4; color: #292524; }
+        @media (prefers-color-scheme: dark) {
+            body { background: #111827; color: #e5e7eb; }
+            main { background: #1f2937; border-color: #374151; }
+            ul { background: #111827; }
+            .identity, .policy { color: #d6d3d1; }
+            .warning { background: #3f3412; border-color: #eab308; }
+            .deny { background: #374151; color: #e5e7eb; }
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Connect Example Agent to Laravel?</h1>
+    <p>This application is requesting access to your Laravel account.</p>
+            <p class="identity">Signed in as Person.</p>
+                <h2>Requested permissions</h2>
+    <ul>
+                    <li>Read your identity</li>
+                    <li>Read time</li>
+            </ul>
+        <div class="actions">
+        <form method="post" action="http://localhost/oauth/authorize">
+            <input type="hidden" name="_token" value="TOKEN" autocomplete="off">            <input type="hidden" name="_method" value="DELETE">            <input type="hidden" name="auth_token" value="fixed-auth-token">
+            <button class="deny" type="submit">Cancel</button>
+        </form>
+        <form method="post" action="http://localhost/oauth/authorize">
+            <input type="hidden" name="_token" value="TOKEN" autocomplete="off">            <input type="hidden" name="auth_token" value="fixed-auth-token">
+            <button class="approve" type="submit">Authorize</button>
+        </form>
+    </div>
+</main>
+</body>
+</html>

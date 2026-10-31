@@ -30,6 +30,9 @@ final class ApiCredentialController extends Controller
         // Only once the application opts personal tokens in to connection
         // scopes; until then the payload is exactly what it always was.
         $connections = $credentials->connectionScopesEnabled();
+        // Likewise grouping: keys appear only once the application binds a ScopePresentation.
+        $presented = $credentials->scopePresentationActive();
+        $multipleResources = is_array(config('bherila-auth.oauth_server.resources')) && config('bherila-auth.oauth_server.resources') !== [];
 
         return $this->noStore([
             'data' => [
@@ -38,15 +41,23 @@ final class ApiCredentialController extends Controller
                     array_keys($credentials->grantableScopes()),
                     array_values($credentials->grantableScopes()),
                 ),
+                ...($presented ? [
+                    'scope_groups' => $credentials->scopeGroups($credentials->grantableScopes()),
+                    'scope_presets' => $credentials->scopePresets($credentials->grantableScopes()),
+                ] : []),
                 'token_lifetimes' => $credentials->lifetimes(),
                 // With several resources a personal token is held to its resource's ceiling, so
                 // its choices can be narrower than an OAuth app's; listed only then.
-                ...(is_array(config('bherila-auth.oauth_server.resources')) && config('bherila-auth.oauth_server.resources') !== [] ? [
+                ...($multipleResources ? [
                     'token_scopes' => array_map(
                         static fn (string $id, string $description): array => ['id' => $id, 'description' => $description],
                         array_keys($credentials->tokenScopes()),
                         array_values($credentials->tokenScopes()),
                     ),
+                    ...($presented ? [
+                        'token_scope_groups' => $credentials->scopeGroups($credentials->tokenScopes()),
+                        'token_scope_presets' => $credentials->scopePresets($credentials->tokenScopes()),
+                    ] : []),
                 ] : []),
                 ...($connections ? [
                     // Offered to personal API tokens only, never to OAuth apps.

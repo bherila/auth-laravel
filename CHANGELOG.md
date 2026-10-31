@@ -63,6 +63,24 @@ the first entry here is in the git history.
   credential routes are already enabled. See
   [connected clients](README.md#connected-clients-agents).
 
+### Optional scope groups, sensitive groups and presets
+
+- `ScopePresentation` (`groups()`, `presets()`) with `ScopeGroup` and `ScopePreset` value objects lets an
+  application group its scopes, mark a group sensitive and offer one-click presets. The default
+  `UngroupedScopePresentation` (bound with `bindIf`) declares none.
+- `ScopePresentationValidator` throws a `LogicException` naming the id or scope for an unknown scope, a scope in two
+  groups, a duplicate or malformed id, an empty preset, or a preset containing a sensitive-group scope.
+- `ApiCredentialService::scopeGroups()` and `scopePresets()` resolve them per surface; a preset is offered only where
+  all its scopes are, and ungrouped offered scopes collect in a final `other` group.
+- The credentials index adds `scope_groups` and `scope_presets` (and `token_scope_groups` and
+  `token_scope_presets` next to `token_scopes`) only when the application binds groups or presets.
+- The consent screen renders `<section class="scope-group">` sections (with `sensitive` and a warning) when groups are
+  bound. New `consent.ungrouped_label` and `consent.sensitive_notice` config keys.
+- Presentation only: grants store explicit scopes, no endpoint accepts a group or preset id, and scope validation is
+  unchanged.
+- **Adoption:** none required. With nothing bound, every payload and the consent markup are byte-for-byte unchanged.
+  Additive, so a patch release.
+
 ## v0.27.0 - 2026-10-20
 
 ### Opt-in durable OAuth credential revocation
