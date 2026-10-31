@@ -314,6 +314,44 @@ final class ScopePresentationTest extends TestCase
         $this->assertStringContainsString('Send invoices &amp; move money', $html);
     }
 
+    public function test_a_requested_scope_without_an_id_falls_back_to_the_flat_list_rather_than_vanishing(): void
+    {
+        $this->bind($this->standardGroups());
+        $client = new class
+        {
+            public string $name = 'Example Agent';
+
+            public function getAttribute(string $key): mixed
+            {
+                return null;
+            }
+        };
+        $scopes = [
+            new class
+            {
+                public string $id = 'time:read';
+
+                public string $description = 'Read time';
+            },
+            new class
+            {
+                public string $description = 'A scope the page can only describe';
+            },
+        ];
+
+        $html = view('bherila-auth::oauth.authorize', [
+            'client' => $client,
+            'scopes' => $scopes,
+            'request' => Request::create('/oauth/authorize'),
+            'user' => $this->user,
+            'authToken' => 'fixed-auth-token',
+        ])->render();
+
+        $this->assertStringNotContainsString('scope-group', $html);
+        $this->assertStringContainsString('Read time', $html);
+        $this->assertStringContainsString('A scope the page can only describe', $html);
+    }
+
     public function test_a_group_without_the_sensitive_flag_shows_no_warning(): void
     {
         $this->bind($this->standardGroups());

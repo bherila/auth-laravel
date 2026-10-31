@@ -12,13 +12,20 @@
             (string) ($consentConfig[$key] ?? $fallback),
             [':app' => $appName, ':client' => $clientName],
         );
+        // Every requested scope must reach the page. If any cannot be placed by id, show the
+        // flat list rather than a grouped one that silently leaves it out.
         $requested = [];
+        $everyScopeHasId = true;
         foreach ($scopes as $requestedScope) {
             if (isset($requestedScope->id)) {
                 $requested[(string) $requestedScope->id] = (string) ($requestedScope->description ?? '');
+            } else {
+                $everyScopeHasId = false;
             }
         }
-        $scopeGroups = app(\BWH\Auth\OAuth\Credentials\ScopePresentationResolver::class)->groups($requested);
+        $scopeGroups = $everyScopeHasId
+            ? app(\BWH\Auth\OAuth\Credentials\ScopePresentationResolver::class)->groups($requested)
+            : [];
     @endphp
     <title>{{ $copy('heading', 'Connect :client to :app?') }}</title>
     <style>
