@@ -25,11 +25,12 @@ final class ApiCredentialController extends Controller
 {
     /**
      * @param  array<string, list<string>>  $implications
-     * @return array<string, array<string, list<string>>>
+     * @return array<string, object>
      */
     private function implicationsKey(string $key, array $implications): array
     {
-        return $implications === [] ? [] : [$key => $implications];
+        // An object even when the keys are 0..n numeric scope ids, which PHP would encode as a list.
+        return $implications === [] ? [] : [$key => (object) $implications];
     }
 
     public function index(Request $request, ApiCredentialService $credentials): JsonResponse

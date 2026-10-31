@@ -114,7 +114,13 @@ final class ScopePresentationResolver
                 $direct[(string) $scope][(string) $need] = true;
             }
         }
-        $closure = static function (string $scope) use (&$closure, $direct): array {
+        // Memoized per scope: the graph is a validated DAG, but shared dependencies would
+        // otherwise be walked once per path.
+        $memo = [];
+        $closure = static function (string $scope) use (&$closure, &$memo, $direct): array {
+            if (isset($memo[$scope])) {
+                return $memo[$scope];
+            }
             $all = [];
             foreach (array_keys($direct[$scope] ?? []) as $need) {
                 $need = (string) $need;
@@ -124,7 +130,7 @@ final class ScopePresentationResolver
                 }
             }
 
-            return array_map('strval', array_keys($all));
+            return $memo[$scope] = array_map('strval', array_keys($all));
         };
 
         $ordered = array_values(array_unique(array_map('strval', [...array_keys(ConfiguredGrantableScopes::catalog()), ...array_keys($offered)])));
@@ -134,7 +140,8 @@ final class ScopePresentationResolver
                 continue;
             }
             $needs = $closure($scope);
-            $kept = array_values(array_filter($ordered, static fn (string $id): bool => in_array($id, $needs, true) && array_key_exists($id, $offered)));
+            $needed = array_flip($needs);
+            $kept = array_values(array_filter($ordered, static fn (string $id): bool => isset($needed[$id]) && array_key_exists($id, $offered)));
             if ($kept !== []) {
                 $result[$scope] = $kept;
             }

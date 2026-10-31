@@ -231,6 +231,29 @@ final class ScopeImplicationsTest extends TestCase
         $this->assertSame('200', (string) array_key_first($result));
     }
 
+    public function test_numeric_ids_still_serialize_as_an_object_and_a_deep_shared_graph_is_fast(): void
+    {
+        config(['bherila-auth.oauth_server.scopes' => ['0', '1']]);
+        $this->bind(['0' => ['1']]);
+        $this->actingAs($this->user)->getJson(self::BASE)->assertOk();
+        $this->assertStringContainsString('"scope_implications":{"0":["1"]}', $this->getJson(self::BASE)->getContent());
+
+        $ids = array_map(static fn (int $i): string => 's'.str_pad((string) $i, 2, '0', STR_PAD_LEFT), range(0, 39));
+        config(['bherila-auth.oauth_server.scopes' => $ids]);
+        $map = [];
+        foreach ($ids as $i => $id) {
+            if ($i < 39) {
+                $map[$id] = array_slice($ids, $i + 1, 2);
+            }
+        }
+        $this->bind($map);
+        $started = microtime(true);
+        $result = $this->service()->scopeImplications(array_fill_keys($ids, 'x'));
+        $this->assertLessThan(2.0, microtime(true) - $started);
+        $this->assertCount(39, $result);
+        $this->assertSame(array_slice($ids, 1), $result['s00']);
+    }
+
     public function test_an_unknown_key_or_requirement_is_named(): void
     {
         $this->bind(['ghost:key' => ['time:read']]);
