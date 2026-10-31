@@ -19,6 +19,9 @@ final class ScopePresentationValidator
 
         foreach ($presentation->groups() as $group) {
             self::assertId('group', $group->id);
+            if ($group->id === ScopePresentationResolver::UNGROUPED_ID) {
+                throw new LogicException('Scope group id "'.ScopePresentationResolver::UNGROUPED_ID.'" is reserved for the generated group of ungrouped scopes.');
+            }
             if (isset($groupIds[$group->id])) {
                 throw new LogicException("Scope group id \"{$group->id}\" is used by more than one group.");
             }

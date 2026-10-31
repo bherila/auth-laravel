@@ -227,6 +227,23 @@ final class ScopePresentationTest extends TestCase
         $this->assertInvalid('ghost:scope');
     }
 
+    public function test_the_generated_other_group_id_is_reserved(): void
+    {
+        $this->bind([new ScopeGroup('other', 'Other', ['time:read'])]);
+        $this->assertInvalid('"other" is reserved');
+    }
+
+    public function test_numeric_scope_ids_stay_strings_in_the_generated_group(): void
+    {
+        $this->bind([new ScopeGroup('time', 'Time', ['time:read'])]);
+
+        // A plain-list catalog entry such as '123' becomes an integer array key.
+        $groups = app(\BWH\Auth\OAuth\Credentials\ScopePresentationResolver::class)
+            ->groups(['time:read' => 'Read time', '123' => 'Numbered scope']);
+
+        $this->assertSame(['123'], end($groups)['scopes']);
+    }
+
     public function test_a_scope_in_two_groups_is_named(): void
     {
         $this->bind([new ScopeGroup('a', 'A', ['time:read']), new ScopeGroup('b', 'B', ['time:read'])]);

@@ -5,6 +5,9 @@ namespace BWH\Auth\OAuth\Credentials;
 /** Resolves a bound ScopePresentation against the scopes one surface offers. */
 final class ScopePresentationResolver
 {
+    /** The id of the generated group holding offered scopes no declared group names. Reserved. */
+    public const UNGROUPED_ID = 'other';
+
     private bool $validated = false;
 
     public function __construct(private readonly ScopePresentation $presentation) {}
@@ -44,14 +47,15 @@ final class ScopePresentationResolver
         }
 
         // Catalog order first, then anything a custom binding offers beyond the catalog.
-        $ordered = array_values(array_unique([...array_keys(ConfiguredGrantableScopes::catalog()), ...array_keys($offered)]));
+        // Array keys turn numeric scope ids into integers; the payload's ids are strings.
+        $ordered = array_values(array_unique(array_map('strval', [...array_keys(ConfiguredGrantableScopes::catalog()), ...array_keys($offered)])));
         $other = array_values(array_filter(
             $ordered,
             static fn (string $scope): bool => array_key_exists($scope, $offered) && ! in_array($scope, $placed, true),
         ));
         if ($other !== []) {
             $groups[] = [
-                'id' => 'other',
+                'id' => self::UNGROUPED_ID,
                 'label' => (string) config('bherila-auth.oauth_server.consent.ungrouped_label', 'Other permissions'),
                 'description' => null,
                 'sensitive' => false,
