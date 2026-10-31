@@ -29,13 +29,17 @@ use Illuminate\Support\Facades\DB;
  *    ({@see PendingAccount}) is resolved once more through the same locked path, so it is
  *    filled in rather than refused.
  *
- * Row locks are taken in one order, the subject's row first and then the address holder's, so
- * two sign-ins cannot deadlock each other.
+ * Row locks are taken in one order, the subject's row first and then the address holder's. That
+ * does not rule out every cycle (two accounts whose addresses were swapped at the provider), so
+ * a transaction the database aborts as a deadlock is retried a bounded number of times.
  */
 final class SubjectBoundAccounts
 {
     /** SQLSTATE classes a unique violation reports as: MySQL, MariaDB and SQLite; PostgreSQL. */
     private const UNIQUE_VIOLATION = ['23000', '23505'];
+
+    /** Transaction attempts; the framework retries only on deadlocks and lock-wait timeouts. */
+    private const ATTEMPTS = 3;
 
     public function resolve(OAuthIdentity $identity, RelyingPartyAccounts $accounts): Model
     {
@@ -45,8 +49,13 @@ final class SubjectBoundAccounts
     private function attempt(OAuthIdentity $identity, RelyingPartyAccounts $accounts, bool $retryPending): Model
     {
         try {
+            // Two sign-ins can still deadlock: bound accounts whose provider addresses were
+            // swapped each lock their own row, then wait on the other's as the address holder.
+            // The database aborts one; rerunning it sees the committed swap and answers with a
+            // conflict rather than a 500 after the authorization code is spent.
             return DB::connection($this->connection($accounts))->transaction(
                 fn (): Model => $this->resolveLocked($identity, $accounts),
+                self::ATTEMPTS,
             );
         } catch (QueryException $exception) {
             if (! in_array($exception->errorInfo[0] ?? null, self::UNIQUE_VIOLATION, true)) {

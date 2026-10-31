@@ -120,7 +120,7 @@ class BindOAuthSubjectCommand extends Command
                 ])->save();
 
                 return $this->result(self::SUCCESS, 'info', sprintf('Linked account #%s to the %s identity.', $account->getKey(), $provider));
-            });
+            }, 3);
         } catch (QueryException $exception) {
             // A second account can still race for the same unclaimed subject on a database
             // without gap locks. The unique index is the final guard; report its refusal.

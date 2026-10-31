@@ -34,6 +34,33 @@ class OAuthIdentityColumnsTest extends TestCase
         $this->assertTrue(Schema::hasColumns('users', ['oauth_provider', 'oauth_subject']));
     }
 
+    public function test_ensure_adds_the_unique_index_to_columns_that_lack_it(): void
+    {
+        Schema::table('users', function (Blueprint $table): void {
+            $table->string('oauth_provider', 64)->nullable();
+            $table->string('oauth_subject', 191)->nullable();
+        });
+
+        OAuthIdentityColumns::ensure('users');
+
+        DB::table('users')->insert(['name' => 'A', 'email' => 'a@example.test', 'password' => 'x', 'oauth_provider' => 'p', 'oauth_subject' => 's']);
+        $this->expectException(QueryException::class);
+        DB::table('users')->insert(['name' => 'B', 'email' => 'b@example.test', 'password' => 'x', 'oauth_provider' => 'p', 'oauth_subject' => 's']);
+    }
+
+    public function test_ensure_refuses_when_existing_bindings_are_already_duplicated(): void
+    {
+        Schema::table('users', function (Blueprint $table): void {
+            $table->string('oauth_provider', 64)->nullable();
+            $table->string('oauth_subject', 191)->nullable();
+        });
+        DB::table('users')->insert(['name' => 'A', 'email' => 'a@example.test', 'password' => 'x', 'oauth_provider' => 'p', 'oauth_subject' => 's']);
+        DB::table('users')->insert(['name' => 'B', 'email' => 'b@example.test', 'password' => 'x', 'oauth_provider' => 'p', 'oauth_subject' => 's']);
+
+        $this->expectException(QueryException::class);
+        OAuthIdentityColumns::ensure('users');
+    }
+
     public function test_ensure_refuses_a_table_with_only_one_of_the_columns(): void
     {
         Schema::table('users', fn (Blueprint $table) => $table->string('oauth_subject')->nullable());

@@ -47,8 +47,8 @@ final class OAuthIdentityColumns
     }
 
     /**
-     * Converge an existing table: add the columns if they are missing, then make them compare
-     * exactly. Idempotent, so it is safe in an application that already has the columns.
+     * Converge an existing table: add the columns if they are missing, add their composite
+     * unique index if it is missing, then make them compare exactly. Idempotent, so it is safe in an application that already has the columns.
      */
     public static function ensure(string $table = 'users', ?string $connection = null, ?string $after = 'email'): void
     {
@@ -63,6 +63,11 @@ final class OAuthIdentityColumns
 
         if (! $hasProvider) {
             $schema->table($table, fn (Blueprint $blueprint) => self::add($blueprint, $after));
+        } elseif (! self::hasUniqueIndex($table, $connection)) {
+            // The unique index is the final guard against two accounts holding one binding
+            // (two concurrent binds on a database without gap locks). Creating it fails, and
+            // so refuses the migration, if duplicates already exist.
+            $schema->table($table, fn (Blueprint $blueprint) => $blueprint->unique([$provider, $subject], self::UNIQUE_INDEX));
         }
 
         self::makeCaseSensitive($table, $connection);
@@ -130,6 +135,24 @@ final class OAuthIdentityColumns
             (string) config('bherila-auth.provider_identity.binding.provider_column', 'oauth_provider'),
             (string) config('bherila-auth.provider_identity.binding.subject_column', 'oauth_subject'),
         ];
+    }
+
+    /** Whether a unique index covers exactly (provider, subject), in either order or name. */
+    private static function hasUniqueIndex(string $table, ?string $connection): bool
+    {
+        [$provider, $subject] = self::columns();
+
+        foreach (Schema::connection($connection)->getIndexes($table) as $index) {
+            $columns = $index['columns'] ?? [];
+            sort($columns);
+            $wanted = [$provider, $subject];
+            sort($wanted);
+            if (($index['unique'] ?? false) && $columns === $wanted) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return array<string, string> lower-cased type names by column */
