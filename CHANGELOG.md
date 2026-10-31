@@ -4,6 +4,27 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.28.2 - 2026-11-01
+
+### Declared scope implications and a logout response hook
+
+- `DeclaresScopeImplications` (`implications(): array<string, list<string>>`) is an optional interface a
+  `ScopePresentation` may also implement, so a credential picker can tick `billing:read` along with `billing:write`.
+- `ScopePresentationValidator` throws a `LogicException` naming the scope for an unknown key or requirement, a scope
+  requiring itself, a cycle, a routine scope requiring a sensitive-group scope, and a preset not closed under the
+  implications.
+- `ApiCredentialService::scopeImplications()` resolves them per surface as the transitive closure, in catalog order,
+  limited to offered scopes (empty entries dropped). The credentials index adds `scope_implications`, and
+  `token_scope_implications` beside `token_scopes`, only when the presentation implements the interface and the
+  result is non-empty.
+- Presentation only: store endpoints neither add implied scopes nor reject a set missing a requirement, and
+  authorization never infers one scope from another, so no existing grant widens.
+- `RelyingPartyLoginController::logoutResponse($request, $redirect)` is the final response of both the provider
+  sign-out and the local-only sign-out. The default is the previous `away()` behaviour; override it to answer a fetch
+  client with JSON, for example `{redirect}` when `$request->expectsJson()`.
+- **Adoption:** none required. With nothing bound or overridden, every payload and response is unchanged. Additive, so
+  a patch release.
+
 ## v0.28.1 - 2026-10-31
 
 ### Optional scope groups, sensitive groups and presets

@@ -23,6 +23,15 @@ use Illuminate\Validation\ValidationException;
  */
 final class ApiCredentialController extends Controller
 {
+    /**
+     * @param  array<string, list<string>>  $implications
+     * @return array<string, array<string, list<string>>>
+     */
+    private function implicationsKey(string $key, array $implications): array
+    {
+        return $implications === [] ? [] : [$key => $implications];
+    }
+
     public function index(Request $request, ApiCredentialService $credentials): JsonResponse
     {
         $user = $this->user($request);
@@ -45,6 +54,7 @@ final class ApiCredentialController extends Controller
                     'scope_groups' => $credentials->scopeGroups($credentials->grantableScopes()),
                     'scope_presets' => $credentials->scopePresets($credentials->grantableScopes()),
                 ] : []),
+                ...$this->implicationsKey('scope_implications', $credentials->scopeImplications($credentials->grantableScopes())),
                 'token_lifetimes' => $credentials->lifetimes(),
                 // With several resources a personal token is held to its resource's ceiling, so
                 // its choices can be narrower than an OAuth app's; listed only then.
@@ -58,6 +68,7 @@ final class ApiCredentialController extends Controller
                         'token_scope_groups' => $credentials->scopeGroups($credentials->tokenScopes()),
                         'token_scope_presets' => $credentials->scopePresets($credentials->tokenScopes()),
                     ] : []),
+                    ...$this->implicationsKey('token_scope_implications', $credentials->scopeImplications($credentials->tokenScopes())),
                 ] : []),
                 ...($connections ? [
                     // Offered to personal API tokens only, never to OAuth apps.

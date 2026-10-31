@@ -139,10 +139,10 @@ abstract class RelyingPartyLoginController extends Controller
             $request->session()->regenerateToken();
             $this->afterLocalSignOut($request, $user);
 
-            return $this->away($request, redirect($this->afterSignOutUrl($request)));
+            return $this->logoutResponse($request, redirect($this->afterSignOutUrl($request)));
         }
 
-        return $this->away($request, $this->signOutThroughProvider($request, $oauth, $this->afterSignOutUrl($request)));
+        return $this->logoutResponse($request, $this->signOutThroughProvider($request, $oauth, $this->afterSignOutUrl($request)));
     }
 
     /** The application's account rules; `bherila-auth.oauth_login.accounts` by default. */
@@ -221,6 +221,16 @@ abstract class RelyingPartyLoginController extends Controller
         }
 
         return $guard;
+    }
+
+    /**
+     * The final response for a sign-out, provider or local-only. The default is
+     * {@see away()}; override to answer a fetch client, e.g. JSON `{redirect}` when
+     * `$request->expectsJson()`.
+     */
+    protected function logoutResponse(Request $request, RedirectResponse $redirect): Response
+    {
+        return $this->away($request, $redirect);
     }
 
     /** A redirect, or for an Inertia visit the external-location response it can follow. */

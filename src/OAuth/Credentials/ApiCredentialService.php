@@ -93,6 +93,18 @@ final class ApiCredentialService
         return app(ScopePresentationResolver::class)->presets($offered);
     }
 
+    /**
+     * The declared scope implications (transitive, catalog order) restricted to one surface.
+     * Empty unless the bound presentation implements DeclaresScopeImplications.
+     *
+     * @param  array<string, string>  $offered
+     * @return array<string, list<string>>
+     */
+    public function scopeImplications(array $offered): array
+    {
+        return app(ScopePresentationResolver::class)->implications($offered);
+    }
+
     /** Whether the application bound any scope group or preset. */
     public function scopePresentationActive(): bool
     {

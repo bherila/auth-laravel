@@ -337,6 +337,31 @@ class RelyingPartyLoginControllerTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_the_default_logout_response_is_unchanged_for_json_requests(): void
+    {
+        $user = $this->account('Person', 'person@example.test', 'subject-j0');
+
+        $this->actingAs($user)->postJson('/logout')->assertRedirectContains('https://identity.example.test/oauth/end-session');
+    }
+
+    public function test_an_override_can_answer_json_for_both_sign_outs(): void
+    {
+        Route::middleware('web')->post('/json-logout', [JsonLogoutController::class, 'logout']);
+
+        $user = $this->account('Person', 'person@example.test', 'subject-j1');
+        $response = $this->actingAs($user)->postJson('/json-logout')->assertOk();
+        $this->assertStringStartsWith('https://identity.example.test/oauth/end-session', (string) $response->json('redirect'));
+        $this->assertGuest();
+
+        JsonLogoutController::$localOnly = true;
+        $user = $this->account('Other', 'other@example.test');
+        $this->actingAs($user)->postJson('/json-logout')->assertOk()->assertExactJson(['redirect' => 'http://localhost']);
+        $this->assertGuest();
+
+        $this->actingAs($user)->post('/json-logout')->assertRedirect('http://localhost');
+        JsonLogoutController::$localOnly = false;
+    }
+
     private function account(string $name, string $email, ?string $subject = null): User
     {
         $user = new User;
@@ -440,6 +465,16 @@ class TestLoginController extends RelyingPartyLoginController
     protected function signsOutLocallyOnly(Request $request, ?Authenticatable $user): bool
     {
         return self::$localOnly;
+    }
+}
+
+class JsonLogoutController extends TestLoginController
+{
+    protected function logoutResponse(Request $request, \Illuminate\Http\RedirectResponse $redirect): \Symfony\Component\HttpFoundation\Response
+    {
+        return $request->expectsJson()
+            ? response()->json(['redirect' => $redirect->getTargetUrl()])
+            : parent::logoutResponse($request, $redirect);
     }
 }
 

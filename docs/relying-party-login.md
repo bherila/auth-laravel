@@ -100,6 +100,7 @@ array the application returns, so they need not be fillable.
 | `afterSignIn($request, $account, $identity)` | nothing. Runs only for a sign-in that completed. |
 | `signsOutLocallyOnly($request, $user)` | `false`. Return `true` for a session that never involved the provider (Google, a break-glass password), so signing out does not end the person's sessions in every sibling application. |
 | `afterSignOutUrl($request)` | `url('/')` |
+| `logoutResponse($request, $redirect)` | `away()`: 409 with `X-Inertia-Location` for an Inertia visit, otherwise the redirect. Both the provider sign-out and the local-only sign-out end here. Override to answer a fetch client, e.g. `return $request->expectsJson() ? response()->json(['redirect' => $redirect->getTargetUrl()]) : parent::logoutResponse($request, $redirect);`. |
 | `afterLocalSignOut($request, $user)` | audits the sign-out |
 | `$remember` | `false` |
 | `$returnParameter` | `'redirect'`. `?redirect=` on the redirect route names the page to return to. Only a path on this site, or an absolute URL on this origin, is kept (`BWH\Auth\Support\IntendedUrl`). Anything else is dropped. |

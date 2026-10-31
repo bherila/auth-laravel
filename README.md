@@ -669,6 +669,23 @@ Per surface, groups keep only offered scopes in declared order, drop empty group
 
 Presentation only: grants store explicit scopes, and `POST /tokens` and `POST /apps` still accept only offered scope ids (a group or preset id gets 422). When groups are bound, the consent screen lists requested scopes in `<section class="scope-group">` sections (`scope-group sensitive` with a `consent.sensitive_notice` warning), ungrouped ones under "Other permissions"; all text is escaped. Nothing is narrowed on consent.
 
+##### Scope implications
+
+A presentation may also implement `DeclaresScopeImplications` so a picker can tick requirements together:
+
+```php
+public function implications(): array
+{
+    return ['billing:write' => ['billing:read']];
+}
+```
+
+Validation (`LogicException` naming the scope): every key and requirement is in the scope catalog; no scope requires itself; no cycles; a scope outside every sensitive group never requires one inside; each preset is closed under the implications (a preset with `billing:write` also has `billing:read`, transitively).
+
+The index adds `scope_implications` (and `token_scope_implications` beside `token_scopes`) only when the interface is implemented and the result is non-empty. Each is `{scope id: [required ids]}`, already the transitive closure, in catalog order, limited to scopes that surface offers; an entry with nothing left is dropped. Ids are strings.
+
+Implications are presentation, like groups: `POST /tokens` and `POST /apps` do not add an implied scope and do not reject a set missing one, and authorization never infers one scope from another, so no existing grant widens.
+
 #### Refresh-token client ownership
 
 Publish and run `2026_10_11_120000_add_client_id_to_oauth_refresh_tokens` before purging more expired access-token rows. It adds a nullable, indexed `client_id` to the refresh-token table on the Passport connection and backfills rows whose access token still exists. An existing application-owned column and its non-null values are preserved; rollback retains the column.

@@ -93,6 +93,56 @@ final class ScopePresentationResolver
         return $presets;
     }
 
+    /**
+     * Declared implications as a transitive closure, in catalog order, restricted to
+     * one surface: a key must be offered, a requirement must be offered, and an entry
+     * left with no requirement is dropped. Empty unless the presentation declares any.
+     *
+     * @param  array<string, string>  $offered
+     * @return array<string, list<string>>
+     */
+    public function implications(array $offered): array
+    {
+        $this->validate();
+        if (! $this->presentation instanceof DeclaresScopeImplications) {
+            return [];
+        }
+
+        $direct = [];
+        foreach ($this->presentation->implications() as $scope => $required) {
+            foreach ($required as $need) {
+                $direct[(string) $scope][(string) $need] = true;
+            }
+        }
+        $closure = static function (string $scope) use (&$closure, $direct): array {
+            $all = [];
+            foreach (array_keys($direct[$scope] ?? []) as $need) {
+                $need = (string) $need;
+                $all[$need] = true;
+                foreach ($closure($need) as $deeper) {
+                    $all[$deeper] = true;
+                }
+            }
+
+            return array_map('strval', array_keys($all));
+        };
+
+        $ordered = array_values(array_unique(array_map('strval', [...array_keys(ConfiguredGrantableScopes::catalog()), ...array_keys($offered)])));
+        $result = [];
+        foreach ($ordered as $scope) {
+            if (! array_key_exists($scope, $offered) || ! isset($direct[$scope])) {
+                continue;
+            }
+            $needs = $closure($scope);
+            $kept = array_values(array_filter($ordered, static fn (string $id): bool => in_array($id, $needs, true) && array_key_exists($id, $offered)));
+            if ($kept !== []) {
+                $result[$scope] = $kept;
+            }
+        }
+
+        return $result;
+    }
+
     private function validate(): void
     {
         if (! $this->validated) {
