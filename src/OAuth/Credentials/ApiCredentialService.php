@@ -71,6 +71,35 @@ final class ApiCredentialService
     }
 
     /**
+     * The bound ScopePresentation's groups, resolved against one surface's
+     * `id => description` map (every offered scope exactly once; empty without groups).
+     *
+     * @param  array<string, string>  $offered
+     * @return list<array{id: string, label: string, description: ?string, sensitive: bool, scopes: list<string>}>
+     */
+    public function scopeGroups(array $offered): array
+    {
+        return app(ScopePresentationResolver::class)->groups($offered);
+    }
+
+    /**
+     * The bound presets whose every scope is offered on this surface.
+     *
+     * @param  array<string, string>  $offered
+     * @return list<array{id: string, label: string, description: string, scopes: list<string>}>
+     */
+    public function scopePresets(array $offered): array
+    {
+        return app(ScopePresentationResolver::class)->presets($offered);
+    }
+
+    /** Whether the application bound any scope group or preset. */
+    public function scopePresentationActive(): bool
+    {
+        return app(ScopePresentationResolver::class)->active();
+    }
+
+    /**
      * The connection scopes a personal API token may carry, `identifier =>
      * description`: empty unless the application opted in.
      *
