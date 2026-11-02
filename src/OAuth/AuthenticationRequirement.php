@@ -81,8 +81,9 @@ final readonly class AuthenticationRequirement
             return false;
         }
 
+        // With no request to compare against, as in a session check, it has to be from just now.
         if (($this->forceLogin || $this->maxAge === 0)
-            && ($requestedAt === null || $authTime < $requestedAt - self::CLOCK_SKEW_SECONDS)) {
+            && $authTime < ($requestedAt ?? $now) - self::CLOCK_SKEW_SECONDS) {
             return false;
         }
 

@@ -209,6 +209,18 @@ class AuthenticationContextTest extends TestCase
         $this->actingAs($user)->withSession($passkey)->getJson('/methods')->assertOk();
     }
 
+    public function test_a_zero_age_route_accepts_a_sign_in_from_just_now_and_nothing_older(): void
+    {
+        Route::middleware('web')->get('/always', fn () => 'allowed')->middleware(RequireRecentAuthentication::class.':0');
+        $user = $this->person();
+        $session = $this->context($user, self::NOW, ['pwd'], AuthenticationRequirement::ACR_SINGLE);
+
+        $this->actingAs($user)->withSession($session)->getJson('/always')->assertOk();
+
+        Carbon::setTestNow(Carbon::createFromTimestamp(self::NOW + 60));
+        $this->actingAs($user)->withSession($session)->getJson('/always')->assertForbidden();
+    }
+
     public function test_a_context_recorded_for_another_account_does_not_count(): void
     {
         $someone = $this->person('someone@example.test');
