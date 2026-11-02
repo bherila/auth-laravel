@@ -2,6 +2,7 @@
 
 namespace BWH\Auth\OAuth\Client;
 
+use BWH\Auth\OAuth\AuthenticationRequirement;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Session\Session;
@@ -39,6 +40,7 @@ final readonly class PendingFlow
         public ?string $user,
         public ?int $startedAt,
         public ?string $scope = null,
+        public ?AuthenticationRequirement $requirement = null,
     ) {}
 
     public function store(Session $session, string $state): void
@@ -113,6 +115,7 @@ final readonly class PendingFlow
             'user' => $this->user,
             'started_at' => $this->startedAt,
             'scope' => $this->scope,
+            'requirement' => $this->requirement?->toArray(),
         ];
     }
 
@@ -131,6 +134,12 @@ final readonly class PendingFlow
             return null;
         }
 
+        // A requirement that can't be read must not turn into no requirement.
+        $requirement = AuthenticationRequirement::fromArray($binding['requirement'] ?? null);
+        if (($binding['requirement'] ?? null) !== null && $requirement === null) {
+            return null;
+        }
+
         return new self(
             server: $binding['server'],
             issuer: $binding['issuer'],
@@ -142,6 +151,7 @@ final readonly class PendingFlow
             user: $binding['user'],
             startedAt: $binding['started_at'],
             scope: $binding['scope'] ?? null,
+            requirement: $requirement,
         );
     }
 

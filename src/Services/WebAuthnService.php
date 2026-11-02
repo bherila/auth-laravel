@@ -99,7 +99,11 @@ class WebAuthnService
             $this->getRpId($request),
         );
 
-        return PasskeyCredential::query()->create([
+        $backupEligible = (new PasskeyCredential)->hasBackupEligibleColumn()
+            ? ['backup_eligible' => $source->backupEligible]
+            : [];
+
+        return PasskeyCredential::query()->create($backupEligible + [
             'user_id' => $user->getAuthIdentifier(),
             'credential_id' => $this->encodeCredentialId($source->publicKeyCredentialId),
             'public_key' => base64_encode($source->credentialPublicKey),
@@ -171,12 +175,36 @@ class WebAuthnService
             (string) $user->getAuthIdentifier(),
         );
 
+        $this->reconcileBackupEligibility($storedCredential, $response->authenticatorData->isBackupEligible());
+
         $storedCredential->update([
             'counter' => $updatedSource->counter,
             'last_used_at' => now(),
         ]);
 
-        return [$user, $storedCredential];
+        return [$user, $storedCredential, $response->authenticatorData->isUserVerified()];
+    }
+
+    /**
+     * The flag is fixed for a credential, so a change means this isn't the authenticator that
+     * enrolled. A credential enrolled before the flag was recorded takes it from this
+     * assertion. Call only after the assertion's signature has been verified.
+     */
+    public function reconcileBackupEligibility(PasskeyCredential $credential, bool $eligible): void
+    {
+        if (! $credential->hasBackupEligibleColumn()) {
+            return;
+        }
+
+        if ($credential->backup_eligible === null) {
+            $credential->backup_eligible = $eligible;
+
+            return;
+        }
+
+        if ($credential->backup_eligible !== $eligible) {
+            throw new RuntimeException('The passkey backup-eligible flag changed.');
+        }
     }
 
     private function findStoredCredential(string $encodedCredentialId): ?PasskeyCredential

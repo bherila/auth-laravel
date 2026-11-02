@@ -85,6 +85,12 @@ return [
         'provider_bound' => env('BHERILA_AUTH_LOCAL_CREDENTIALS_PROVIDER_BOUND', 'allow'),
     ],
 
+    // Where RequireRecentAuthentication sends a browser. Must route to
+    // RelyingPartyLoginController::redirect, which asks the provider for the requirement.
+    'recent_authentication' => [
+        'redirect_to' => env('BHERILA_AUTH_RECENT_AUTHENTICATION_REDIRECT', '/login'),
+    ],
+
     'provider_identity' => [
         'enabled' => (bool) env('BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED', false),
         // One status observation per provider subject is shared by every credential of that

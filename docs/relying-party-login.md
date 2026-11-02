@@ -108,6 +108,27 @@ array the application returns, so they need not be fillable.
 Inertia visits (`X-Inertia`) get a 409 with `X-Inertia-Location` wherever a redirect leaves
 the origin. Nothing depends on Inertia.
 
+## Requiring a recent sign-in
+
+Protect a route with how recently, and how, the person must have authenticated at the provider:
+
+```php
+Route::middleware(['auth', RequireRecentAuthentication::class.':900'])->...;
+Route::middleware(['auth', RequireRecentAuthentication::class.':3600,acr=urn:auth-manager:acr:phishing-resistant'])->...;
+Route::middleware(['auth', RequireRecentAuthentication::class.':900,amr=otp|hwk|swk'])->...;
+```
+
+Set `recent_authentication.redirect_to` (`BHERILA_AUTH_RECENT_AUTHENTICATION_REDIRECT`) to the route for this controller's
+`redirect` action. A browser that doesn't meet the requirement goes there, and that sign-in asks the provider for it. A JSON
+client gets a 403 with `error: insufficient_user_authentication`, plus `max_age` and `acr_values`.
+
+The check uses only what the provider returned at sign-in. Several `acr` or `amr` values mean any of them. Rungs are read only
+from `acr` and methods only from `amr`. `urn:auth-manager:acr:single` is met by any rung, and the other rungs only by themselves.
+A session with no recorded values, such as a remembered login, meets no requirement.
+
+To ask outside the middleware, pass an `AuthenticationRequirement` to `OAuthClient::redirect`. `identityFromCallback` then
+refuses a response that misses it.
+
 ## Local credentials for provider-bound accounts
 
 `AuthUserPolicy::canLogin()` answers whether an account may sign in at all, by any method,

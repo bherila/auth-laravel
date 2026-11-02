@@ -31,4 +31,7 @@ enum OAuthCallbackFailure: string
 
     /** The response carries no authorization code. */
     case CodeMissing = 'code_missing';
+
+    /** The provider's returned `auth_time`, `amr` or `acr` don't meet what the sign-in asked for. */
+    case AuthenticationRequirementUnmet = 'authentication_requirement_unmet';
 }
