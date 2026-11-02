@@ -123,7 +123,8 @@ Set `recent_authentication.redirect_to` (`BHERILA_AUTH_RECENT_AUTHENTICATION_RED
 client gets a 403 with `error: insufficient_user_authentication`, plus `max_age` and `acr_values`.
 
 The check uses only what the provider returned at sign-in. Several `acr` or `amr` values mean any of them. Rungs are read only
-from `acr` and methods only from `amr`. `urn:auth-manager:acr:single` is met by any rung, and the other rungs only by themselves.
+from `acr` and methods only from `amr`. `urn:auth-manager:acr:single` is met by any rung. `urn:auth-manager:acr:mfa` is also met by a verified passkey, and
+`urn:auth-manager:acr:phishing-resistant` only by itself, because an emailed code can still be phished.
 A session with no recorded values, such as a remembered login, meets no requirement.
 
 To ask outside the middleware, pass an `AuthenticationRequirement` to `OAuthClient::redirect`. `identityFromCallback` then

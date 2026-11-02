@@ -134,15 +134,20 @@ class AuthenticationContextTest extends TestCase
         $this->finish($query)->assertStatus(502);
     }
 
-    public function test_the_lowest_rung_is_met_by_any_rung_but_the_others_only_by_themselves(): void
+    public function test_how_the_rungs_satisfy_each_other(): void
     {
         $single = new AuthenticationRequirement(acrValues: [AuthenticationRequirement::ACR_SINGLE]);
         $mfa = new AuthenticationRequirement(acrValues: [AuthenticationRequirement::ACR_MFA]);
+        $resistant = new AuthenticationRequirement(acrValues: [self::PHISHING_RESISTANT]);
 
         $this->assertTrue($single->satisfiedBy(self::NOW, ['swk'], self::PHISHING_RESISTANT, self::NOW));
         $this->assertFalse($single->satisfiedBy(self::NOW, ['swk'], null, self::NOW));
         $this->assertTrue($mfa->satisfiedBy(self::NOW, ['pwd', 'otp', 'mfa'], AuthenticationRequirement::ACR_MFA, self::NOW));
-        $this->assertFalse($mfa->satisfiedBy(self::NOW, ['swk'], self::PHISHING_RESISTANT, self::NOW));
+        // A verified passkey satisfies a request for multi-factor.
+        $this->assertTrue($mfa->satisfiedBy(self::NOW, ['swk'], self::PHISHING_RESISTANT, self::NOW));
+        $this->assertFalse($mfa->satisfiedBy(self::NOW, ['swk'], AuthenticationRequirement::ACR_SINGLE, self::NOW));
+        // An emailed code can still be phished, so the reverse doesn't hold.
+        $this->assertFalse($resistant->satisfiedBy(self::NOW, ['pwd', 'otp', 'mfa'], AuthenticationRequirement::ACR_MFA, self::NOW));
     }
 
     public function test_an_authentication_from_the_future_satisfies_nothing(): void

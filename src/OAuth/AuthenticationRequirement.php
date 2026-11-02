@@ -134,11 +134,15 @@ final readonly class AuthenticationRequirement
             return in_array(substr($value, strlen(self::AMR_PREFIX)), $amr, true);
         }
 
-        // Any completed authentication reaches the lowest rung. The others aren't ordered
-        // against each other: an emailed code after a password is multi-factor but phishable,
-        // and a passkey is phishing-resistant but one factor.
+        // Any completed authentication reaches the lowest rung.
         if ($value === self::ACR_SINGLE) {
             return $acr !== null && str_starts_with($acr, self::ACR_PREFIX);
+        }
+
+        // A verified passkey also satisfies a request for multi-factor. The reverse doesn't
+        // hold: an emailed code after a password can still be phished.
+        if ($value === self::ACR_MFA && $acr === self::ACR_PHISHING_RESISTANT) {
+            return true;
         }
 
         return $acr !== null && hash_equals($value, $acr);
