@@ -101,7 +101,7 @@ final class OAuthClient
         return $this->authorizationServer()->issuer();
     }
 
-    public function redirect(Request $request): RedirectResponse
+    public function redirect(Request $request, ?AuthenticationRequirement $requirement = null): RedirectResponse
     {
         $server = $this->authorizationServer();
         $user = $this->userKey($request);
@@ -121,6 +121,7 @@ final class OAuthClient
             user: $user,
             startedAt: Carbon::now()->getTimestamp(),
             scope: $server->value('scope'),
+            requirement: $requirement === null || $requirement->isEmpty() ? null : $requirement,
         );
 
         $authorize = $server->endpoint('authorize_path');
@@ -133,6 +134,7 @@ final class OAuthClient
             'code_challenge' => $challenge,
             'code_challenge_method' => 'S256',
             'resource' => $flow->resource,
+            ...($flow->requirement?->parameters() ?? []),
         ], static fn (?string $value): bool => $value !== null);
 
         $flow->store($request->session(), $state);
@@ -154,10 +156,16 @@ final class OAuthClient
      */
     public function tokensFromCallback(Request $request): OAuthTokens
     {
+        return $this->exchangeCallback($request)[0];
+    }
+
+    /** @return array{OAuthTokens, PendingFlow} */
+    private function exchangeCallback(Request $request): array
+    {
         $server = $this->authorizationServer();
         [$flow, $code] = $this->verifiedResponse($request, $server);
 
-        return $this->requestTokens($server, $flow->issuer, $flow->resource, [
+        return [$this->requestTokens($server, $flow->issuer, $flow->resource, [
             'grant_type' => 'authorization_code',
             'client_id' => $server->value('client_id'),
             'client_secret' => $server->value('client_secret'),
@@ -167,7 +175,7 @@ final class OAuthClient
         ], 'The identity provider rejected the authorization code.',
             // What the flow requested, not today's setting; unknown for a flow that predates it.
             $flow->scope === null ? null : self::scopeList($flow->scope),
-        );
+        ), $flow];
     }
 
     /**
@@ -215,14 +223,27 @@ final class OAuthClient
 
     public function identityFromCallback(Request $request): OAuthIdentity
     {
-        $tokens = $this->tokensFromCallback($request);
+        [$tokens, $flow] = $this->exchangeCallback($request);
 
         $url = $this->authorizationServer()->endpoint('identity_path');
         $request = Http::acceptJson()->withToken($tokens->accessToken);
         $outbound = ($this->transport ?? null)?->prepare($request, $url) ?? $request;
         $identityResponse = $outbound->get($url);
 
-        return $this->validatedIdentity($identityResponse);
+        $identity = $this->validatedIdentity($identityResponse);
+
+        // The enforcement: a provider that ignored the request is refused here.
+        if ($flow->requirement !== null && ! $flow->requirement->satisfiedBy(
+            $identity->authTime,
+            $identity->amr,
+            $identity->acr,
+            Carbon::now()->getTimestamp(),
+            $flow->startedAt,
+        )) {
+            throw new OAuthCallbackRejected(OAuthCallbackFailure::AuthenticationRequirementUnmet);
+        }
+
+        return $identity;
     }
 
     /**
@@ -491,6 +512,17 @@ final class OAuthClient
         abort_unless($generation === null || (is_int($generation) && $generation >= 0),
             502, 'The identity provider returned an invalid credential generation.');
 
+        $authTime = $identity['auth_time'] ?? null;
+        $amr = $identity['amr'] ?? [];
+        $acr = $identity['acr'] ?? null;
+        abort_unless(
+            ($authTime === null || (is_int($authTime) && $authTime > 0))
+            && is_array($amr) && array_is_list($amr) && array_filter($amr, 'is_string') === $amr
+            && ($acr === null || is_string($acr)),
+            502,
+            'The identity provider returned an invalid authentication context.',
+        );
+
         return new OAuthIdentity(
             provider: $this->providerName(),
             subject: $identity['sub'],
@@ -498,6 +530,9 @@ final class OAuthClient
             email: Str::lower($identity['email']),
             apps: $this->applications($identity['apps'] ?? null),
             credentialVersion: $generation,
+            authTime: $authTime,
+            amr: $amr,
+            acr: $acr,
         );
     }
 

@@ -9,6 +9,9 @@ class PasskeyCredential extends Model
 {
     private static array $credentialIdHashColumnCache = [];
 
+    /** @var array<string, bool> */
+    private static array $backupEligibleColumnCache = [];
+
     protected $fillable = [
         'user_id',
         'credential_id',
@@ -20,12 +23,14 @@ class PasskeyCredential extends Model
         'transports',
         'last_used_at',
         'rp_id',
+        'backup_eligible',
     ];
 
     protected $casts = [
         'counter' => 'integer',
         'transports' => 'array',
         'last_used_at' => 'datetime',
+        'backup_eligible' => 'boolean',
     ];
 
     protected static function booted(): void
@@ -67,6 +72,16 @@ class PasskeyCredential extends Model
         }
 
         return self::$credentialIdHashColumnCache[$key];
+    }
+
+    public function hasBackupEligibleColumn(): bool
+    {
+        $connection = $this->getConnection();
+        $key = $connection->getName().'.'.$this->getTable();
+
+        return self::$backupEligibleColumnCache[$key] ??= $connection
+            ->getSchemaBuilder()
+            ->hasColumn($this->getTable(), 'backup_eligible');
     }
 
     public function user(): BelongsTo

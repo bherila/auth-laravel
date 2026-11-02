@@ -5,6 +5,7 @@ namespace BWH\Auth\Http\Controllers;
 use BWH\Auth\Contracts\AuthAuditLogger;
 use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
+use BWH\Auth\Events\TwoFactorLoginSucceeded;
 use BWH\Auth\Models\TwoFactorAttempt;
 use BWH\Auth\Services\TwoFactorService;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -189,6 +190,7 @@ class TwoFactorController extends Controller
 
         $redirect = $this->userPolicy->redirectAfterLogin($user, $request);
         $this->auditLogger->twoFactorLoginSucceeded($request, $user, $attempt);
+        event(new TwoFactorLoginSucceeded($user, $attempt));
 
         if ($request->expectsJson()) {
             return response()->json([

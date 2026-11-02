@@ -104,7 +104,7 @@ class PasskeyController extends Controller
         $credentialId = $request->input('credential.id');
 
         try {
-            [$user, $credential] = $this->webAuthnService->verifyAuthenticationResponse($request, $validated['credential']);
+            [$user, $credential, $userVerified] = $this->webAuthnService->verifyAuthenticationResponse($request, $validated['credential']);
 
             if (! $this->userPolicy->canPasskeyLogin($user, $request)
                 || ! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request)) {
@@ -115,7 +115,7 @@ class PasskeyController extends Controller
             $request->session()->regenerate();
 
             $this->auditLogger->passkeyLoginSucceeded($request, $user, $credential);
-            event(new PasskeyLoginSucceeded($user, $credential));
+            event(new PasskeyLoginSucceeded($user, $credential, $userVerified));
 
             return response()->json([
                 'success' => true,

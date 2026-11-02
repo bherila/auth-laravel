@@ -12,6 +12,7 @@ use BWH\Auth\OAuth\Login\SubjectBoundAccounts;
 use BWH\Auth\OAuth\OAuthClient;
 use BWH\Auth\OAuth\OAuthIdentity;
 use BWH\Auth\OAuth\ProviderApplications;
+use BWH\Auth\OAuth\Session\AuthenticationContext;
 use BWH\Auth\OAuth\Session\ProviderSession;
 use BWH\Auth\OAuth\Session\ProviderStatusUnavailable;
 use BWH\Auth\Support\IntendedUrl;
@@ -65,7 +66,7 @@ abstract class RelyingPartyLoginController extends Controller
             IntendedUrl::remember($request, $this->returnParameter);
         }
 
-        return $this->away($request, $oauth->redirect($request));
+        return $this->away($request, $oauth->redirect($request, AuthenticationContext::pullNext($request)));
     }
 
     public function callback(Request $request, OAuthClient $oauth): Response
@@ -116,6 +117,7 @@ abstract class RelyingPartyLoginController extends Controller
         // Only once the application has admitted the person: a refused sign-in leaves
         // nothing behind in the visitor's session.
         ProviderApplications::remember($request, $identity->apps);
+        AuthenticationContext::remember($request, $identity, $account);
 
         $this->afterSignIn($request, $account, $identity);
 

@@ -113,7 +113,7 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
         $key = 'bherila-auth:oauth-client:pending-flow:'.hash('sha256', $query['state']);
         $binding = Cache::store('pending')->get($key);
         $this->assertIsArray($binding);
-        $this->assertSame(['server', 'issuer', 'callback', 'resource', 'issuer_required', 'user', 'started_at', 'scope', 'verifier'], array_keys($binding));
+        $this->assertSame(['server', 'issuer', 'callback', 'resource', 'issuer_required', 'user', 'started_at', 'scope', 'requirement', 'verifier'], array_keys($binding));
         $this->assertSame('records', $binding['server']);
         $this->assertSame('7', $binding['user']);
         $this->assertNull(Cache::store('array')->get($key));

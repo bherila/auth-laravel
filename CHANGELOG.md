@@ -4,6 +4,30 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.28.3 - 2026-11-02
+
+### Forced fresh sign-in
+
+- `OAuthClient::redirect($request, $requirement)` takes an optional `AuthenticationRequirement` and sends `prompt`,
+  `max_age` and `acr_values`. `identityFromCallback` checks the returned `auth_time`, `amr` and `acr` against it and
+  refuses a response that misses it with `OAuthCallbackRejected` (`AuthenticationRequirementUnmet`), so a provider
+  that ignored the request is still refused.
+- `OAuthIdentity` adds `authTime`, `amr` and `acr`, null or empty when the provider doesn't report them. Malformed
+  values answer 502.
+- `RelyingPartyLoginController` records them in the session as `AuthenticationContext`, replacing any earlier values.
+- `RequireRecentAuthentication` takes seconds, `acr=` and `amr=`, for example `:900,amr=otp|hwk|swk`. A session with no
+  recorded values satisfies nothing, so a remembered login has to authenticate again. A browser goes to the new
+  `recent_authentication.redirect_to` setting, and a JSON client gets a 403 with `insufficient_user_authentication`.
+- `TwoFactorLoginSucceeded` fires when an emailed code signs someone in. An authorization server can set
+  `oauth_server.authentication_context` to advertise `acr_values_supported` and `prompt_values_supported`.
+- Passkeys record the WebAuthn backup-eligible flag at enrolment, and an assertion whose flag differs is refused. A
+  passkey enrolled earlier takes the flag from its next verified assertion. `PasskeyLoginSucceeded` adds `userVerified`.
+- **Adoption:** none required. With no requirement passed, requests and responses are unchanged. To record the passkey
+  flag, publish the migration with `php artisan vendor:publish --tag=bherila-auth-migrations` and let the deployment
+  run it. Without the column, passkeys work as before and the flag isn't checked. Set `redirect_to` before using the
+  middleware, to the route for `RelyingPartyLoginController::redirect`. The provider must send these claims, or
+  any request for them is refused.
+
 ## v0.28.2 - 2026-11-01
 
 ### Declared scope implications and a logout response hook

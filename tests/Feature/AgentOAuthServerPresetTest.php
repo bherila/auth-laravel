@@ -97,6 +97,22 @@ final class AgentOAuthServerPresetTest extends TestCase
         $this->assertSame('https://h.example.test:8443/.well-known/oauth-authorization-server', AgentOAuthServer::wellKnown('https://h.example.test:8443', 'oauth-authorization-server'));
     }
 
+    public function test_the_metadata_advertises_the_authentication_context_only_when_set(): void
+    {
+        $this->getJson('/.well-known/oauth-authorization-server')->assertOk()
+            ->assertJsonMissingPath('acr_values_supported')
+            ->assertJsonMissingPath('prompt_values_supported');
+
+        config(['bherila-auth.oauth_server.authentication_context' => [
+            'acr_values_supported' => ['urn:auth-manager:acr:single'],
+            'prompt_values_supported' => ['login'],
+        ]]);
+
+        $this->getJson('/.well-known/oauth-authorization-server')->assertOk()
+            ->assertJsonPath('acr_values_supported', ['urn:auth-manager:acr:single'])
+            ->assertJsonPath('prompt_values_supported', ['login']);
+    }
+
     /** RFC 9728: the document is served only where its `resource` matches the discovery URL. */
     public function test_protected_resource_metadata_is_served_only_at_the_matching_path(): void
     {

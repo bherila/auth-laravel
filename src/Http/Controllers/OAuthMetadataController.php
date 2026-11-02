@@ -41,6 +41,13 @@ final class OAuthMetadataController
             $metadata['authorization_response_iss_parameter_supported'] = true;
         }
 
+        foreach (['acr_values_supported', 'prompt_values_supported'] as $key) {
+            $values = config('bherila-auth.oauth_server.authentication_context.'.$key, []);
+            if (is_array($values) && $values !== []) {
+                $metadata[$key] = array_values($values);
+            }
+        }
+
         return $this->publicJson($metadata);
     }
 
