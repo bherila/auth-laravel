@@ -3,6 +3,7 @@
 namespace BWH\Auth\Tests\Feature;
 
 use BWH\Auth\Contracts\AuthUserPolicy;
+use BWH\Auth\Events\TwoFactorLoginSucceeded;
 use BWH\Auth\Models\TwoFactorAttempt;
 use BWH\Auth\Services\DefaultAuthUserPolicy;
 use BWH\Auth\Tests\Fixtures\User;
@@ -10,6 +11,7 @@ use BWH\Auth\Tests\TestCase;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 
@@ -75,6 +77,19 @@ class TwoFactorLoginTest extends TestCase
 
         $this->assertAuthenticatedAs($user);
         $this->assertTrue($attempt->fresh()->is_used);
+    }
+
+    public function test_verifying_a_code_announces_the_sign_in_and_a_wrong_code_does_not(): void
+    {
+        Event::fake([TwoFactorLoginSucceeded::class]);
+        $user = $this->user();
+        $attempt = TwoFactorAttempt::createForUser($user);
+
+        $this->postJson('/api/auth/two-factor/verify', ['attempt_token' => $attempt->token, 'code' => 'wrong!']);
+        Event::assertNotDispatched(TwoFactorLoginSucceeded::class);
+
+        $this->postJson('/api/auth/two-factor/verify', ['attempt_token' => $attempt->token, 'code' => $attempt->code])->assertOk();
+        Event::assertDispatched(TwoFactorLoginSucceeded::class, fn (TwoFactorLoginSucceeded $event): bool => $event->user->is($user));
     }
 
     public function test_verify_refuses_an_account_disabled_after_the_challenge_was_created(): void

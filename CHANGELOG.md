@@ -18,6 +18,8 @@ the first entry here is in the git history.
 - `RequireRecentAuthentication` takes seconds, `acr=` and `amr=`, for example `:900,amr=otp|hwk|swk`. A session with no
   recorded values satisfies nothing, so a remembered login has to authenticate again. A browser goes to the new
   `recent_authentication.redirect_to` setting, and a JSON client gets a 403 with `insufficient_user_authentication`.
+- `TwoFactorLoginSucceeded` fires when an emailed code signs someone in. An authorization server can set
+  `oauth_server.authentication_context` to advertise `acr_values_supported` and `prompt_values_supported`.
 - Passkeys record the WebAuthn backup-eligible flag at enrolment, and an assertion whose flag differs is refused. A
   passkey enrolled earlier takes the flag from its next verified assertion. `PasskeyLoginSucceeded` adds `userVerified`.
 - **Adoption:** none required. With no requirement passed, requests and responses are unchanged. To record the passkey

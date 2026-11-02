@@ -140,6 +140,11 @@ return [
         'auth_code_resource_column' => 'resource_uri',
         'resource_column' => 'resource_uri',
         'refresh_token_resource_column' => 'resource_uri',
+        // What the authorization endpoint enforces, advertised in the server metadata when set.
+        'authentication_context' => [
+            'acr_values_supported' => [],
+            'prompt_values_supported' => [],
+        ],
         'authorization_response_issuer' => [
             // RFC 9207 is opt-in because the authorization response middleware must
             // be installed on every authorization/consent route to make this true.
