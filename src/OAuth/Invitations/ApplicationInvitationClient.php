@@ -442,7 +442,8 @@ final class ApplicationInvitationClient implements ApplicationInvitations
             && in_array(strtolower($parts['host'] ?? ''), ['localhost', '127.0.0.1', '[::1]'], true);
         if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false || ! is_array($parts)
             || (! $local && $scheme !== 'https')
-            || isset($parts['user']) || isset($parts['pass']) || isset($parts['path'])
+            || isset($parts['user']) || isset($parts['pass'])
+            || preg_match('~\A(?:/[A-Za-z0-9_-]+)*\z~D', $parts['path'] ?? '') !== 1
             || isset($parts['query']) || isset($parts['fragment'])) {
             throw self::notConfigured();
         }

@@ -89,6 +89,23 @@ class ApplicationInvitationClientContractTest extends TestCase
         $this->providerVerifies($request, '9007199254740993');
     }
 
+    /** @param array<mixed> $answer */
+    #[DataProvider('operations')]
+    public function test_embedded_requests_and_assertions_keep_the_issuer_mount_path(\Closure $operation, string $path, string $body, array $answer): void
+    {
+        $issuer = self::ISSUER.'/account/auth-v1';
+        config(['bherila-auth.oauth_client.base_url' => $issuer]);
+        $this->provider($answer, $path === '/api/application-invitations' ? 201 : 200);
+
+        $operation($this->invitations());
+
+        $this->assertSame($issuer.'/oauth/token', $this->tokenRequests()[0]->url());
+        [$request] = $this->invitationRequests();
+        $this->assertSame($issuer.$path, $request->url());
+        $this->assertSame($body, $request->body());
+        $this->providerVerifies($request, issuer: $issuer);
+    }
+
     public function test_every_request_carries_a_new_assertion_id(): void
     {
         $this->provider(fn (Request $request) => Http::response(self::issuedBody(), 200));
@@ -130,11 +147,13 @@ class ApplicationInvitationClientContractTest extends TestCase
      *
      * @return array{sub: string, jti: string}
      */
-    private function providerVerifies(Request $request, string $subject = '42'): array
+    private function providerVerifies(Request $request, string $subject = '42', string $issuer = self::ISSUER): array
     {
-        // AuthenticateApplicationInvitationRequest::audience(): rtrim(issuer, '/').'/'.$request->path()
+        // AuthenticateApplicationInvitationRequest::audience(): issuer plus Mount::relativePath().
         $server = ServerRequest::create($request->url(), 'POST', content: $request->body());
-        $audience = rtrim(self::ISSUER, '/').'/'.$server->path();
+        $prefix = trim(parse_url($issuer, PHP_URL_PATH) ?? '', '/');
+        $relativePath = $prefix === '' ? $server->path() : substr($server->path(), strlen($prefix) + 1);
+        $audience = rtrim($issuer, '/').'/'.$relativePath;
 
         $claims = (new ApplicationActorAssertionVerifier($this->nonces()))->verify(
             $request->header(ApplicationActorAssertionVerifier::HEADER)[0],

@@ -28,7 +28,7 @@ The client uses the sign-in client's settings (`bherila-auth.oauth_client.base_u
 
 | Key (`bherila-auth.application_invitations.*`) | Environment | Default | Meaning |
 |---|---|---|---|
-| `issuer` | `BHERILA_AUTH_INVITATION_ISSUER` | `oauth_client.base_url` | The provider's exact issuer, an `https://` origin with no path. Requests go here, and each assertion's audience is this value plus the endpoint path, byte for byte. |
+| `issuer` | `BHERILA_AUTH_INVITATION_ISSUER` | `oauth_client.base_url` | The provider's exact HTTPS issuer, optionally including an embedded mount such as `/auth`. Mount segments use letters, digits, `_` and `-`. Requests go here, and each assertion's audience is this value plus the endpoint path, byte for byte. |
 | `key_id` | `BHERILA_AUTH_INVITATION_KEY_ID` | none | The key id the provider pinned this application's public key under. |
 | `private_key_path` | `BHERILA_AUTH_INVITATION_PRIVATE_KEY_PATH` | none | A readable PEM file holding the RSA private key (at least 2048 bits). |
 | `private_key` | `BHERILA_AUTH_INVITATION_PRIVATE_KEY` | none | The PEM itself; escaped `\n` newlines are accepted. Set exactly one of this and `private_key_path`. |
@@ -44,7 +44,8 @@ application's sign-in client.
 Any missing or invalid setting refuses every call with `ApplicationInvitationMisconfigured`
 (`not_configured`) before anything is sent: no client id or secret, no key id, both or neither key
 setting, an unreadable or non-RSA key, a key under 2048 bits, or an issuer that is not HTTPS
-(loopback HTTP is allowed in `local` and `testing`), has a path, credentials, a query or a fragment.
+(loopback HTTP is allowed in `local` and `testing`), has credentials, a query, a fragment,
+or an invalid mount path (including dot segments, encoded characters or empty segments).
 
 ## Calling it
 
