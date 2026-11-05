@@ -4,6 +4,13 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+- Passkey authentication accepts an optional boolean `remember` field and passes
+  it to the active Laravel guard. Omitted or false values retain session-only
+  login; true issues the guard's existing persistent-login cookie. The browser
+  must send its current choice with the final credential request.
+
 ## v0.28.3 - 2026-11-02
 
 ### Forced fresh sign-in
