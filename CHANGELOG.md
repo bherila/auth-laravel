@@ -4,12 +4,21 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.28.4 - 2026-11-05
+
+### Passkey persistence and mounted-provider invitations
 
 - Passkey authentication accepts an optional boolean `remember` field and passes
   it to the active Laravel guard. Omitted or false values retain session-only
   login; true issues the guard's existing persistent-login cookie. The browser
   must send its current choice with the final credential request.
+- Signed application-invitation requests accept an HTTPS issuer with a mount
+  path, so an embedded identity provider can use its exact configured issuer.
+  Issuer validation and assertion binding remain required.
+- **Adoption:** none required. Existing passkey callers remain session-only.
+  Update the browser helper to send `remember` when persistent passkey login is
+  desired. Remembered login does not constitute fresh credential verification.
+  No new migration is required by this release.
 
 ## v0.28.3 - 2026-11-02
 
