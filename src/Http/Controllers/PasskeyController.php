@@ -3,14 +3,15 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
-use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Events\PasskeyDeleted;
 use BWH\Auth\Events\PasskeyLoginFailed;
 use BWH\Auth\Events\PasskeyLoginSucceeded;
 use BWH\Auth\Events\PasskeyRegistered;
 use BWH\Auth\Models\PasskeyCredential;
 use BWH\Auth\Services\WebAuthnService;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -100,6 +101,7 @@ class PasskeyController extends Controller
     {
         $validated = $request->validate([
             'credential' => ['required', 'array'],
+            'remember' => ['sometimes', 'boolean'],
         ]);
         $credentialId = $request->input('credential.id');
 
@@ -111,7 +113,7 @@ class PasskeyController extends Controller
                 throw new \RuntimeException('User is not allowed to log in.');
             }
 
-            Auth::login($user);
+            Auth::login($user, $request->boolean('remember'));
             $request->session()->regenerate();
 
             $this->auditLogger->passkeyLoginSucceeded($request, $user, $credential);
@@ -135,7 +137,7 @@ class PasskeyController extends Controller
         $user = $request->user();
 
         abort_if(
-            $user instanceof \Illuminate\Contracts\Auth\Authenticatable
+            $user instanceof Authenticatable
                 && ! app(LocalCredentialPolicy::class)->mayUseLocalCredentials($user, $request),
             403,
             __('This account signs in through single sign-on.'),
