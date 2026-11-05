@@ -21,6 +21,8 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Symfony\Component\VarDumper\Cloner\VarCloner;
+use Symfony\Component\VarDumper\Dumper\CliDumper;
 
 class ApplicationInvitationClientTest extends TestCase
 {
@@ -345,7 +347,11 @@ class ApplicationInvitationClientTest extends TestCase
             'an unreadable key path' => [['bherila-auth.application_invitations.private_key' => null, 'bherila-auth.application_invitations.private_key_path' => '/nonexistent/key.pem']],
             'not a key' => [['bherila-auth.application_invitations.private_key' => 'not a key']],
             'an http issuer' => [['bherila-auth.oauth_client.base_url' => 'http://identity.example.test']],
-            'an issuer with a path' => [['bherila-auth.application_invitations.issuer' => 'https://identity.example.test/id']],
+            'an issuer with a query' => [['bherila-auth.application_invitations.issuer' => 'https://identity.example.test/auth?target=elsewhere']],
+            'an issuer with a fragment' => [['bherila-auth.application_invitations.issuer' => 'https://identity.example.test/auth#token']],
+            'an issuer with traversal' => [['bherila-auth.application_invitations.issuer' => 'https://identity.example.test/auth/../other']],
+            'an issuer with encoded traversal' => [['bherila-auth.application_invitations.issuer' => 'https://identity.example.test/auth/%2e%2e/other']],
+            'an issuer with an empty path segment' => [['bherila-auth.application_invitations.issuer' => 'https://identity.example.test/auth//other']],
             'an issuer with credentials' => [['bherila-auth.application_invitations.issuer' => 'https://u:p@identity.example.test']],
             'a token path that is not a path' => [['bherila-auth.oauth_client.token_path' => 'https://elsewhere.example.test/token']],
         ];
@@ -475,7 +481,7 @@ class ApplicationInvitationClientTest extends TestCase
             serialize($issued),
             json_encode((array) $issued),
             json_encode(get_object_vars($issued)),
-            (new \Symfony\Component\VarDumper\Dumper\CliDumper)->dump((new \Symfony\Component\VarDumper\Cloner\VarCloner)->cloneVar($issued), true),
+            (new CliDumper)->dump((new VarCloner)->cloneVar($issued), true),
         ] as $text) {
             $this->assertStringNotContainsString('secret-token', $text);
         }
