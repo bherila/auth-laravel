@@ -3,11 +3,12 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
-use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Events\TwoFactorLoginSucceeded;
 use BWH\Auth\Models\TwoFactorAttempt;
 use BWH\Auth\Services\TwoFactorService;
+use BWH\Auth\Support\TwoFactorRoutes;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -89,7 +90,7 @@ class TwoFactorController extends Controller
             'attempt' => $attempt,
             'token' => $token,
             'userEmail' => $this->maskEmail((string) data_get($attempt->user, config('bherila-auth.users.email_attribute', 'email'), '')),
-            'submitRoute' => route('bherila-auth.two-factor.confirm.submit', ['token' => $token]),
+            'submitRoute' => route(TwoFactorRoutes::name('confirm.submit'), ['token' => $token]),
             'loginUrl' => config('bherila-auth.two_factor.login_url', '/login'),
         ]);
     }
@@ -119,7 +120,7 @@ class TwoFactorController extends Controller
         return view('bherila-auth::two-factor-report', [
             'attempt' => $attempt,
             'token' => $token,
-            'submitRoute' => route('bherila-auth.two-factor.report.submit', ['token' => $token]),
+            'submitRoute' => route(TwoFactorRoutes::name('report.submit'), ['token' => $token]),
             'loginUrl' => config('bherila-auth.two_factor.login_url', '/login'),
         ]);
     }

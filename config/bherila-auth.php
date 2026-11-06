@@ -1,5 +1,7 @@
 <?php
 
+use App\Models\User;
+
 return [
     'routes' => [
         'enabled' => true,
@@ -370,6 +372,8 @@ return [
 
     'two_factor' => [
         'table' => 'auth_two_factor_attempts',
+        // Includes the separator before confirm/report and their .submit actions.
+        'route_name_prefix' => 'bherila-auth.two-factor.',
         'expires_minutes' => 15,
         // Fixed-code bypass for automated tests and local development. Off by default,
         // and even when on it applies only to accounts explicitly flagged `is_test`
@@ -399,7 +403,7 @@ return [
     ],
 
     'users' => [
-        'model' => config('auth.providers.users.model', App\Models\User::class),
+        'model' => config('auth.providers.users.model', User::class),
         'name_attribute' => 'name',
         'email_attribute' => 'email',
         'force_change_password_attribute' => null,

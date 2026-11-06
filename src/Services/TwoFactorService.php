@@ -5,6 +5,7 @@ namespace BWH\Auth\Services;
 use BWH\Auth\Contracts\AuthAuditLogger;
 use BWH\Auth\Mail\TwoFactorLoginMail;
 use BWH\Auth\Models\TwoFactorAttempt;
+use BWH\Auth\Support\TwoFactorRoutes;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
@@ -26,8 +27,8 @@ class TwoFactorService
         Mail::to($email)->send(new TwoFactorLoginMail(
             $user,
             $attempt,
-            $this->routeFromAppUrl('bherila-auth.two-factor.confirm', ['token' => $attempt->token]),
-            $this->routeFromAppUrl('bherila-auth.two-factor.report', ['token' => $attempt->token]),
+            $this->routeFromAppUrl(TwoFactorRoutes::name('confirm'), ['token' => $attempt->token]),
+            $this->routeFromAppUrl(TwoFactorRoutes::name('report'), ['token' => $attempt->token]),
             $appName,
         ));
 
