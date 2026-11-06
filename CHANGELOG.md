@@ -4,6 +4,26 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.28.5 - 2026-11-06
+
+### Shared password preflight and intended destinations
+
+- `PasswordCredentials::verify()` validates credentials with the active session
+  guard, applies `AuthUserPolicy::canLogin()`, and rehashes accepted passwords
+  when configured. Its typed result distinguishes invalid credentials, a
+  disabled account, and verified credentials. Callers retain MFA, login/session
+  completion, throttling, and audit responsibilities. The result is server-side
+  only: its attempted user can contain stored credential material.
+- `IntendedUrl::sameSite()` and `consume()` share same-origin validation for
+  caller-supplied and stored destinations. They reject userinfo and unsafe URL
+  shapes, normalize origin case/default ports, and optionally return a relative
+  path or apply stricter checks after one URL decode. The default policy now
+  validates and consumes a stored destination when no model redirect overrides it.
+- **Adoption:** optional. Custom password flows can replace credential/policy
+  duplication with preflight while retaining their existing completion and MFA
+  rules. Custom redirect policies can opt into the shared intended-URL helper.
+  Encoded OAuth query values remain supported by default. No migration is needed.
+
 ## v0.28.4 - 2026-11-05
 
 ### Passkey persistence and mounted-provider invitations
