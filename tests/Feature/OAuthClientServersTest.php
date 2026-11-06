@@ -945,6 +945,54 @@ class OAuthClientServersTest extends TestCase
         $this->assertSame('still-valid-refresh', $tokens->refreshToken);
     }
 
+    public function test_a_present_malformed_refresh_token_never_falls_back_to_the_submitted_token(): void
+    {
+        foreach ([null, '', false, 0, [], ['token']] as $refreshToken) {
+            $this->answerTokenRequests(fn () => Http::response([
+                'access_token' => 'next-access', 'token_type' => 'Bearer', 'refresh_token' => $refreshToken,
+            ]));
+
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('still-valid-refresh');
+                $this->fail('A present malformed refresh token was accepted: '.json_encode($refreshToken));
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertSame(502, $failed->getStatusCode());
+                $this->assertFalse($failed->definitive);
+                $this->assertNull($failed->oauthError);
+            }
+        }
+    }
+
+    public function test_non_object_token_bodies_fail_as_ambiguous_token_requests_without_a_type_error(): void
+    {
+        foreach (['null', '42', 'true', '"token"', '[]', '[{"access_token":"nested"}]', 'not-json'] as $body) {
+            $this->answerTokenRequests(fn () => Http::response($body, 200, ['Content-Type' => 'application/json']));
+
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+                $this->fail('A non-object token response was accepted: '.$body);
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertSame(502, $failed->getStatusCode());
+                $this->assertSame('The identity provider returned an invalid token.', $failed->getMessage());
+                $this->assertFalse($failed->definitive);
+            }
+        }
+        Http::assertSentCount(7);
+    }
+
+    public function test_a_code_exchange_rejects_an_explicit_null_refresh_token_and_consumes_its_flow(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response([
+            'access_token' => 'next-access', 'token_type' => 'Bearer', 'refresh_token' => null,
+        ])]);
+        $query = $this->startFlow('svc');
+        $parameters = ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC];
+
+        $this->respond('svc', $parameters)->assertStatus(502);
+        $this->respond('svc', $parameters)->assertForbidden()->assertJsonPath('rejected', 'state_mismatch');
+        Http::assertSentCount(1);
+    }
+
     public function test_a_code_exchange_without_a_refresh_token_reports_none(): void
     {
         Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'a', 'token_type' => 'Bearer'])]);
@@ -969,6 +1017,40 @@ class OAuthClientServersTest extends TestCase
         Http::assertSent(fn (ClientRequest $request): bool => $request['resource'] === 'urn:example:payments');
     }
 
+    public function test_empty_hier_parts_and_uppercase_ipvfuture_resources_are_preserved_through_both_grants(): void
+    {
+        $this->answerTokenRequests(fn () => Http::response([
+            'access_token' => 'next-access', 'token_type' => 'Bearer', 'refresh_token' => 'next-refresh',
+        ]));
+        foreach (['foo:', 'urn:', 'foo:?audience=api%2Fv1', 'https://[V7.fe80::a]/api'] as $resource) {
+            config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
+            $query = $this->startFlow('svc');
+            $this->assertSame($resource, $query['resource']);
+            $this->respond('svc', ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC])
+                ->assertOk()->assertJsonPath('resource', $resource);
+            $tokens = app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+            $this->assertSame($resource, $tokens->resource);
+            $this->assertSame('next-refresh', $tokens->refreshToken);
+            foreach (['authorization_code', 'refresh_token'] as $grant) {
+                Http::assertSent(fn (ClientRequest $request): bool => $request['resource'] === $resource && $request['grant_type'] === $grant);
+            }
+        }
+    }
+
+    public function test_unset_resource_settings_still_omit_the_parameter(): void
+    {
+        Http::fake([self::SVC.'/oauth/token' => Http::response(['access_token' => 'access'])]);
+        foreach ([null, ''] as $resource) {
+            config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
+            $query = $this->startFlow('svc');
+            $this->assertArrayNotHasKey('resource', $query);
+            $this->respond('svc', ['code' => 'c', 'state' => $query['state'], 'iss' => self::SVC])
+                ->assertOk()->assertJsonPath('resource', null);
+        }
+        Http::assertSentCount(2);
+        Http::assertNotSent(fn (ClientRequest $request): bool => array_key_exists('resource', $request->data()));
+    }
+
     public function test_other_absolute_uris_are_resource_indicators(): void
     {
         foreach ([
@@ -985,12 +1067,14 @@ class OAuthClientServersTest extends TestCase
     public function test_a_resource_that_is_not_an_absolute_uri_without_fragment_is_a_configuration_error(): void
     {
         foreach ([
-            '/api/v1', 'api', 'urn:', ':x', '1urn:x', ' urn:x', 'urn:x ', "urn:x\n", 'urn:a b', 'urn:%zz',
+            '/api/v1', 'api', ':x', '1urn:x', ' urn:x', 'urn:x ', "urn:x\n", 'urn:a b', 'urn:%zz',
             'https://svc.example.test/api#part', 'urn:x#', "urn:caf\u{e9}", ['urn:x'],
             // Brackets belong only around an IP literal host.
             'urn:x[y', 'urn:[x]', 'https://example.test/a[b', 'https://example.test/a]', 'https://example.test/?q=[1]',
             'https://ex[ample.test/', 'https://[2001:db8::1/api', 'https://[not-an-ip]/api', 'https://[2001:db8::1]x/api',
             'https://[2001:db8::1]:44a/api', 'https://a@b@example.test/', 'https://example.test:port/',
+            'foo:#', 'foo:#part', "foo:\n", 'https://[V.fe80::a]/api', 'https://[VG.fe80::a]/api',
+            'https://[V7.]/api', 'https://[V7.a%20b]/api', 'https://[W7.fe80::a]/api',
         ] as $resource) {
             config(['bherila-auth.oauth_client.servers.svc.resource' => $resource]);
 

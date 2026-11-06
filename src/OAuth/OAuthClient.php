@@ -365,14 +365,16 @@ final class OAuthClient
 
         $accessToken = $response->json('access_token');
         $tokenType = $response->json('token_type');
-        $refreshToken = $response->json('refresh_token');
+        $body = $response->json();
+        $hasRefreshToken = is_array($body) && array_key_exists('refresh_token', $body);
+        $refreshToken = $hasRefreshToken ? $body['refresh_token'] : null;
         $expiresIn = $response->json('expires_in');
         $expiresIn = is_string($expiresIn) && ctype_digit($expiresIn) ? (int) $expiresIn : $expiresIn;
         $scope = $response->json('scope');
 
         if (! self::isToken($accessToken)
             || ($tokenType !== null && (! is_string($tokenType) || Str::lower($tokenType) !== 'bearer'))
-            || ($refreshToken !== null && ! self::isToken($refreshToken))
+            || ($hasRefreshToken && ! self::isToken($refreshToken))
             || ($expiresIn !== null && (! is_int($expiresIn) || $expiresIn <= 0))
             || ($scope !== null && ! is_string($scope))) {
             // The server answered success, so it may have used the code or rotated the refresh
@@ -385,7 +387,7 @@ final class OAuthClient
             issuer: $issuer,
             resource: $resource,
             accessToken: $accessToken,
-            refreshToken: $refreshToken ?? $refreshTokenWhenOmitted,
+            refreshToken: $hasRefreshToken ? $refreshToken : $refreshTokenWhenOmitted,
             expiresAt: $expiresIn === null ? null : CarbonImmutable::now()->addSeconds($expiresIn),
             scopes: $scope === null ? $scopesWhenOmitted : self::scopeList($scope),
             context: $this->responseContext($response),
