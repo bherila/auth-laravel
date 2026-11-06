@@ -963,6 +963,23 @@ class OAuthClientServersTest extends TestCase
         }
     }
 
+    public function test_non_object_token_bodies_fail_as_ambiguous_token_requests_without_a_type_error(): void
+    {
+        foreach (['null', '42', 'true', '"token"', '[]', '[{"access_token":"nested"}]', 'not-json'] as $body) {
+            $this->answerTokenRequests(fn () => Http::response($body, 200, ['Content-Type' => 'application/json']));
+
+            try {
+                app(OAuthClient::class)->forServer('svc')->refreshTokens('old-refresh');
+                $this->fail('A non-object token response was accepted: '.$body);
+            } catch (OAuthTokenRequestFailed $failed) {
+                $this->assertSame(502, $failed->getStatusCode());
+                $this->assertSame('The identity provider returned an invalid token.', $failed->getMessage());
+                $this->assertFalse($failed->definitive);
+            }
+        }
+        Http::assertSentCount(7);
+    }
+
     public function test_a_code_exchange_rejects_an_explicit_null_refresh_token_and_consumes_its_flow(): void
     {
         Http::fake([self::SVC.'/oauth/token' => Http::response([
