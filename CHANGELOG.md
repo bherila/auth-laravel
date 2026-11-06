@@ -4,6 +4,26 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.28.6 - 2026-11-06
+
+### Namespaced two-factor routes and OAuth response validation
+
+- Two-factor confirmation/report routes and their generated mail/form links use
+  the configurable `two_factor.route_name_prefix`. The default remains
+  `bherila-auth.two-factor.`; a mounted provider can choose a distinct prefix so
+  its routes coexist with the host, including when routes are cached. HTTP
+  paths, authentication guards and factor requirements are unchanged.
+- OAuth token responses reject an explicit JSON `null` refresh token rather than
+  treating it as an omitted value. A refresh response that omits the member still
+  retains the submitted refresh token when the server does not rotate it.
+- OAuth resource identifiers accept an absolute URI with an empty path, such as
+  `foo:`, and an uppercase IPvFuture version flag. Issuer and endpoint validation
+  retain their existing restrictions.
+- **Adoption:** no migration is required. Hosts and mounted providers sharing a
+  route collection should configure distinct two-factor name prefixes, with each
+  request using the prefix under which its routes were registered. Existing
+  standalone installations keep their current names without configuration.
+
 ## v0.28.5 - 2026-11-06
 
 ### Shared password preflight and intended destinations
