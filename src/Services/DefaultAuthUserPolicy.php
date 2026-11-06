@@ -3,6 +3,7 @@
 namespace BWH\Auth\Services;
 
 use BWH\Auth\Contracts\AuthUserPolicy;
+use BWH\Auth\Support\IntendedUrl;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 
@@ -16,7 +17,7 @@ class DefaultAuthUserPolicy implements AuthUserPolicy
      * such columns.
      *
      * Apps with an `approved_at` column or a multi-step onboarding state should bind a custom
-     * {@see \BWH\Auth\Contracts\AuthUserPolicy} implementation that encodes those rules here,
+     * {@see AuthUserPolicy} implementation that encodes those rules here,
      * and call `canLogin()` from their primary password-login controller and from any
      * post-email-verification redirect so all entry points share the same gate.
      */
@@ -50,6 +51,6 @@ class DefaultAuthUserPolicy implements AuthUserPolicy
             return (string) $user->getLoginRedirectUrl();
         }
 
-        return $request->session()->pull('url.intended') ?? '/';
+        return IntendedUrl::consume($request) ?? '/';
     }
 }
