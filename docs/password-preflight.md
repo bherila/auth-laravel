@@ -17,6 +17,7 @@ second factor, record authentication context, audit a login or inspect a throttl
 Laravel's validation timebox and `Validated` event remain in use. Callers must
 inspect their throttle before preflight, record their own failure once, and decide
 whether to issue a second-factor challenge or complete login with the same guard.
-The result does not retain the supplied plaintext password, remember choice or
-redirect destination. Treat the attempted user as a sensitive authentication
-model; it may carry its stored password hash.
+Credentials are not copied into result fields. The attempted user is server-side
+only and may contain credential material; never serialize or return the result to
+a client. The result does not retain the supplied plaintext password, remember
+choice or redirect destination.
