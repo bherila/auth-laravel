@@ -203,7 +203,7 @@ final class AuthorizationServer
         $pct = '%[0-9A-Fa-f]{2}';
         $pchar = "(?:[{$unreserved}{$subDelims}:@]|{$pct})";
 
-        if (preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:(?<rest>.+)\z/s', $uri, $match) !== 1) {
+        if (preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:(?<rest>.*)\z/s', $uri, $match) !== 1) {
             return false;
         }
 
@@ -232,7 +232,7 @@ final class AuthorizationServer
         return $literal === ''
             ? ! str_contains($authority, '[')
             : filter_var($literal, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false
-                || preg_match("/^v[0-9A-Fa-f]+\\.[{$unreserved}{$subDelims}:]+\\z/", $literal) === 1;
+                || preg_match("/^[vV][0-9A-Fa-f]+\\.[{$unreserved}{$subDelims}:]+\\z/", $literal) === 1;
     }
 
     private static function validIssuer(string $issuer): bool
