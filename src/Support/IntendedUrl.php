@@ -34,8 +34,19 @@ final class IntendedUrl
         $request->session()->put('url.intended', $url);
     }
 
-    /** The absolute same-origin URL for $value, or null when it would leave this site. */
-    public static function sameSite(Request $request, string $value): ?string
+    /** Consume the stored destination once, validating even values stored by other middleware. */
+    public static function consume(Request $request, bool $absolute = true, bool $rejectEncodedUnsafe = false): ?string
+    {
+        $value = $request->session()->pull('url.intended');
+
+        return is_string($value) ? self::sameSite($request, $value, $absolute, $rejectEncodedUnsafe) : null;
+    }
+
+    /**
+     * The normalized same-origin URL, or its root-relative path when $absolute is false.
+     * $rejectEncodedUnsafe additionally applies the raw-character checks after one URL decode.
+     */
+    public static function sameSite(Request $request, string $value, bool $absolute = true, bool $rejectEncodedUnsafe = false): ?string
     {
         // Backslashes are read as slashes by browsers (`/\elsewhere` is protocol-relative),
         // and control characters or spaces are stripped before parsing by some of them.
@@ -43,19 +54,37 @@ final class IntendedUrl
             return null;
         }
 
-        $root = $request->root();
-
-        if (str_starts_with($value, '/')) {
-            // `//host` is protocol-relative: another site.
-            return str_starts_with($value, '//') ? null : $root.$value;
+        // An authority without a scheme remains protocol-relative, even on this host.
+        if (str_starts_with($value, '//')) {
+            return null;
         }
 
-        // The trailing slash keeps `https://site.example.evil` from passing as a prefix
-        // match on `https://site.example`.
-        if ($value === $root || str_starts_with($value, $root.'/') || str_starts_with($value, $root.'?')) {
-            return $value;
+        $parts = parse_url($value);
+        if ($parts === false || isset($parts['user']) || isset($parts['pass'])) {
+            return null;
+        }
+        if (isset($parts['scheme']) || isset($parts['host'])) {
+            $scheme = strtolower($parts['scheme'] ?? '');
+            $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
+            if ($scheme !== $request->getScheme()
+                || strtolower($parts['host'] ?? '') !== strtolower($request->getHost())
+                || $port !== $request->getPort()) {
+                return null;
+            }
         }
 
-        return null;
+        $local = ($parts['path'] ?? '/').(isset($parts['query']) ? '?'.$parts['query'] : '')
+            .(isset($parts['fragment']) ? '#'.$parts['fragment'] : '');
+        if (! str_starts_with($local, '/') || str_starts_with($local, '//')) {
+            return null;
+        }
+        if ($rejectEncodedUnsafe) {
+            $decoded = rawurldecode($local);
+            if (str_starts_with($decoded, '//') || preg_match('/[\\\\\x00-\x20\x7F]/', $decoded) === 1) {
+                return null;
+            }
+        }
+
+        return $absolute ? $request->getSchemeAndHttpHost().$local : $local;
     }
 }
