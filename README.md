@@ -27,6 +27,8 @@ Includes:
 - password reset request/reset/change API routes and mailables
 - passkey and 2FA database tables
 - login audit logging: an owned `auth_audit_log` table, a default database logger, binary IP storage, optional read endpoints, and opt-in retention (see "Login audit logging")
+- [password credential preflight](docs/password-preflight.md) for applications that own their MFA and session flow
+- [same-origin intended destinations](docs/intended-urls.md) with optional relative URLs and stricter decoded checks
 - policy and audit contracts for app-specific behavior
 
 ## Upgrading to v0.12.0 (separate OAuth resource servers)
