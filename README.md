@@ -1079,8 +1079,12 @@ remains optional for consumers that do not run an authorization server.
 
 Construct `ActorAssertionVerifier` from trusted local configuration: the exact
 HTTPS issuer, the exact HTTPS adapter endpoint, the application registry key,
-a `kid => RSA public key PEM` map, and a `NonceStore`. Issuers may not contain a
-path other than `/`; a trailing issuer slash is removed before exact claim matching.
+a `kid => RSA public key PEM` map, and a `NonceStore`. An explicitly configured issuer
+may include a mount path such as `/auth` or `/tenant/auth`, using unreserved ASCII
+path segments. Empty, dot and dot-dot segments, percent escapes and backslashes are
+refused; the URL limit remains 2048 bytes. A trailing issuer slash is removed before
+exact claim matching. The complete issuer path remains part of the identity and
+nonce namespace and must match the sign-in provider's configured base URL.
 URLs may not contain credentials, query strings, or fragments.
 Keys and endpoint URLs are never discovered from assertion headers.
 

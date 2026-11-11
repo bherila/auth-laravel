@@ -18,8 +18,21 @@ final class TrustedUrl
             || ! is_array($parts) || ($parts['scheme'] ?? '') !== 'https' || ! $validHost
             || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])
             || (isset($parts['port']) && ($parts['port'] < 1 || $parts['port'] > 65535))
-            || ($issuer && ! in_array($parts['path'] ?? '', ['', '/'], true))) {
+            || ($issuer && ! self::validIssuerPath($parts['path'] ?? ''))) {
             throw new DelegatedAccessException('invalid_verifier_configuration');
         }
+    }
+
+    /** Accept explicit canonical mount paths, never URL/path normalization or discovery. */
+    private static function validIssuerPath(string $path): bool
+    {
+        if (in_array($path, ['', '/'], true)) {
+            return true;
+        }
+
+        // Unreserved ASCII segments only: encoded separators/dots, backslashes,
+        // empty segments and traversal must not alias another issuer namespace.
+        return preg_match('#\A/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]+/?\z#D', $path) === 1
+            && array_intersect(explode('/', $path), ['.', '..']) === [];
     }
 }
