@@ -4,6 +4,21 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.28.7 - 2026-11-11
+
+### Explicit embedded issuers for delegated access
+
+- Delegated actor assertion verification accepts an explicitly configured HTTPS
+  issuer mount path, such as `/auth` or `/tenant/auth`, with canonical unreserved
+  ASCII segments. Dot segments, empty segments, percent escapes and backslashes
+  fail closed; credentials, query strings and fragments remain forbidden.
+- The full issuer path still matches the signed claim and sign-in provider base
+  URL exactly, and remains part of the replay namespace. Audience, application,
+  signing-key and request-body checks are unchanged. No keys or URLs are discovered.
+- **Adoption:** no migration is required. Embedded consumers can pin the same full
+  HTTPS issuer in delegated-access and sign-in configuration. Existing root issuers
+  retain their behavior, including the configured trailing-slash normalization.
+
 ## v0.28.6 - 2026-11-06
 
 ### Namespaced two-factor routes and OAuth response validation

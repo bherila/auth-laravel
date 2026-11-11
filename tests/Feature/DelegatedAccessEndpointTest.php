@@ -263,6 +263,26 @@ class DelegatedAccessEndpointTest extends TestCase
         $this->send(['operation' => 'capabilities'])->assertOk();
     }
 
+    public function test_embedded_issuer_path_must_match_both_sign_in_configuration_and_signed_assertion(): void
+    {
+        $issuer = self::ISSUER.'/auth';
+        config(['bherila-auth.delegated_access.issuer' => $issuer.'/', 'bherila-auth.oauth_client.base_url' => $issuer]);
+        $body = $this->body(['operation' => 'capabilities']);
+        $seen = null;
+        $this->answer = function () use (&$seen): array {
+            $seen = app(DelegatedRequestContext::class)->issuer;
+
+            return self::capabilities();
+        };
+        $this->send(['operation' => 'capabilities'], token: $this->assertion('actor-subject', $body, issuer: $issuer))->assertOk();
+        $this->assertSame($issuer, $seen);
+        $this->send(['operation' => 'capabilities'])->assertUnauthorized()->assertJsonPath('error', 'invalid_actor_assertion');
+        config(['bherila-auth.oauth_client.base_url' => self::ISSUER.'/other']);
+        $this->send(['operation' => 'capabilities'], token: $this->assertion('actor-subject', $body, issuer: $issuer))
+            ->assertStatus(503)->assertJsonPath('error', 'invalid_verifier_configuration');
+        $this->assertCount(1, $this->calls);
+    }
+
     public function test_the_adapter_can_read_the_verified_request_context_during_its_call_only(): void
     {
         $seen = null;
@@ -901,14 +921,14 @@ class DelegatedAccessEndpointTest extends TestCase
         ], $body);
     }
 
-    private function assertion(string $subject, string $body, ?string $jti = null): string
+    private function assertion(string $subject, string $body, ?string $jti = null, ?string $issuer = null): string
     {
         $now = new DateTimeImmutable('@'.time());
 
         return Builder::new(new JoseEncoder, ChainedFormatter::withUnixTimestampDates())
             ->withHeader('typ', 'application-access+jwt')
             ->withHeader('kid', 'integration-v1')
-            ->issuedBy(self::ISSUER)->relatedTo($subject)->permittedFor(self::ENDPOINT)
+            ->issuedBy($issuer ?? self::ISSUER)->relatedTo($subject)->permittedFor(self::ENDPOINT)
             ->issuedAt($now)->expiresAt($now->modify('+60 seconds'))
             ->identifiedBy($jti ?? bin2hex(random_bytes(32)))
             ->withClaim('application', self::APPLICATION)

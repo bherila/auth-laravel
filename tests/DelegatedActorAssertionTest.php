@@ -114,7 +114,7 @@ class DelegatedActorAssertionTest extends TestCase
 
     public function test_trust_configuration_requires_local_https_urls_without_credentials_or_redirect_components(): void
     {
-        foreach (['http://identity.example.test', 'https://identity.example.test/path', 'https://user@identity.example.test', 'https://identity.example.test?key=other', 'https://identity.example.test#fragment', 'https://invalid_host.test', 'https://identity.example.test:0'] as $issuer) {
+        foreach (['http://identity.example.test', 'https://user@identity.example.test', 'https://identity.example.test?key=other', 'https://identity.example.test#fragment', 'https://invalid_host.test', 'https://identity.example.test:0'] as $issuer) {
             $this->refused(fn () => new ActorAssertionVerifier($issuer, 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new DatabaseNonceStore(DB::connection('nonces'))), 'invalid_verifier_configuration', 503);
         }
         foreach (['http://app.example.test/access', 'https://app.example.test/access?alternate=1', 'https://user:password@app.example.test/access'] as $endpoint) {
@@ -151,6 +151,34 @@ class DelegatedActorAssertionTest extends TestCase
         $verifier = new ActorAssertionVerifier('https://identity.example.test/', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new DatabaseNonceStore(DB::connection('nonces')));
         $this->assertSame('actor-example', $verifier->verify($this->signed(), 'POST', '{}'));
         $this->refused(fn () => $verifier->verify($this->signed(['iss' => 'https://identity.example.test/']), 'POST', '{}'), 'invalid_actor_assertion', 401);
+    }
+
+    public function test_explicit_embedded_path_is_part_of_exact_claim_context_and_nonce_namespace(): void
+    {
+        $store = new DatabaseNonceStore(DB::connection('nonces'));
+        $issuer = 'https://identity.example.test/tenant/auth';
+        $verifier = new ActorAssertionVerifier($issuer.'/', 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], $store);
+        $jti = str_repeat('c', 64);
+        $context = $verifier->verifyContext($this->signed(['iss' => $issuer, 'jti' => $jti]), 'POST', '{}');
+        $this->assertSame($issuer, $context->issuer);
+        $this->assertSame('actor-example', $context->subject);
+        $this->assertTrue(DB::connection('nonces')->table(DatabaseNonceStore::TABLE)->where('key', hash('sha256', $issuer."\0example-app\0".$jti))->exists());
+        // The root and mounted issuer have separate replay namespaces, despite sharing keys.
+        $this->assertSame('actor-example', $this->verifier()->verify($this->signed(['jti' => $jti]), 'POST', '{}'));
+        $this->refused(fn () => $verifier->verify($this->signed(['iss' => $issuer, 'jti' => $jti]), 'POST', '{}'), 'replayed_actor_assertion', 401);
+        foreach (['https://identity.example.test', $issuer.'/', $issuer.'/child', 'https://identity.example.test/tenant/auth-other', 'https://identity.example.test/tenant/Auth'] as $other) {
+            $this->refused(fn () => $verifier->verify($this->signed(['iss' => $other]), 'POST', '{}'), 'invalid_actor_assertion', 401);
+        }
+        $this->refused(fn () => $verifier->verify($this->signed(['iss' => $issuer, 'aud' => 'https://app.example.test/access/other']), 'POST', '{}'), 'invalid_actor_assertion', 401);
+        $this->refused(fn () => $verifier->verify($this->signed(['iss' => $issuer], ['kid' => 'unknown']), 'POST', '{}'), 'invalid_actor_assertion', 401);
+    }
+
+    public function test_malformed_or_noncanonical_embedded_issuer_paths_fail_closed(): void
+    {
+        foreach (['/auth/../other', '/./auth', '/auth/.', '/auth/..', '//auth', '/auth//child', '/auth//', '/%61uth', '/auth/%2e%2e', '/auth%2fother', '/auth%5cother', '/auth\\other', '/auth path', '/auth;other', '/auth?query', '/auth#fragment', '/'.str_repeat('a', 2048)] as $path) {
+            $this->refused(fn () => new ActorAssertionVerifier('https://identity.example.test'.$path, 'https://app.example.test/access', 'example-app', ['integration-v1' => $this->publicKey], new DatabaseNonceStore(DB::connection('nonces'))), 'invalid_verifier_configuration', 503);
+        }
+        $this->assertSame(0, DB::connection('nonces')->table(DatabaseNonceStore::TABLE)->count());
     }
 
     public function test_cache_flush_and_new_connection_do_not_erase_consumed_assertions(): void
@@ -216,6 +244,7 @@ class DelegatedActorAssertionTest extends TestCase
             public function consume(string $key, int $seconds): bool
             {
                 sleep(3);
+
                 return true;
             }
         };
