@@ -106,6 +106,7 @@ final class OAuthClient
         $server = $this->authorizationServer();
         $user = $this->userKey($request);
         abort_unless($server->isDefault() || ($user !== null && $user !== ''), 403, 'Sign in before connecting an authorization server.');
+        $namespace = $server->isDefault() ? null : IdentityNamespace::resolve($request, $request->user());
         $state = Str::random(40);
         $verifier = Str::random(96);
         $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
@@ -122,6 +123,7 @@ final class OAuthClient
             startedAt: Carbon::now()->getTimestamp(),
             scope: $server->value('scope'),
             requirement: $requirement === null || $requirement->isEmpty() ? null : $requirement,
+            identityNamespace: $namespace,
         );
 
         $authorize = $server->endpoint('authorize_path');
@@ -291,6 +293,9 @@ final class OAuthClient
         }
         $user = $this->userKey($request);
         if ((! $server->isDefault() && ($user === null || $user === '')) || ($flow->userBound && $flow->user !== $user)) {
+            throw $reject(OAuthCallbackFailure::UserMismatch);
+        }
+        if (! $server->isDefault() && $flow->identityNamespace !== IdentityNamespace::resolve($request, $request->user())) {
             throw $reject(OAuthCallbackFailure::UserMismatch);
         }
 

@@ -3,11 +3,9 @@
 namespace BWH\Auth\OAuth\Client;
 
 use BWH\Auth\OAuth\AuthenticationRequirement;
-use Illuminate\Cache\Repository;
-use Illuminate\Contracts\Cache\LockProvider;
+use BWH\Auth\OAuth\IdentityNamespace;
 use Illuminate\Contracts\Session\Session;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 
 /**
  * An authorization request that has not yet been answered.
@@ -27,8 +25,6 @@ final readonly class PendingFlow
 
     public const string LEGACY_BINDING_KEY = 'oauth.login.binding';
 
-    private const string CACHE_PREFIX = 'bherila-auth:oauth-client:pending-flow:';
-
     public function __construct(
         public string $server,
         public string $issuer,
@@ -41,6 +37,7 @@ final readonly class PendingFlow
         public ?int $startedAt,
         public ?string $scope = null,
         public ?AuthenticationRequirement $requirement = null,
+        public ?string $identityNamespace = null,
     ) {}
 
     public function store(Session $session, string $state): void
@@ -55,7 +52,10 @@ final readonly class PendingFlow
             return;
         }
 
-        self::cache()->put(self::key($state), $this->binding() + ['verifier' => $this->verifier], self::ttl());
+        PendingFlowCache::store($state, $this->binding() + [
+            'verifier' => $this->verifier,
+            'identity_namespace' => $this->identityNamespace,
+        ], self::ttl());
     }
 
     /**
@@ -87,13 +87,7 @@ final readonly class PendingFlow
             return null;
         }
 
-        $cache = self::cache();
-        $store = $cache->getStore();
-        abort_unless($store instanceof LockProvider, 503, 'Named OAuth flows require a cache store with atomic locks.');
-        // Repository::pull may use get followed by forget; a competing callback must not
-        // read the same binding between those operations, even when it later fails a check.
-        $key = self::key($state);
-        $binding = $store->lock($key.':consume', 10)->get(fn (): mixed => $cache->pull($key));
+        $binding = PendingFlowCache::pull($state);
 
         return is_array($binding) ? self::fromBinding($binding, $binding['verifier'] ?? null) : null;
     }
@@ -152,17 +146,8 @@ final readonly class PendingFlow
             startedAt: $binding['started_at'],
             scope: $binding['scope'] ?? null,
             requirement: $requirement,
+            identityNamespace: $binding['identity_namespace'] ?? IdentityNamespace::LEGACY,
         );
-    }
-
-    private static function key(string $state): string
-    {
-        return self::CACHE_PREFIX.hash('sha256', $state);
-    }
-
-    private static function cache(): Repository
-    {
-        return Cache::store(config('bherila-auth.oauth_client.pending_flow_cache_store'));
     }
 
     private static function ttl(): int

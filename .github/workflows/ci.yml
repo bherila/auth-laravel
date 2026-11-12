@@ -40,7 +40,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: mbstring, xml, ctype, iconv, sqlite3, bcmath, intl
+          extensions: mbstring, xml, ctype, iconv, sqlite3, bcmath, intl, pcntl
           coverage: none
 
       - name: Cache Composer dependencies

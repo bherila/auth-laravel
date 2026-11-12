@@ -40,6 +40,7 @@ class AuthServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->bindIf(\BWH\Auth\OAuth\IdentityNamespaceResolver::class, \BWH\Auth\OAuth\ConfiguredIdentityNamespaceResolver::class);
         $this->app->bindIf(\BWH\Auth\OAuth\Credentials\CredentialOwnerResolver::class, \BWH\Auth\OAuth\Credentials\UserIsCredentialOwner::class);
         $this->app->bindIf(\BWH\Auth\OAuth\Credentials\GrantableScopes::class, \BWH\Auth\OAuth\Credentials\ConfiguredGrantableScopes::class);
         $this->app->bindIf(\BWH\Auth\OAuth\Credentials\ScopePresentation::class, \BWH\Auth\OAuth\Credentials\UngroupedScopePresentation::class);

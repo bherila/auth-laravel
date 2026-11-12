@@ -113,7 +113,7 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
         $key = 'bherila-auth:oauth-client:pending-flow:'.hash('sha256', $query['state']);
         $binding = Cache::store('pending')->get($key);
         $this->assertIsArray($binding);
-        $this->assertSame(['server', 'issuer', 'callback', 'resource', 'issuer_required', 'user', 'started_at', 'scope', 'requirement', 'verifier'], array_keys($binding));
+        $this->assertSame(['server', 'issuer', 'callback', 'resource', 'issuer_required', 'user', 'started_at', 'scope', 'requirement', 'verifier', 'identity_namespace', 'admission_slot', 'expires_at'], array_keys($binding));
         $this->assertSame('records', $binding['server']);
         $this->assertSame('7', $binding['user']);
         $this->assertNull(Cache::store('array')->get($key));
@@ -245,7 +245,8 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
             app(OAuthClient::class)->forServer('records')->tokensFromCallback($this->callbackRequest($session, $query['state'], null));
             $this->fail('An anonymous cached binding cannot authorize a connect flow.');
         } catch (OAuthCallbackRejected $rejected) {
-            $this->assertSame(OAuthCallbackFailure::UserMismatch, $rejected->reason);
+            // The corrupted binding no longer identifies its admission reservation.
+            $this->assertSame(OAuthCallbackFailure::StateMismatch, $rejected->reason);
         }
         $this->assertNull(Cache::store('pending')->get($key));
         Http::assertNothingSent();
