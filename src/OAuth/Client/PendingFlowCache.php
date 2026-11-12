@@ -55,12 +55,20 @@ final class PendingFlowCache
 
                     continue;
                 }
+                $possiblyPublished = false;
                 try {
                     self::owned($reservation);
                     $remaining = $expires - Carbon::now()->getTimestamp();
-                    if ($remaining < 1 || ! $cache->add(self::STATE_PREFIX.$owner, [
+                    if ($remaining < 1) {
+                        self::unavailable();
+                    }
+                    // add() may write and then throw. Keep the reservation until
+                    // any possibly published state is confirmed deleted.
+                    $possiblyPublished = true;
+                    if (! $cache->add(self::STATE_PREFIX.$owner, [
                         ...$binding, 'admission_slot' => $slot, 'expires_at' => $expires,
                     ], $remaining)) {
+                        $possiblyPublished = false;
                         self::unavailable();
                     }
                     // A slow/outage-delayed publication must not redirect to an
@@ -72,11 +80,12 @@ final class PendingFlowCache
 
                     return;
                 } catch (Throwable $failure) {
-                    // Publication never returns a state after failure. An ambiguous
-                    // write is unusable once its reservation is released. If cleanup
-                    // is unavailable, the finite reservation expires on its own.
+                    // Releasing before deleting an ambiguous write would let
+                    // repeated failures accumulate unreserved state entries.
                     try {
-                        $reservation->release();
+                        if (! $possiblyPublished || $cache->forget(self::STATE_PREFIX.$owner)) {
+                            $reservation->release();
+                        }
                     } catch (Throwable) {
                         // Preserve the fixed outage response, not a cache key/error.
                     }

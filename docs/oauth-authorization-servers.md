@@ -94,7 +94,8 @@ When all slots are held, a start returns **429** with a fixed message and a cons
 expiry. Invalid quota/realm configuration, cache errors, unsupported atomic locks or missing
 ownership inspection return a fixed **503** without credentials, identifiers or cache
 keys; storage outages use `Retry-After: 30`. These refusals are private/no-store. Failed
-publication may hold a reservation until expiry if cleanup is unavailable. A missing,
+publication deletes any possibly written state before releasing its reservation; if deletion
+cannot be confirmed, the reservation remains until expiry. A missing,
 expired or evicted reservation cannot authorize a callback even if its state entry survives.
 Failure after confirmed state deletion cannot revive that state. If initial cache access
 or deletion cannot be confirmed, no code is exchanged; physical deletion cannot be promised
@@ -113,7 +114,7 @@ transaction or configure separate autocommit cache and lock connections; do not 
 cache claim or code exchange in a transaction that can roll those cache effects back.
 These bounds limit pending flows, not the total number of application identities, rate of
 start requests, or in-flight token HTTP requests. Keep route throttles and capacity planning
-for the shared cache.
+for the shared cache; expired physical entries follow the backend's own cleanup policy.
 
 ### Explicit identity realms
 

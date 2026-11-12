@@ -217,6 +217,47 @@ class OAuthPendingFlowAdmissionTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_ambiguous_publication_keeps_its_reservation_until_cleanup_or_expiry(): void
+    {
+        $store = new class($this->app['files'], $this->directory.'/ambiguous') extends FileStore
+        {
+            public array $published = [];
+
+            public function add($key, $value, $seconds)
+            {
+                $stored = parent::add($key, $value, $seconds);
+                if ($stored && str_starts_with($key, 'bherila-auth:oauth-client:pending-flow:') && ! str_ends_with($key, ':consume')) {
+                    $this->published[] = $key;
+                    throw new RuntimeException('synthetic-private-publication-error');
+                }
+
+                return $stored;
+            }
+
+            public function forget($key)
+            {
+                if (str_starts_with($key, 'bherila-auth:oauth-client:pending-flow:') && ! str_ends_with($key, ':consume')) {
+                    return false;
+                }
+
+                return parent::forget($key);
+            }
+        };
+        Cache::extend('ambiguous-file', fn () => Cache::repository($store));
+        config([
+            'cache.stores.ambiguous-file' => ['driver' => 'ambiguous-file'],
+            'bherila-auth.oauth_client.pending_flow_cache_store' => 'ambiguous-file',
+            'bherila-auth.oauth_client.pending_flow_max_active' => 1,
+        ]);
+        $this->assertHttp(503, fn () => $this->start());
+        $this->assertHttp(429, fn () => $this->start());
+        $this->assertCount(1, $store->published);
+        $this->travel(61)->seconds();
+        $this->assertHttp(503, fn () => $this->start());
+        $this->assertCount(2, $store->published);
+        Http::assertNothingSent();
+    }
+
     public static function transactionalCacheConnections(): array
     {
         return [['state'], ['lock']];
