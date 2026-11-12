@@ -4,6 +4,30 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.29.0 - 2026-11-12
+
+### Named OAuth admission and explicit identity realms
+
+- Named connect flows admit at most ten active flows by default per identity realm,
+  raw local user ID and named server across sessions/workers. Atomic owner-bound cache
+  reservations refuse new starts with 429 instead of evicting valid flows. The finite
+  limit is configurable; storage/configuration outages fail closed with fixed 503s.
+- `oauth_client.identity_namespace` declares the realm, default `legacy` for one
+  globally unique local-ID realm. Hosts with overlapping guard/tenant IDs bind the
+  `IdentityNamespaceResolver` interface from trusted context at start and callback.
+  Raw user keys and all existing OAuth bindings remain intact. Recent-authentication
+  context uses the same realm, so equal IDs cannot reuse another realm's step-up.
+- **Minor adoption/migration:** the quota is per identity/server across sessions,
+  intentionally stricter than the old session-local count. Drain old workers and
+  pending flows before relying on it or changing realms, stores, TTL or lowering the
+  limit. Legacy cached flows are not retroactively counted and remain compatible only
+  in `legacy`; nonlegacy adoption requires restarting them and fresh authentication.
+  Use a shared lock-capable cache with owner inspection. Database cache state/lock
+  connections must be outside application transactions (or use separate autocommit
+  connections), so rollback cannot revive consumed state. No database migration is
+  required; ordinary default sign-in keeps its existing session/admission behavior.
+  See [the namespace, admission and drain contract](docs/oauth-authorization-servers.md#named-flow-admission-029-minor-adoption).
+
 ## v0.28.7 - 2026-11-11
 
 ### Explicit embedded issuers for delegated access

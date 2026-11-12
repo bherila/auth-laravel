@@ -54,6 +54,13 @@ return [
         // Named-server pending flows use this cache store (null: Laravel's default). It must
         // support atomic locks and be shared by every process serving connect callbacks.
         'pending_flow_cache_store' => env('BHERILA_AUTH_OAUTH_PENDING_FLOW_CACHE_STORE'),
+        // Finite named connect flows per (identity namespace, local user ID, server),
+        // across sessions/workers. Refuse a new start instead of evicting valid flows.
+        'pending_flow_max_active' => 10,
+        // Explicit single-realm/global-ID compatibility. Hosts with overlapping IDs
+        // bind IdentityNamespaceResolver from trusted guard/tenant context instead.
+        // Namespace changes require pending-flow drain and recent authentication.
+        'identity_namespace' => 'legacy',
         // How long an issuer's metadata answer is remembered ('advertised' only).
         'metadata_cache_seconds' => 3600,
         // Further authorization servers this application calls APIs on for a person, by

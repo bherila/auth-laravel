@@ -3,6 +3,7 @@
 namespace BWH\Auth\OAuth\Session;
 
 use BWH\Auth\OAuth\AuthenticationRequirement;
+use BWH\Auth\OAuth\IdentityNamespace;
 use BWH\Auth\OAuth\OAuthIdentity;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
@@ -31,6 +32,7 @@ final class AuthenticationContext
 
         $request->session()->put(self::SESSION_KEY, [
             'account' => (string) $account->getAuthIdentifier(),
+            'identity_namespace' => IdentityNamespace::resolve($request, $account),
             'auth_time' => $identity->authTime,
             'amr' => $identity->amr,
             'acr' => $identity->acr,
@@ -45,6 +47,10 @@ final class AuthenticationContext
             || ($context['account'] ?? null) !== (string) $account->getAuthIdentifier()
             || ! is_int($context['auth_time'] ?? null)
             || ! is_array($context['amr'] ?? null)) {
+            return false;
+        }
+        $namespace = array_key_exists('identity_namespace', $context) ? $context['identity_namespace'] : IdentityNamespace::LEGACY;
+        if (! IdentityNamespace::valid($namespace) || $namespace !== IdentityNamespace::resolve($request, $account)) {
             return false;
         }
 

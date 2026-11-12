@@ -577,10 +577,11 @@ class OAuthClientServersTest extends TestCase
 
     public function test_pending_named_flows_do_not_write_session_attributes(): void
     {
-        for ($i = 0; $i < 20; $i++) {
+        for ($i = 0; $i < 10; $i++) {
             $this->startFlow('svc');
         }
 
+        $this->get('/connections/svc/start')->assertStatus(429)->assertHeader('Retry-After', '1800');
         $this->assertNull(session('oauth.flows'));
     }
 

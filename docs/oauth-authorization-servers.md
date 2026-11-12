@@ -58,7 +58,7 @@ Shared settings: `oauth_client.pending_flow_ttl` (1800 seconds) is how long a fl
 its response. Named pending flows are cached under a SHA-256 hash of their random state, using
 `oauth_client.pending_flow_cache_store` (`BHERILA_AUTH_OAUTH_PENDING_FLOW_CACHE_STORE`), or
 Laravel's configured default cache store when null. Use a persistent store shared by all
-processes serving connect callbacks, with atomic lock support. A callback consumes its entry
+processes serving connect callbacks, with atomic locks and owner inspection. A callback consumes its entry
 under a lock on the same store before checking bindings or exchanging a code. Cache expiry,
 eviction or flushing refuses the flow; it never falls back to session attributes.
 
@@ -70,12 +70,114 @@ switching users. Named flows are no longer tied to session attributes; the defau
 flow retains its legacy session keys. Named flows already pending in session at deployment
 must be restarted.
 
-The TTL bounds retention, not the number of entries. Consuming applications should throttle
-named connect routes. The user binding compares the string form of `getAuthIdentifier()`;
-those keys must be globally unique across identity realms sharing a named server and cache
-namespace. Use isolated cache namespaces when tenant or guard identifiers can overlap.
-Package-level admission limits and a configurable identity namespace remain tracked in
-[#111](https://github.com/bherila/auth-laravel/issues/111); this change does not implement them.
+### Named-flow admission (0.29 minor adoption)
+
+`oauth_client.pending_flow_max_active` is a positive integer, default **10**. It limits
+active, newly admitted named flows per **(identity namespace, raw local user ID, server
+name)** across every session and worker using that cache. This is intentionally different
+from the older session implementation's ten-per-session policy; opt into the 0.29 minor
+after reviewing the shared per-identity limit. There is no zero/unlimited setting. Changing
+issuer/settings under one server name does not create a second quota. Different users,
+configured realms and named servers have independent quotas.
+
+An admitted flow reserves one of a fixed number of owner-bound cache lock slots before
+its state is published. Reservations and states expire conservatively at the original
+flow deadline. There is no mutable global counter, LRU eviction or replacement of a valid
+pending flow to make room. Consumption spends state first, then checks the existing
+reservation's owner and releases it without reacquiring or refreshing an expired lease.
+The subsequent binding checks and HTTP exchange happen outside cache locks. A well-formed
+binding releases its reservation even when a later OAuth check rejects the callback.
+Malformed bindings cannot authorize a callback; their orphaned reservation may last until TTL.
+
+When all slots are held, a start returns **429** with a fixed message and a conservative
+`Retry-After` equal to the flow TTL. The person may complete a pending flow or wait for
+expiry. Invalid quota/realm configuration, cache errors, unsupported atomic locks or missing
+ownership inspection return a fixed **503** without credentials, identifiers or cache
+keys; storage outages use `Retry-After: 30`. These refusals are private/no-store. Failed
+publication attempts retain their reservation until expiry, including write-then-false or
+write-then-throw outcomes. They never delete a possibly pre-existing valid state to make
+room. A missing,
+expired or evicted reservation cannot authorize a callback even if its state entry survives.
+Failure after confirmed state deletion cannot revive that state. If initial cache access
+or deletion cannot be confirmed, no code is exchanged; physical deletion cannot be promised
+during a complete storage outage.
+
+Use Laravel's shared database/Redis or suitably shared file cache with its owner-aware
+lock implementation. Custom stores must implement `LockProvider` and return Laravel
+`Illuminate\Cache\Lock` instances supporting ownership inspection and owner-aware release;
+unsupported stores fail clearly. An in-process array cache is suitable for isolated tests,
+not multiple web workers. No reservation requires acquiring another reservation lock, and
+callbacks acquire only their state-consumption lock; there is no opposing quota-lock order.
+Database cache state and lock connections must be in autocommit mode: starts/callbacks
+refuse 503 before mutation when either connection has an active application transaction.
+Otherwise an application rollback can revive consumed state. Invoke the flow outside that
+transaction or configure separate autocommit cache and lock connections; do not wrap the
+cache claim or code exchange in a transaction that can roll those cache effects back.
+These bounds limit pending flows, not the total number of application identities, rate of
+start requests, or in-flight token HTTP requests. Keep route throttles and capacity planning
+for the shared cache; expired physical entries follow the backend's own cleanup policy.
+
+### Explicit identity realms
+
+The existing user binding remains the string form of `getAuthIdentifier()`; it never uses
+email or falls back to an owner. New named bindings also record an identity namespace.
+`oauth_client.identity_namespace`, default **`legacy`**, explicitly declares one realm
+whose local authentication IDs are globally unique within the application's cache namespace.
+It does not discover or distinguish tenants/guards automatically. Overlapping IDs require
+either an independently isolated cache namespace or a resolver that distinguishes every
+trusted guard/provider/tenant realm before enabling named connect routes.
+
+For one stable realm, configure a nonempty ASCII identifier of at most 128 bytes: letters,
+digits and `._:/-`, beginning with a letter or digit. Matching is exact and case sensitive.
+For dynamic trusted realms, bind the interface in the host's service provider:
+
+```php
+use BWH\Auth\OAuth\IdentityNamespaceResolver;
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Http\Request;
+
+$this->app->bind(IdentityNamespaceResolver::class, TrustedIdentityRealm::class);
+
+final class TrustedIdentityRealm implements IdentityNamespaceResolver
+{
+    public function resolve(Request $request, Authenticatable $account): string
+    {
+        // Set by trusted authentication/tenant middleware on BOTH routes.
+        // Never copy an OAuth query parameter, email or browser-supplied tenant hint.
+        return $request->attributes->get('authenticated_identity_realm');
+    }
+}
+```
+
+The resolver must return the same realm for the same admitted identity at start and
+callback, including after worker restarts, and a different realm for equal IDs from distinct
+guards/providers/tenants. Invalid or unavailable resolver answers fail closed with 503.
+Raw local IDs stay unchanged. `AuthenticationContext::remember()` and `::satisfies()` use
+the same resolver, preventing a provider step-up remembered for local ID `7` in one realm
+from satisfying recent authentication for local ID `7` in another. The ordinary default
+sign-in state/verifier/session flow and its admission behavior remain unchanged.
+
+### Upgrade and drain contract
+
+Deploy every worker on the same release/configuration and drain old workers before
+relying on the new quota. Cached 0.28 flows have no reservation or realm metadata: they
+are **not retroactively counted**, and remain single-use compatible only in the explicit
+`legacy` realm. Allow their original TTL to drain before treating the new count as the
+complete pending-flow bound. Old workers cannot enforce the new policy.
+
+Drain pending flows before changing cache store/prefix, namespace/resolver meaning, TTL,
+server identity settings or lowering the quota. Do not reset live reservations to force
+admission. A lower limit does not evict existing admitted flows; its full bound applies
+after the older leases drain. Lost/changed storage or a nonlegacy realm refuses old pending
+flows, so users restart the connection. Existing issuer/callback/resource/user/PKCE checks
+still apply. Session-stored named flows from releases before 0.28 still require restart.
+
+Remembered authentication without realm metadata remains compatible only in `legacy`.
+Adopting a nonlegacy realm requires fresh provider authentication; an old raw ID alone
+cannot satisfy it. A missing new config key safely defaults to `legacy`/10, including when
+a host replaces the entire `oauth_client` configuration. Default sign-in remains available.
+No database migration or new durable table is required. There is no automatic consumer
+rollout: applications choose the 0.29 minor and review their realm and quota explicitly.
 
 ## Explicit settings and per-client HTTP policy
 
