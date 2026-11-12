@@ -55,20 +55,19 @@ final class PendingFlowCache
 
                     continue;
                 }
-                $possiblyPublished = false;
+                $publicationAttempted = false;
                 try {
                     self::owned($reservation);
                     $remaining = $expires - Carbon::now()->getTimestamp();
                     if ($remaining < 1) {
                         self::unavailable();
                     }
-                    // add() may write and then throw. Keep the reservation until
-                    // any possibly published state is confirmed deleted.
-                    $possiblyPublished = true;
+                    // Both false and exceptions can have an unknown write outcome.
+                    // Retain the lease; deleting that key could evict another flow.
+                    $publicationAttempted = true;
                     if (! $cache->add(self::STATE_PREFIX.$owner, [
                         ...$binding, 'admission_slot' => $slot, 'expires_at' => $expires,
                     ], $remaining)) {
-                        $possiblyPublished = false;
                         self::unavailable();
                     }
                     // A slow/outage-delayed publication must not redirect to an
@@ -80,10 +79,10 @@ final class PendingFlowCache
 
                     return;
                 } catch (Throwable $failure) {
-                    // Releasing before deleting an ambiguous write would let
-                    // repeated failures accumulate unreserved state entries.
+                    // Once publication was attempted, retaining the finite lease
+                    // is safer than guessing whether the key contains our write.
                     try {
-                        if (! $possiblyPublished || $cache->forget(self::STATE_PREFIX.$owner)) {
+                        if (! $publicationAttempted) {
                             $reservation->release();
                         }
                     } catch (Throwable) {

@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -217,17 +218,28 @@ class OAuthPendingFlowAdmissionTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_ambiguous_publication_keeps_its_reservation_until_cleanup_or_expiry(): void
+    public static function ambiguousPublicationFailures(): array
+    {
+        return [['throw'], ['false']];
+    }
+
+    #[DataProvider('ambiguousPublicationFailures')]
+    public function test_ambiguous_publication_keeps_its_reservation_until_expiry(string $failure): void
     {
         $store = new class($this->app['files'], $this->directory.'/ambiguous') extends FileStore
         {
             public array $published = [];
+
+            public bool $returnFalse = false;
 
             public function add($key, $value, $seconds)
             {
                 $stored = parent::add($key, $value, $seconds);
                 if ($stored && str_starts_with($key, 'bherila-auth:oauth-client:pending-flow:') && ! str_ends_with($key, ':consume')) {
                     $this->published[] = $key;
+                    if ($this->returnFalse) {
+                        return false;
+                    }
                     throw new RuntimeException('synthetic-private-publication-error');
                 }
 
@@ -243,6 +255,7 @@ class OAuthPendingFlowAdmissionTest extends TestCase
                 return parent::forget($key);
             }
         };
+        $store->returnFalse = $failure === 'false';
         Cache::extend('ambiguous-file', fn () => Cache::repository($store));
         config([
             'cache.stores.ambiguous-file' => ['driver' => 'ambiguous-file'],
@@ -256,6 +269,22 @@ class OAuthPendingFlowAdmissionTest extends TestCase
         $this->assertHttp(503, fn () => $this->start());
         $this->assertCount(2, $store->published);
         Http::assertNothingSent();
+    }
+
+    public function test_an_add_collision_never_evicts_the_existing_valid_flow(): void
+    {
+        config(['bherila-auth.oauth_client.pending_flow_max_active' => 2]);
+        $state = $this->start();
+        $original = Cache::store('named-flows')->get($this->stateKey($state));
+        Str::createRandomStringsUsing(static fn (int $length): string => $length === 40 ? $state : str_repeat('x', $length));
+        try {
+            $this->assertHttp(503, fn () => $this->start());
+        } finally {
+            Str::createRandomStringsNormally();
+        }
+        $this->assertTrue($original === Cache::store('named-flows')->get($this->stateKey($state)));
+        $this->assertSame('synthetic-access', $this->consume($state));
+        Http::assertSentCount(1);
     }
 
     public static function transactionalCacheConnections(): array

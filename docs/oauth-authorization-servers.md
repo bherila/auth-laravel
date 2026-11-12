@@ -94,8 +94,9 @@ When all slots are held, a start returns **429** with a fixed message and a cons
 expiry. Invalid quota/realm configuration, cache errors, unsupported atomic locks or missing
 ownership inspection return a fixed **503** without credentials, identifiers or cache
 keys; storage outages use `Retry-After: 30`. These refusals are private/no-store. Failed
-publication deletes any possibly written state before releasing its reservation; if deletion
-cannot be confirmed, the reservation remains until expiry. A missing,
+publication attempts retain their reservation until expiry, including write-then-false or
+write-then-throw outcomes. They never delete a possibly pre-existing valid state to make
+room. A missing,
 expired or evicted reservation cannot authorize a callback even if its state entry survives.
 Failure after confirmed state deletion cannot revive that state. If initial cache access
 or deletion cannot be confirmed, no code is exchanged; physical deletion cannot be promised
