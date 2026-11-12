@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Session\ArraySessionHandler;
 use Illuminate\Session\Store;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
@@ -214,6 +215,43 @@ class OAuthPendingFlowAdmissionTest extends TestCase
         $this->assertHttp(503, fn () => $this->consume($state));
         $this->assertRejected($state, OAuthCallbackFailure::StateMismatch);
         Http::assertNothingSent();
+    }
+
+    public static function transactionalCacheConnections(): array
+    {
+        return [['state'], ['lock']];
+    }
+
+    #[DataProvider('transactionalCacheConnections')]
+    public function test_database_cache_cannot_participate_in_an_application_transaction(string $part): void
+    {
+        $this->driver('database');
+        $connection = DB::connection('testing');
+        if ($part === 'lock') {
+            config(['database.connections.pending-locks' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
+            Schema::connection('pending-locks')->create('synthetic_pending_locks', function (Blueprint $table): void {
+                $table->string('key')->primary();
+                $table->string('owner');
+                $table->integer('expiration');
+            });
+            config(['cache.stores.named-flows.lock_connection' => 'pending-locks']);
+            Cache::purge('named-flows');
+            $connection = DB::connection('pending-locks');
+        }
+        $state = $this->start();
+        $connection->beginTransaction();
+        try {
+            $this->assertHttp(503, fn () => $this->start());
+            $this->assertHttp(503, fn () => $this->consume($state));
+            Http::assertNothingSent();
+        } finally {
+            $connection->rollBack();
+        }
+        // The refusal happened before a durable claim, so the caller can finish
+        // outside the transaction exactly once; a rollback cannot revive it.
+        $this->assertSame('synthetic-access', $this->consume($state));
+        $this->assertRejected($state, OAuthCallbackFailure::StateMismatch);
+        Http::assertSentCount(1);
     }
 
     private function driver(string $driver): void

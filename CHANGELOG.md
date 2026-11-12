@@ -22,7 +22,9 @@ the first entry here is in the git history.
   pending flows before relying on it or changing realms, stores, TTL or lowering the
   limit. Legacy cached flows are not retroactively counted and remain compatible only
   in `legacy`; nonlegacy adoption requires restarting them and fresh authentication.
-  Use a shared lock-capable cache with owner inspection. No database migration is
+  Use a shared lock-capable cache with owner inspection. Database cache state/lock
+  connections must be outside application transactions (or use separate autocommit
+  connections), so rollback cannot revive consumed state. No database migration is
   required; ordinary default sign-in keeps its existing session/admission behavior.
   See [the namespace, admission and drain contract](docs/oauth-authorization-servers.md#named-flow-admission-029-minor-adoption).
 

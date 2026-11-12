@@ -106,6 +106,11 @@ lock implementation. Custom stores must implement `LockProvider` and return Lara
 unsupported stores fail clearly. An in-process array cache is suitable for isolated tests,
 not multiple web workers. No reservation requires acquiring another reservation lock, and
 callbacks acquire only their state-consumption lock; there is no opposing quota-lock order.
+Database cache state and lock connections must be in autocommit mode: starts/callbacks
+refuse 503 before mutation when either connection has an active application transaction.
+Otherwise an application rollback can revive consumed state. Invoke the flow outside that
+transaction or configure separate autocommit cache and lock connections; do not wrap the
+cache claim or code exchange in a transaction that can roll those cache effects back.
 These bounds limit pending flows, not the total number of application identities, rate of
 start requests, or in-flight token HTTP requests. Keep route throttles and capacity planning
 for the shared cache.

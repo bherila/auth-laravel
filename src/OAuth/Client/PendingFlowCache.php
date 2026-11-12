@@ -3,6 +3,7 @@
 namespace BWH\Auth\OAuth\Client;
 
 use BWH\Auth\OAuth\IdentityNamespace;
+use Illuminate\Cache\DatabaseStore;
 use Illuminate\Cache\Lock;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -161,6 +162,13 @@ final class PendingFlowCache
         $cache = Cache::store(config('bherila-auth.oauth_client.pending_flow_cache_store'));
         $store = $cache->getStore();
         if (! $store instanceof LockProvider) {
+            self::unavailable();
+        }
+        // Cache consumption/reservation release must not roll back with a host
+        // transaction after a callback rejection or even a completed exchange.
+        if ($store instanceof DatabaseStore
+            && ($store->getConnection()->transactionLevel() > 0
+                || ($store->getLockConnection() ?? $store->getConnection())->transactionLevel() > 0)) {
             self::unavailable();
         }
 
