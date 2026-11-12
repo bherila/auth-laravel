@@ -355,9 +355,9 @@ class OAuthPendingFlowAdmissionTest extends TestCase
 
     private function slotKey(array $binding): string
     {
-        return 'bherila-auth:oauth-client:pending-slot:'.hash('sha256', json_encode([
+        return 'bherila-auth:oauth-client:pending-slot:'.hash('sha256', serialize([
             $binding['identity_namespace'], $binding['user'], $binding['server'],
-        ], JSON_THROW_ON_ERROR)).':'.$binding['admission_slot'];
+        ])).':'.$binding['admission_slot'];
     }
 
     /** @return list<array{status: int|string, value?: string}> */

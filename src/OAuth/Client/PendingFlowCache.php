@@ -178,9 +178,11 @@ final class PendingFlowCache
     /** @param array<string, mixed> $binding */
     private static function slotKey(array $binding, int $slot): string
     {
-        return self::SLOT_PREFIX.hash('sha256', json_encode([
+        // PHP's fixed string tuple encoding preserves even binary local IDs;
+        // JSON would silently narrow the existing raw identifier contract.
+        return self::SLOT_PREFIX.hash('sha256', serialize([
             $binding['identity_namespace'], $binding['user'], $binding['server'],
-        ], JSON_THROW_ON_ERROR)).':'.$slot;
+        ])).':'.$slot;
     }
 
     private static function inspectable(mixed $lock): Lock

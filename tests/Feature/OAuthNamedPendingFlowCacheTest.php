@@ -271,6 +271,18 @@ class OAuthNamedPendingFlowCacheTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_admission_preserves_non_utf8_local_identifier_bytes(): void
+    {
+        $identifier = "synthetic-\xff\0-id";
+        $session = $this->newSession();
+        $query = $this->start($session, $identifier);
+        $key = 'bherila-auth:oauth-client:pending-flow:'.hash('sha256', $query['state']);
+        $this->assertSame($identifier, Cache::store('pending')->get($key)['user']);
+        $tokens = app(OAuthClient::class)->forServer('records')->tokensFromCallback($this->callbackRequest($session, $query['state'], $identifier));
+        $this->assertSame('synthetic-access', $tokens->accessToken);
+        Http::assertSentCount(1);
+    }
+
     private function newSession(): Store
     {
         $session = new Store('synthetic-session', new ArraySessionHandler(120));
