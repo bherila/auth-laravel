@@ -24,11 +24,17 @@ class TwoFactorService
         $email = data_get($user, config('bherila-auth.users.email_attribute', 'email'));
         $appName = config('app.name', 'Application');
 
+        // The links carry the attempt's link secret as well as its token. The token is also
+        // handed to the browser that passed the password step, so on its own it must not be
+        // able to finish the sign-in the email is the second factor for. Without a secret
+        // (the column has not been migrated) the email carries the code only.
+        $secret = $attempt->linkSecret();
+
         Mail::to($email)->send(new TwoFactorLoginMail(
             $user,
             $attempt,
-            $this->routeFromAppUrl(TwoFactorRoutes::name('confirm'), ['token' => $attempt->token]),
-            $this->routeFromAppUrl(TwoFactorRoutes::name('report'), ['token' => $attempt->token]),
+            $secret === null ? null : $this->routeFromAppUrl(TwoFactorRoutes::name('confirm'), ['token' => $attempt->token, 'secret' => $secret]),
+            $secret === null ? null : $this->routeFromAppUrl(TwoFactorRoutes::name('report'), ['token' => $attempt->token, 'secret' => $secret]),
             $appName,
         ));
 

@@ -3,8 +3,8 @@
 namespace BWH\Auth\Http\Controllers;
 
 use BWH\Auth\Contracts\AuthAuditLogger;
-use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
+use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Mail\PasswordResetConfirmationMail;
 use BWH\Auth\Mail\PasswordResetNoticeMail;
 use BWH\Auth\Support\PasswordChangeSessions;
@@ -109,6 +109,13 @@ class PasswordResetController extends Controller
 
             $user->forceFill($attributes)->save();
 
+            // Straight after the save, which also rotated the remember token: the mail, audit,
+            // event and sign-in below can all throw, and the password has already changed.
+            // This device signs in afterwards, so its cookie is reissued then.
+            if ($user instanceof Authenticatable) {
+                PasswordChangeSessions::endOtherDatabaseSessions($request, $user);
+            }
+
             $resetUser = $user;
         });
 
@@ -142,13 +149,13 @@ class PasswordResetController extends Controller
             if ($this->userPolicy->canLogin($resetUser, $request)) {
                 Auth::login($resetUser);
                 $request->session()->regenerate();
+
+                // The other sessions ended at the save; this device keeps a remember-me
+                // cookie it already held, now carrying the rotated token.
+                PasswordChangeSessions::reissueRememberCookie($request, $resetUser, $newPassword);
             } else {
                 $redirect = config('bherila-auth.two_factor.login_url', '/login');
             }
-
-            // The rotated remember token above already retired remember-me cookies; this ends
-            // the account's other sessions too (see PasswordChangeSessions).
-            PasswordChangeSessions::endOthers($request, $resetUser, $newPassword);
         }
 
         return response()->json([

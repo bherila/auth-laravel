@@ -116,7 +116,7 @@ class TwoFactorLoginTest extends TestCase
 
         $this->denyLogins();
 
-        $this->postJson('/api/auth/two-factor/confirm/'.$attempt->token)
+        $this->postJson('/api/auth/two-factor/confirm/'.$attempt->token, ['secret' => $attempt->linkSecret()])
             ->assertStatus(422)
             ->assertJson(['success' => false]);
 

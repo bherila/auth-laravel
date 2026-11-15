@@ -5,6 +5,7 @@ namespace BWH\Auth\Http\Middleware;
 use BWH\Auth\OAuth\AuthenticationRequirement;
 use BWH\Auth\OAuth\Session\AuthenticationContext;
 use Closure;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -28,12 +29,23 @@ use Symfony\Component\HttpFoundation\Response;
  * provider authentication of this account within the same window
  * ({@see AuthenticationContext}): an account that signs in through the identity provider
  * holds only a random local password nobody knows, and re-authenticating at the provider is
- * the equivalent proof. The window is `bherila-auth.password_confirmation.timeout` seconds,
- * or `auth.password_timeout` (Laravel's default, three hours) when that is null.
+ * the equivalent proof. A user-verified assertion of one of this account's own passkeys
+ * ({@see self::recordPasskeyConfirmation()}: a passkey sign-in, or
+ * `POST {prefix}/passkeys/confirm`) counts too, so an account that only uses passkeys, whose
+ * local password is random or unknown, can still confirm. The window is
+ * `bherila-auth.password_confirmation.timeout` seconds, or `auth.password_timeout` (Laravel's
+ * default, three hours) when that is null.
  */
 final class RequirePasswordConfirmation
 {
     public const string ERROR = 'password_confirmation_required';
+
+    /**
+     * When this session last proved its account with a user-verified passkey assertion:
+     * `{account: string, at: int}`. Bound to the account, and read only by this middleware,
+     * not by Laravel's `password.confirm`.
+     */
+    public const string PASSKEY_SESSION_KEY = 'bherila_auth.passkey_confirmed';
 
     public function handle(Request $request, Closure $next, ?string $seconds = null): Response
     {
@@ -55,7 +67,29 @@ final class RequirePasswordConfirmation
             return true;
         }
 
+        $passkey = $request->session()->get(self::PASSKEY_SESSION_KEY);
+        if (is_array($passkey)
+            && ($passkey['account'] ?? null) === (string) $user->getAuthIdentifier()
+            && is_int($passkey['at'] ?? null)
+            && Carbon::now()->getTimestamp() - $passkey['at'] < $timeout) {
+            return true;
+        }
+
         return AuthenticationContext::satisfies($request, $user, new AuthenticationRequirement(maxAge: $timeout));
+    }
+
+    /**
+     * Record that this session just proved `$user` with a user-verified assertion of one of
+     * that account's own passkeys. Call only after the assertion has been verified, and only
+     * when the authenticator reported user verification: presence alone proves possession of
+     * a device, not the person.
+     */
+    public static function recordPasskeyConfirmation(Request $request, Authenticatable $user): void
+    {
+        $request->session()->put(self::PASSKEY_SESSION_KEY, [
+            'account' => (string) $user->getAuthIdentifier(),
+            'at' => Carbon::now()->getTimestamp(),
+        ]);
     }
 
     /** The 423 answer when the confirmation is missing or stale; null when it is fresh. */

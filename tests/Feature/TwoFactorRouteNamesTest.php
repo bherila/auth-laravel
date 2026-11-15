@@ -124,19 +124,21 @@ class TwoFactorRouteNamesTest extends TestCase
             config(['bherila-auth.two_factor.route_name_prefix' => $previous]);
         }
         $this->assertGuest();
+        $query = '?secret='.$attempt->linkSecret();
         Mail::assertSent(TwoFactorLoginMail::class, fn (TwoFactorLoginMail $mail): bool => $mail->attempt->is($attempt)
-            && $mail->confirmUrl === 'https://app.example.test'.$path.'/auth/two-factor/confirm/'.$attempt->token
-            && $mail->reportUrl === 'https://app.example.test'.$path.'/auth/two-factor/report/'.$attempt->token);
+            && $mail->confirmUrl === 'https://app.example.test'.$path.'/auth/two-factor/confirm/'.$attempt->token.$query
+            && $mail->reportUrl === 'https://app.example.test'.$path.'/auth/two-factor/report/'.$attempt->token.$query);
 
-        $confirm = $path.'/auth/two-factor/confirm/'.$attempt->token;
-        $report = $path.'/auth/two-factor/report/'.$attempt->token;
+        $confirm = $path.'/auth/two-factor/confirm/'.$attempt->token.$query;
+        $report = $path.'/auth/two-factor/report/'.$attempt->token.$query;
         $this->get($confirm)->assertOk()->assertSee('action="http://localhost'.$confirm.'"', false);
         $this->get($report)->assertOk()->assertSee('action="http://localhost'.$report.'"', false);
         $this->assertGuest();
         $this->assertFalse($attempt->fresh()->is_used);
 
         $suspicious = TwoFactorAttempt::createForUser($user);
-        $this->postJson($path.'/auth/two-factor/report/'.$suspicious->token)->assertOk()->assertJsonPath('success', true);
+        $this->postJson($path.'/auth/two-factor/report/'.$suspicious->token.'?secret='.$suspicious->linkSecret())
+            ->assertOk()->assertJsonPath('success', true);
         $this->assertTrue($suspicious->fresh()->is_suspicious);
         $this->assertGuest();
         $this->postJson($confirm)->assertOk()->assertJsonPath('success', true);

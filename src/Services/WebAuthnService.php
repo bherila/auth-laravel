@@ -37,6 +37,8 @@ class WebAuthnService
 
     private const SESSION_LOGIN_OPTIONS = 'bherila_auth_webauthn_login_options';
 
+    private const SESSION_CONFIRM_OPTIONS = 'bherila_auth_webauthn_confirm_options';
+
     public function generateRegistrationOptions(Authenticatable $user, Request $request): array
     {
         $rpId = $this->getRpId($request);
@@ -117,6 +119,48 @@ class WebAuthnService
 
     public function generateAuthenticationOptions(?Authenticatable $user, Request $request): array
     {
+        return $this->assertionOptions($user, $request, self::SESSION_LOGIN_OPTIONS, $this->userVerificationRequirement());
+    }
+
+    /**
+     * @return array{0: Authenticatable, 1: PasskeyCredential, 2: bool}
+     */
+    public function verifyAuthenticationResponse(Request $request, array $credentialData): array
+    {
+        return $this->verifyAssertion($request, $credentialData, self::SESSION_LOGIN_OPTIONS);
+    }
+
+    /**
+     * Options for re-proving the signed-in account with one of its own passkeys, user
+     * verification required whatever `passkeys.user_verification` says. Kept apart from the
+     * sign-in options, so neither ceremony can finish the other.
+     */
+    public function generateConfirmationOptions(Authenticatable $user, Request $request): array
+    {
+        return $this->assertionOptions($user, $request, self::SESSION_CONFIRM_OPTIONS, AuthenticatorSelectionCriteria::USER_VERIFICATION_REQUIREMENT_REQUIRED);
+    }
+
+    /**
+     * Verify a confirmation assertion: it must be signed by a passkey of `$user` (the account
+     * signed in to this session) with user verification.
+     */
+    public function verifyConfirmationResponse(Authenticatable $user, Request $request, array $credentialData): PasskeyCredential
+    {
+        [$owner, $credential, $userVerified] = $this->verifyAssertion($request, $credentialData, self::SESSION_CONFIRM_OPTIONS);
+
+        if ((string) $owner->getAuthIdentifier() !== (string) $user->getAuthIdentifier()) {
+            throw new RuntimeException('The passkey belongs to another account.');
+        }
+
+        if (! $userVerified) {
+            throw new RuntimeException('The authenticator did not verify the user.');
+        }
+
+        return $credential;
+    }
+
+    private function assertionOptions(?Authenticatable $user, Request $request, string $sessionKey, string $userVerification): array
+    {
         $allowCredentials = [];
         if ($user) {
             $allowCredentials = PasskeyCredential::query()
@@ -133,21 +177,21 @@ class WebAuthnService
             challenge: random_bytes(32),
             rpId: $this->getRpId($request),
             allowCredentials: $allowCredentials,
-            userVerification: $this->userVerificationRequirement(),
+            userVerification: $userVerification,
             timeout: (int) config('bherila-auth.passkeys.timeout', 60000),
         );
 
-        $request->session()->put(self::SESSION_LOGIN_OPTIONS, $this->encodeOptions($options));
+        $request->session()->put($sessionKey, $this->encodeOptions($options));
 
         return $this->requestOptionsToArray($options);
     }
 
     /**
-     * @return array{0: Authenticatable, 1: PasskeyCredential}
+     * @return array{0: Authenticatable, 1: PasskeyCredential, 2: bool}
      */
-    public function verifyAuthenticationResponse(Request $request, array $credentialData): array
+    private function verifyAssertion(Request $request, array $credentialData, string $sessionKey): array
     {
-        $serializedOptions = $request->session()->pull(self::SESSION_LOGIN_OPTIONS);
+        $serializedOptions = $request->session()->pull($sessionKey);
         if (! $serializedOptions) {
             throw new RuntimeException('No pending authentication options found.');
         }
@@ -210,7 +254,7 @@ class WebAuthnService
     private function findStoredCredential(string $encodedCredentialId): ?PasskeyCredential
     {
         $credential = null;
-        $probe = new PasskeyCredential();
+        $probe = new PasskeyCredential;
 
         if ($probe->hasCredentialIdHashColumn()) {
             $credential = PasskeyCredential::query()
@@ -312,7 +356,7 @@ class WebAuthnService
     private function createSerializer(): SerializerInterface
     {
         $attestationManager = new AttestationStatementSupportManager([
-            new NoneAttestationStatementSupport(),
+            new NoneAttestationStatementSupport,
         ]);
 
         return (new WebauthnSerializerFactory($attestationManager))->create();
@@ -330,7 +374,7 @@ class WebAuthnService
 
     private function ceremonyFactory(Request $request): CeremonyStepManagerFactory
     {
-        $factory = new CeremonyStepManagerFactory();
+        $factory = new CeremonyStepManagerFactory;
         $origins = array_values(array_unique(array_filter([
             $request->getSchemeAndHttpHost(),
             config('app.url'),
@@ -349,7 +393,7 @@ class WebAuthnService
             type: 'public-key',
             transports: $credential->transports ?? [],
             attestationType: 'none',
-            trustPath: new EmptyTrustPath(),
+            trustPath: new EmptyTrustPath,
             aaguid: $credential->aaguid
                 ? Uuid::fromString($credential->aaguid)
                 : Uuid::fromString('00000000-0000-0000-0000-000000000000'),

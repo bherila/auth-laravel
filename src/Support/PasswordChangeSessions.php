@@ -47,26 +47,49 @@ final class PasswordChangeSessions
     }
 
     /**
-     * After the new password is saved: reissue this device's remember-me cookie and end the
-     * account's other database sessions.
+     * After the new password is saved: end the account's other database sessions, then reissue
+     * this device's remember-me cookie.
+     *
+     * Call it straight after the save, before mail, audit, events or anything else that can
+     * throw: once the password has changed, a failure there must not leave the old sessions
+     * alive. The sessions go first because the reissue announces OtherDeviceLogout, whose
+     * listeners can throw too.
      */
     public static function endOthers(Request $request, Authenticatable $user, #[\SensitiveParameter] string $newPassword): void
+    {
+        self::endOtherDatabaseSessions($request, $user);
+        self::reissueRememberCookie($request, $user, $newPassword);
+    }
+
+    /**
+     * Delete the account's database session rows other than this request's. Does not throw
+     * for a database failure (it is reported): the password has already changed.
+     *
+     * A flow that signs the device in afterwards (password reset) calls this straight after
+     * the save and {@see reissueRememberCookie()} once the device is signed in.
+     */
+    public static function endOtherDatabaseSessions(Request $request, Authenticatable $user): void
     {
         if (! self::enabled()) {
             return;
         }
 
-        self::reissueRememberCookie($request, $user, $newPassword);
         self::deleteOtherDatabaseSessions($request, $user);
     }
 
     /**
      * The changing device keeps "remember me": its cookie carries the rotated token and the
      * new password hash. Laravel's own API for exactly this, which also announces
-     * OtherDeviceLogout; it rehashes the (already new) password once more as it does.
+     * OtherDeviceLogout; it rehashes the (already new) password once more as it does. Does
+     * nothing unless this device is signed in as the account and holds or is being issued a
+     * remember-me cookie.
      */
-    private static function reissueRememberCookie(Request $request, Authenticatable $user, string $newPassword): void
+    public static function reissueRememberCookie(Request $request, Authenticatable $user, #[\SensitiveParameter] string $newPassword): void
     {
+        if (! self::enabled()) {
+            return;
+        }
+
         $guard = Auth::guard();
 
         if (! $guard instanceof SessionGuard

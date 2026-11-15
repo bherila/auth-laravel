@@ -59,6 +59,7 @@ class AuthenticatedPasswordController extends Controller
         $user->forceFill($attributes)->save();
 
         // This session continues; the account's other sessions end (see PasswordChangeSessions).
+        // Straight after the save, before the mail and audit below, which can throw.
         PasswordChangeSessions::endOthers($request, $user, $validated['password']);
 
         $appName = config('app.name', 'Application');
