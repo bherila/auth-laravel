@@ -125,6 +125,13 @@ class PasskeyController extends Controller
             Auth::login($user, $request->boolean('remember'));
             $request->session()->regenerate();
 
+            // A user-verified passkey sign-in is as fresh a proof as a password confirmation,
+            // so the session can enroll another passkey without asking for a password a
+            // passkey-only account may not know. Presence alone (no UV) does not count.
+            if ($userVerified) {
+                RequirePasswordConfirmation::recordPasskeyConfirmation($request, $user);
+            }
+
             $this->auditLogger->passkeyLoginSucceeded($request, $user, $credential);
             event(new PasskeyLoginSucceeded($user, $credential, $userVerified));
 
@@ -138,6 +145,46 @@ class PasskeyController extends Controller
 
             return response()->json(['error' => 'Authentication failed: '.$throwable->getMessage()], 422);
         }
+    }
+
+    /**
+     * `POST {prefix}/passkeys/confirm/options`: a confirmation ceremony for the signed-in
+     * account, restricted to its own passkeys and requiring user verification.
+     */
+    public function confirmationOptions(Request $request): JsonResponse
+    {
+        $this->refuseUnlessLocalCredentialsAllowed($request);
+
+        return response()->json($this->webAuthnService->generateConfirmationOptions($request->user(), $request));
+    }
+
+    /**
+     * `POST {prefix}/passkeys/confirm`: re-prove the signed-in account with one of its own
+     * passkeys, which {@see RequirePasswordConfirmation} accepts like a password confirmation.
+     * Signs nobody in; an assertion by another account's passkey, or without user
+     * verification, is refused.
+     */
+    public function confirm(Request $request): JsonResponse
+    {
+        $this->refuseUnlessLocalCredentialsAllowed($request);
+
+        $validated = $request->validate([
+            'credential' => ['required', 'array'],
+        ]);
+
+        try {
+            $this->webAuthnService->verifyConfirmationResponse($request->user(), $request, $validated['credential']);
+        } catch (Throwable $throwable) {
+            return response()->json(['success' => false, 'error' => 'Confirmation failed: '.$throwable->getMessage()], 422);
+        }
+
+        RequirePasswordConfirmation::recordPasskeyConfirmation($request, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Identity confirmed.',
+            'expires_in' => RequirePasswordConfirmation::timeout(),
+        ]);
     }
 
     /**
