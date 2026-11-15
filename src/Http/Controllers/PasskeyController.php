@@ -9,6 +9,7 @@ use BWH\Auth\Events\PasskeyDeleted;
 use BWH\Auth\Events\PasskeyLoginFailed;
 use BWH\Auth\Events\PasskeyLoginSucceeded;
 use BWH\Auth\Events\PasskeyRegistered;
+use BWH\Auth\Http\Middleware\RequirePasswordConfirmation;
 use BWH\Auth\Models\PasskeyCredential;
 use BWH\Auth\Services\WebAuthnService;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -40,12 +41,20 @@ class PasskeyController extends Controller
     {
         $this->refuseUnlessLocalCredentialsAllowed($request);
 
+        if (($refusal = $this->passwordConfirmationRefusal($request)) !== null) {
+            return $refusal;
+        }
+
         return response()->json($this->webAuthnService->generateRegistrationOptions($request->user(), $request));
     }
 
     public function register(Request $request): JsonResponse
     {
         $this->refuseUnlessLocalCredentialsAllowed($request);
+
+        if (($refusal = $this->passwordConfirmationRefusal($request)) !== null) {
+            return $refusal;
+        }
 
         $validated = $request->validate([
             'credential' => ['required', 'array'],
@@ -129,6 +138,21 @@ class PasskeyController extends Controller
 
             return response()->json(['error' => 'Authentication failed: '.$throwable->getMessage()], 422);
         }
+    }
+
+    /**
+     * A new passkey decides future logins, so a session must have confirmed its password
+     * recently before it can add one: a stolen session alone cannot enroll the thief's
+     * authenticator. Checked here, after the local-credential refusal, so an account that
+     * may not hold a passkey hears that rather than being asked for a password it cannot use.
+     */
+    private function passwordConfirmationRefusal(Request $request): ?JsonResponse
+    {
+        if (! (bool) config('bherila-auth.passkeys.require_password_confirmation', true)) {
+            return null;
+        }
+
+        return RequirePasswordConfirmation::refusal($request);
     }
 
     /** A passkey is a local credential: an account that may not hold one cannot add one. */

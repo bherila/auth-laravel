@@ -15,6 +15,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\View\View;
 
 class TwoFactorController extends Controller
@@ -42,6 +43,10 @@ class TwoFactorController extends Controller
             || ($this->allowTestCode($attempt) && hash_equals(config('bherila-auth.two_factor.test_code', '999999'), $validated['code']));
 
         if (! $isValidCode) {
+            if ($this->spendAfterWrongCode($attempt)) {
+                return $this->failure($request, $attempt, 'Too many incorrect codes. Please sign in again for a new code.');
+            }
+
             return $this->failure($request, $attempt, 'The verification code is incorrect. Please try again.');
         }
 
@@ -159,8 +164,12 @@ class TwoFactorController extends Controller
 
         // Consume the attempt before deciding anything else: a challenge that reached
         // this point is spent whether or not the login is allowed to complete, so a
-        // denied account cannot retry the same code once its state changes back.
-        $attempt->update(['is_used' => true]);
+        // denied account cannot retry the same code once its state changes back. One
+        // conditional update, so of two concurrent submissions (or a submission racing
+        // the wrong-code cap) only one can consume it.
+        if (! $this->consume($attempt)) {
+            return $this->failure($request, $attempt, 'Invalid or expired verification attempt.');
+        }
 
         if (! $this->userPolicy->canLogin($user, $request)) {
             // The challenge may have been created before the account was disabled.
@@ -202,6 +211,47 @@ class TwoFactorController extends Controller
         }
 
         return redirect()->to($redirect);
+    }
+
+    /** Mark the attempt used if nothing else has; whether this request was the one that did. */
+    private function consume(TwoFactorAttempt $attempt): bool
+    {
+        $consumed = TwoFactorAttempt::query()
+            ->whereKey($attempt->getKey())
+            ->where('is_used', false)
+            ->update(['is_used' => true]) === 1;
+
+        $attempt->forceFill(['is_used' => true])->syncOriginalAttribute('is_used');
+
+        return $consumed;
+    }
+
+    /**
+     * Count a wrong code against its challenge, and spend the challenge at the cap.
+     *
+     * Counted here rather than in route middleware so every route that verifies through
+     * this controller (an application's own emergency sign-in, for one) has the same cap.
+     * The counter lives in Laravel's limiter cache store for the challenge's remaining
+     * lifetime, keyed by a hash of the token. Whether the challenge was spent.
+     */
+    private function spendAfterWrongCode(TwoFactorAttempt $attempt): bool
+    {
+        $maximum = (int) config('bherila-auth.two_factor.max_wrong_codes', 5);
+        if ($maximum < 1) {
+            return false;
+        }
+
+        $key = 'bherila-auth.two-factor-wrong-codes:'.hash('sha256', $attempt->token);
+        $misses = RateLimiter::increment($key, max(1, (int) ceil(now()->diffInSeconds($attempt->expires_at, true))));
+
+        if ($misses < $maximum) {
+            return false;
+        }
+
+        $this->consume($attempt);
+        RateLimiter::clear($key);
+
+        return true;
     }
 
     private function failure(Request $request, ?TwoFactorAttempt $attempt, string $message, bool $audit = true): JsonResponse|RedirectResponse

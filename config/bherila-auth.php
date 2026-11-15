@@ -10,7 +10,50 @@ return [
         'passkeys' => true,
         'password_resets' => true,
         'change_password' => true,
+        // POST {prefix}/auth/confirm-password, the confirmation passkey enrollment requires.
+        'confirm_password' => true,
         'two_factor' => true,
+    ],
+
+    // Named rate limiters on the package's routes (BWH\Auth\Support\RateLimits). Each limit
+    // is [max attempts, decay minutes]; null leaves that one dimension unlimited. Every
+    // dimension is its own bucket, so a request is refused when any one is exhausted.
+    // Addresses and challenge tokens are hashed before they become cache keys. An
+    // application that defines a limiter with the same name (for example
+    // `bherila-auth.forgot-password`) keeps its own. Uses Laravel's limiter cache store
+    // (`cache.limiter`, else the default), which must be shared by every web worker.
+    'rate_limits' => [
+        'enabled' => (bool) env('BHERILA_AUTH_RATE_LIMITS_ENABLED', true),
+        // Bounds how fast one challenge is tried and how fast one source tries challenges.
+        // The per-IP ceiling stays above a shared NAT signing many people in.
+        'two_factor_verify' => ['ip' => [60, 1], 'attempt' => [10, 1]],
+        // Each resend emails a new code to the account.
+        'two_factor_resend' => ['ip' => [6, 1], 'account' => [3, 15]],
+        // Each request can email a reset link; per address so one mailbox cannot be flooded
+        // from many sources.
+        'forgot_password' => ['ip' => [5, 1], 'email' => [5, 60]],
+        'reset_password' => ['ip' => [10, 1], 'email' => [10, 15]],
+        // Both check the account's current password.
+        'change_password' => ['ip' => [30, 1], 'account' => [6, 1]],
+        'confirm_password' => ['ip' => [30, 1], 'account' => [6, 1]],
+        // Issuing personal API tokens and OAuth apps (oauth_server.credentials).
+        'credentials' => ['account' => [10, 1]],
+    ],
+
+    // RequirePasswordConfirmation and POST {prefix}/auth/confirm-password. Seconds a
+    // confirmation lasts; null uses auth.password_timeout (Laravel's default: 10800).
+    'password_confirmation' => [
+        'timeout' => env('BHERILA_AUTH_PASSWORD_CONFIRMATION_TIMEOUT'),
+    ],
+
+    // What the package's own password change and reset do to the account's other sessions.
+    // When on, both rotate the remember token (remember-me cookies issued under the old
+    // password stop working; the changing device's cookie is reissued) and, with the
+    // `database` session driver, delete the account's other session rows. Other session
+    // drivers cannot be enumerated: enable Laravel's `$middleware->authenticateSessions()`
+    // so every other session holding the old password hash ends at its next request.
+    'sessions' => [
+        'end_other_sessions_on_password_change' => (bool) env('BHERILA_AUTH_END_OTHER_SESSIONS_ON_PASSWORD_CHANGE', true),
     ],
 
     // Which proxies may report the client's address (BWH\Auth\Http\TrustedProxies).
@@ -83,6 +126,10 @@ return [
         // A BWH\Auth\OAuth\Login\RelyingPartyAccounts subclass: the model, columns, new-account
         // and refresh attributes. Null uses the defaults for a stock `users` table.
         'accounts' => null,
+        // Refuse a sign-in whose identity response carries `email_verified` as anything but
+        // true (OAuthIdentity::$emailVerified === false), before any account is created,
+        // linked or updated. An identity without the claim is unaffected.
+        'refuse_unverified_email' => (bool) env('BHERILA_AUTH_OAUTH_REFUSE_UNVERIFIED_EMAIL', true),
     ],
 
     // Local credentials: passwords, password resets, passkeys and two-factor password sign-in.
@@ -382,6 +429,9 @@ return [
         // Includes the separator before confirm/report and their .submit actions.
         'route_name_prefix' => 'bherila-auth.two-factor.',
         'expires_minutes' => 15,
+        // Wrong codes one challenge absorbs before it is spent and the person signs in again
+        // for a new code. Counted in Laravel's limiter cache store. 0 disables the cap.
+        'max_wrong_codes' => 5,
         // Fixed-code bypass for automated tests and local development. Off by default,
         // and even when on it applies only to accounts explicitly flagged `is_test`
         // AND only in the environments listed below (an empty list means any).
@@ -407,6 +457,11 @@ return [
         'timeout' => 60000,
         'resident_key' => env('WEBAUTHN_RESIDENT_KEY', 'preferred'),
         'user_verification' => env('WEBAUTHN_USER_VERIFICATION', 'preferred'),
+        // Enrolling a passkey needs a recent password confirmation (RequirePasswordConfirmation):
+        // without one, register/options and register answer JSON 423
+        // `password_confirmation_required`, and the client confirms at
+        // POST {prefix}/auth/confirm-password. A recent provider sign-in also counts.
+        'require_password_confirmation' => (bool) env('BHERILA_AUTH_PASSKEYS_REQUIRE_PASSWORD_CONFIRMATION', true),
     ],
 
     'users' => [
