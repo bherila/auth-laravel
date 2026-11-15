@@ -257,7 +257,13 @@ Published config lives at `config/bherila-auth.php`. Important settings:
 
 - `routes.prefix`: defaults to `api`, so package endpoints are under `/api/...`.
 - `routes.middleware`: defaults to `['web']` so session auth and CSRF work in Laravel/Vite apps.
-- `routes.passkeys`, `routes.password_resets`, `routes.change_password`, and `routes.two_factor`: enable or disable route families independently when an app owns one part of the auth surface locally.
+- `routes.passkeys`, `routes.password_resets`, `routes.change_password`, `routes.confirm_password`, and `routes.two_factor`: enable or disable route families independently when an app owns one part of the auth surface locally.
+- `rate_limits`: the named limiters on the package's own routes (see "Route rate limits"). On by default; `BHERILA_AUTH_RATE_LIMITS_ENABLED=false` turns them all off.
+- `two_factor.max_wrong_codes`: wrong codes one emailed challenge absorbs before it is spent. Defaults to `5`; `0` disables the cap.
+- `passkeys.require_password_confirmation`: passkey enrollment needs a recent password confirmation. Defaults to `true` (see "Password confirmation").
+- `password_confirmation.timeout`: seconds a confirmation lasts. Defaults to `null`, which uses `auth.password_timeout` (Laravel's default, three hours).
+- `sessions.end_other_sessions_on_password_change`: the package's password change and reset end the account's other sessions. Defaults to `true` (see "Ending other sessions"). Enable Laravel's `authenticateSessions()` too.
+- `oauth_login.refuse_unverified_email`: refuse a provider sign-in whose `email_verified` claim is present and not true. Defaults to `true` (see [relying-party login](docs/relying-party-login.md#unverified-provider-addresses)).
 - `password_resets.reset_url`: reset-page URL generated into password reset emails. Defaults to `{APP_URL}/reset-password/{token}?email={email}`.
 - `password_resets.verify_email_on_reset`: optionally marks verified-email users verified after a successful reset.
 - `password_resets.redirect_after_reset`: JSON redirect returned after a successful reset.
@@ -287,6 +293,7 @@ With the default prefix, the package registers:
 - `POST /api/auth/forgot-password`
 - `POST /api/auth/reset-password`
 - `POST /api/change-password`
+- `POST /api/auth/confirm-password`
 - `POST /api/auth/two-factor/verify`
 - `POST /api/auth/two-factor/resend`
 - `GET /api/auth/two-factor/confirm/{token}`
@@ -301,6 +308,38 @@ With the default prefix, the package registers:
 - `POST /api/passkeys/auth`
 
 When `audit.routes_enabled` is true (off by default), it also registers `GET /api/auth/audit-log`, `POST /api/auth/audit-log/{id}/suspicious`, and `GET /api/auth/audit-log/all`. See "Login audit logging".
+
+## Route rate limits
+
+Every package route that sends mail or checks a credential carries its own named limiter
+(`BWH\Auth\Support\RateLimits`), registered with `RateLimiter::for()` when the package boots.
+Each limiter keys its own buckets, so these routes never share the one unprefixed
+`throttle:N,M` counter the rest of an application uses. Within a limiter every dimension is a
+separate bucket, and a request is refused with 429 when any one is exhausted:
+
+| Limiter | Route | Default limits |
+| --- | --- | --- |
+| `bherila-auth.two-factor-verify` | `POST /api/auth/two-factor/verify` | 60/min per IP; 10/min per challenge token |
+| `bherila-auth.two-factor-resend` | `POST /api/auth/two-factor/resend` | 6/min per IP; 3 per 15 min per account |
+| `bherila-auth.forgot-password` | `POST /api/auth/forgot-password` | 5/min per IP; 5/hour per address |
+| `bherila-auth.reset-password` | `POST /api/auth/reset-password` | 10/min per IP; 10 per 15 min per address |
+| `bherila-auth.change-password` | `POST /api/change-password` | 30/min per IP; 6/min per account |
+| `bherila-auth.confirm-password` | `POST /api/auth/confirm-password` | 30/min per IP; 6/min per account |
+| `bherila-auth.credentials` | issuing API tokens and OAuth apps (`oauth_server.credentials`) | 10/min per account |
+
+Tune them under `rate_limits` in the published config: each dimension is
+`[max attempts, decay minutes]`, or `null` to leave that one dimension unlimited, and a value
+that is neither fails loudly rather than open. `rate_limits.enabled = false` leaves every one
+unlimited. To replace a limiter outright, define one of the same name in the application; the
+package keeps it whether it is defined before or after the package boots. Addresses are
+lower-cased and trimmed, and both addresses and challenge tokens are hashed before they become
+cache keys. Counters use Laravel's limiter cache store (`cache.limiter`, else the default),
+which must be shared by every web worker.
+
+The limiters bound request rates. Guessing a sign-in code is bounded separately, per
+challenge (`two_factor.max_wrong_codes`, below), and the password broker keeps its own
+recently-created-token throttle. Password login and registration are application routes:
+limit them in the application.
 
 ## Ownership boundary
 
@@ -335,6 +374,56 @@ The reset email uses `password_resets.reset_url`. Set `BHERILA_AUTH_PASSWORD_RES
 The package registers `POST /api/change-password` behind `auth` middleware. It expects `current_password`, `password`, and `password_confirmation`, updates the authenticated user's password, sends `PasswordResetNoticeMail`, and returns JSON suitable for `bwh-auth`'s `ChangePasswordForm`.
 
 The consuming app owns where this appears, such as an account settings page or dialog.
+
+### Ending other sessions
+
+With `sessions.end_other_sessions_on_password_change` on (the default), both the password
+change and the password reset end the account's other sessions:
+
+- The remember token is rotated (the reset always did this), so remember-me cookies issued under
+  the old password stop working on every device. The device making the change keeps signing in:
+  its cookie is reissued with the new token. An account with no token is not given one.
+- With the `database` session driver, the account's other rows in the sessions table are deleted.
+- **Any other session driver cannot be enumerated.** Enable Laravel's session authentication so
+  those sessions end at their next request:
+
+  ```php
+  // bootstrap/app.php
+  ->withMiddleware(function (Middleware $middleware): void {
+      $middleware->authenticateSessions();
+  })
+  ```
+
+  Each session then stores the password hash it signed in with, and one holding the old hash is
+  signed out. The session that made the change stores the new hash, so it stays signed in. Apps
+  should enable it with the `database` driver too: it also covers passwords changed outside the
+  package (an admin tool, a console command).
+
+Turning the setting off restores the earlier behaviour: a change keeps the remember token and
+every session, and a reset still rotates the token.
+
+## Password confirmation
+
+`BWH\Auth\Http\Middleware\RequirePasswordConfirmation` requires a recent password confirmation
+and answers JSON `423` with `{"success": false, "error": "password_confirmation_required"}` when
+it is missing or stale, whether or not the request asked for JSON. The client confirms with
+`POST /api/auth/confirm-password` (`password`; behind `auth`, `RequireActiveUser` and the
+`bherila-auth.confirm-password` limiter), which answers `{"success": true, "expires_in": <seconds>}`
+or `422` for a wrong password, and then retries.
+
+The confirmation is Laravel's standard `auth.password_confirmed_at`, so the package endpoint also
+satisfies `password.confirm` on the application's own routes, and an application endpoint calling
+`$request->session()->passwordConfirmed()` satisfies the package check. A provider authentication
+of the same account within the window (`AuthenticationContext`, recorded by
+[relying-party sign-in](docs/relying-party-login.md)) counts too: a provider-bound account holds
+only a random local password nobody knows. An account that may not use local credentials
+(`LocalCredentialPolicy`) is refused with `403` at the endpoint.
+
+Passkey enrollment (`POST /api/passkeys/register/options` and `POST /api/passkeys/register`)
+requires it by default (`passkeys.require_password_confirmation`), so a stolen session alone
+cannot add the thief's authenticator. The window is `password_confirmation.timeout` seconds,
+else `auth.password_timeout`. Use the middleware on application routes as well, optionally with
+its own window: `RequirePasswordConfirmation::class.':900'`.
 
 ## Email 2FA integration
 
@@ -371,6 +460,14 @@ export function TwoFactorPage({ token }: { token: string }) {
 `TwoFactorForm` posts to `/api/auth/two-factor/verify`, can resend via `/api/auth/two-factor/resend`, and can report suspicious attempts via `POST /api/auth/two-factor/report/{token}`.
 
 Email confirmation and report links are side-effect-free `GET` pages. The user must submit a CSRF-protected `POST` to complete login or report suspicious activity, which prevents common email security scanners from consuming one-shot login links.
+
+A challenge is spent after `two_factor.max_wrong_codes` wrong codes (default `5`): the fifth wrong
+code answers `422` "Too many incorrect codes" and the person signs in again for a new code. The cap
+is counted in `TwoFactorController::verify` itself, in Laravel's limiter cache store for the
+challenge's remaining lifetime, so it also holds on an application route that verifies through the
+package controller (an emergency sign-in, for example) without the package's route middleware.
+A challenge is consumed with one conditional update, so two concurrent submissions of the same code
+cannot both sign in.
 
 ## Mailables
 
@@ -746,6 +843,11 @@ public function callback(Request $request, OAuthClient $oauth): RedirectResponse
 
 The package deliberately does not match or bind users by email. That decision is
 application-specific and must not silently replace a trusted provider-subject binding.
+
+The identity carries the provider's `email_verified` claim as `$identity->emailVerified`: `true`
+for `true` or `"true"`, `false` for any other value that is present, `null` when absent. The
+package's `RelyingPartyLoginController` refuses `false` by default; a custom callback decides for
+itself (see [relying-party login](docs/relying-party-login.md#unverified-provider-addresses)).
 
 The callback refuses a response with `OAuthCallbackRejected` (403) unless its `state` names the
 flow this session started (spent on first use, and no older than `oauth_client.pending_flow_ttl`),

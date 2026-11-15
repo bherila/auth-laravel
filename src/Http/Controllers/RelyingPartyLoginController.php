@@ -73,6 +73,14 @@ abstract class RelyingPartyLoginController extends Controller
     {
         $identity = $oauth->identityFromCallback($request);
 
+        // Before anything is created, linked or updated from an address the provider itself
+        // says it has not verified. An identity without the claim is unaffected.
+        if ($identity->emailVerified === false && (bool) config('bherila-auth.oauth_login.refuse_unverified_email', true)) {
+            $this->auditLoginFailed($request, null, null, 'Identity email not verified by provider', 'oauth');
+
+            return $this->unverifiedEmailResponse($request, $identity);
+        }
+
         try {
             $account = app(SubjectBoundAccounts::class)->resolve($identity, $this->accounts());
         } catch (AccountConflict $conflict) {
@@ -177,6 +185,16 @@ abstract class RelyingPartyLoginController extends Controller
     protected function unknownIdentityResponse(Request $request, OAuthIdentity $identity): Response
     {
         abort(403, 'This account is not set up for this application.');
+    }
+
+    /**
+     * The answer to a sign-in whose provider reports the address unverified
+     * (`oauth_login.refuse_unverified_email`). Nothing has been written and no session exists.
+     * Override to send the person to a page that explains how to verify it at the provider.
+     */
+    protected function unverifiedEmailResponse(Request $request, OAuthIdentity $identity): Response
+    {
+        abort(403, 'Your identity provider has not verified the email address on your account. Verify it with the provider, then sign in again.');
     }
 
     /**

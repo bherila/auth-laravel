@@ -67,7 +67,90 @@ class RelyingPartyLoginControllerTest extends TestCase
         });
 
         TestLoginController::$afterSignIn = [];
+        TestLoginController::$identities = [];
         TestLoginController::$localOnly = false;
+    }
+
+    /** @return array<string, array{mixed, bool}> claim value => what the identity carries */
+    public static function verifiedEmailClaims(): array
+    {
+        return [
+            'boolean true' => [true, true],
+            'string true' => ['true', true],
+            'string true in another case and spacing' => [' TRUE ', true],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('verifiedEmailClaims')]
+    public function test_a_verified_email_claim_signs_in_and_reaches_the_identity(mixed $claim, bool $expected): void
+    {
+        $this->signIn('subject-ev1', 'Person', 'person@example.test', claims: ['email_verified' => $claim])->assertRedirect('/');
+
+        $this->assertAuthenticatedAs(User::query()->sole());
+        $this->assertSame($expected, TestLoginController::$identities[0]->emailVerified);
+    }
+
+    public function test_an_identity_without_the_claim_signs_in_with_no_verdict(): void
+    {
+        $this->signIn('subject-ev2', 'Person', 'person@example.test')->assertRedirect('/');
+
+        $this->assertAuthenticatedAs(User::query()->sole());
+        $this->assertNull(TestLoginController::$identities[0]->emailVerified);
+    }
+
+    /** @return array<string, array{mixed}> */
+    public static function unverifiedEmailClaims(): array
+    {
+        return [
+            'boolean false' => [false],
+            'string false' => ['false'],
+            'zero' => ['0'],
+            'one' => [1],
+            'null' => [null],
+            'something unrecognised' => [['yes']],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unverifiedEmailClaims')]
+    public function test_an_unverified_email_claim_is_refused_before_any_account_is_created(mixed $claim): void
+    {
+        $this->signIn('subject-ev3', 'Person', 'person@example.test', claims: ['email_verified' => $claim])->assertForbidden();
+
+        $this->assertGuest();
+        $this->assertSame(0, User::query()->count());
+        $this->assertSame([], TestLoginController::$afterSignIn);
+        $this->assertDatabaseHas('auth_audit_log', ['event' => AuthAuditLog::EVENT_LOGIN_FAILED, 'auth_method' => 'oauth']);
+    }
+
+    public function test_an_unverified_email_claim_never_refreshes_a_returning_account(): void
+    {
+        $user = $this->account('Old Name', 'old@example.test', 'subject-ev4');
+
+        $this->signIn('subject-ev4', 'New Name', 'taken-over@example.test', claims: ['email_verified' => false])->assertForbidden();
+
+        $this->assertGuest();
+        $user->refresh();
+        $this->assertSame('Old Name', $user->name);
+        $this->assertSame('old@example.test', $user->email);
+    }
+
+    public function test_refusing_an_unverified_email_can_be_turned_off(): void
+    {
+        config(['bherila-auth.oauth_login.refuse_unverified_email' => false]);
+
+        $this->signIn('subject-ev5', 'Person', 'person@example.test', claims: ['email_verified' => false])->assertRedirect('/');
+
+        $this->assertAuthenticatedAs(User::query()->sole());
+        $this->assertFalse(TestLoginController::$identities[0]->emailVerified);
+    }
+
+    public function test_an_override_answers_an_unverified_email_refusal(): void
+    {
+        $this->signIn('subject-ev6', 'Person', 'person@example.test', controller: ExplainsRefusals::class, claims: ['email_verified' => 'false'])
+            ->assertRedirect('/login')->assertSessionHas('refused', 'unverified');
+
+        $this->assertGuest();
+        $this->assertSame(0, User::query()->count());
     }
 
     public function test_a_first_sign_in_creates_an_account_bound_to_the_subject(): void
@@ -380,7 +463,8 @@ class RelyingPartyLoginControllerTest extends TestCase
      * @param  list<array{key: string, name: string, url: string}>  $apps
      * @param  class-string<RelyingPartyLoginController>  $controller
      */
-    private function signIn(string $subject, string $name, string $email, array $apps = [], string $controller = TestLoginController::class): TestResponse
+    /** @param  array<string, mixed>  $claims  further identity response members, sent as given */
+    private function signIn(string $subject, string $name, string $email, array $apps = [], string $controller = TestLoginController::class, array $claims = []): TestResponse
     {
         if ($controller !== TestLoginController::class) {
             Route::middleware('web')->get('/oauth/callback', [$controller, 'callback']);
@@ -393,7 +477,7 @@ class RelyingPartyLoginControllerTest extends TestCase
                 'name' => $name,
                 'email' => $email,
                 'apps' => $apps === [] ? null : $apps,
-            ], static fn (mixed $value): bool => $value !== null)),
+            ], static fn (mixed $value): bool => $value !== null) + $claims),
         ]);
 
         $start = $this->get('/oauth/redirect');
@@ -455,11 +539,15 @@ class TestLoginController extends RelyingPartyLoginController
     /** @var list<string> */
     public static array $afterSignIn = [];
 
+    /** @var list<OAuthIdentity> */
+    public static array $identities = [];
+
     public static bool $localOnly = false;
 
     protected function afterSignIn(Request $request, Authenticatable $account, OAuthIdentity $identity): void
     {
         self::$afterSignIn[] = $identity->subject;
+        self::$identities[] = $identity;
     }
 
     protected function signsOutLocallyOnly(Request $request, ?Authenticatable $user): bool
@@ -513,5 +601,10 @@ class ExplainsRefusals extends TestLoginController
     protected function disabledAccountResponse(Request $request, Authenticatable $account): \Symfony\Component\HttpFoundation\Response
     {
         return redirect('/login')->with('refused', 'disabled');
+    }
+
+    protected function unverifiedEmailResponse(Request $request, OAuthIdentity $identity): \Symfony\Component\HttpFoundation\Response
+    {
+        return redirect('/login')->with('refused', 'unverified');
     }
 }

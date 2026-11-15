@@ -4,6 +4,56 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+Planned as v0.30.0 (minor: new defaults that change what existing routes answer).
+
+### Protections on the package's own routes, on by default
+
+- **Named rate limiters** (`BWH\Auth\Support\RateLimits`, tuned under `rate_limits`) on every
+  package route that sends mail or checks a credential: 2FA verify (60/min per IP, 10/min per
+  hashed challenge token), 2FA resend (6/min per IP, 3 per 15 min per account), forgot-password
+  (5/min per IP, 5/hour per case-folded hashed address), reset-password (10/min per IP, 10 per
+  15 min per address), change-password and the new confirm-password (30/min per IP, 6/min per
+  account). Issuing API tokens and OAuth apps drops the unprefixed `throttle:10,1`, which shared
+  one bucket with every other unprefixed throttle in the application, for its own
+  `bherila-auth.credentials` limiter (10/min per account). Each dimension is `[max, minutes]` or
+  `null`; an unreadable value fails loudly. An application limiter of the same name wins.
+- **2FA wrong-code cap:** a challenge is spent after `two_factor.max_wrong_codes` (5) wrong
+  codes. It is counted in `TwoFactorController::verify`, so it also holds on application routes
+  that verify through the package controller, such as an emergency sign-in. Challenges are now
+  consumed with one conditional update, so two concurrent submissions cannot both sign in.
+- **Passkey enrollment needs a recent password confirmation**
+  (`passkeys.require_password_confirmation`). Without one, `POST /api/passkeys/register/options`
+  and `/register` answer JSON 423 `password_confirmation_required`. The new
+  `POST /api/auth/confirm-password` (`routes.confirm_password`) records Laravel's standard
+  `auth.password_confirmed_at`, and `RequirePasswordConfirmation` checks it for
+  `password_confirmation.timeout` seconds, or `auth.password_timeout` when that is null. A
+  provider authentication of the same account within the window also counts. The middleware
+  can guard application routes too.
+- **Password change and reset end other sessions** (`sessions.end_other_sessions_on_password_change`):
+  change now rotates the remember token, as reset already did, and reissues the changing
+  device's cookie. Both delete the account's other rows with the `database` session driver.
+  Other drivers need Laravel's `authenticateSessions()`, which is now documented as required.
+- **`OAuthIdentity::$emailVerified`**: a new optional trailing constructor argument (default
+  `null`), parsed from the identity response's `email_verified` claim. `true` or `"true"` means
+  true, any other present value means false, and an absent claim means null.
+  `RelyingPartyLoginController` refuses `false` before any account is created, linked or
+  updated (`oauth_login.refuse_unverified_email`, default on), via the new overridable
+  `unverifiedEmailResponse()` (403).
+- **Minor adoption:**
+  - Handle the passkey 423 in the enrollment UI: confirm, then retry. Or set
+    `BHERILA_AUTH_PASSKEYS_REQUIRE_PASSWORD_CONFIRMATION=false`.
+  - Review the limits against shared-NAT traffic, and use a limiter cache store shared by every
+    worker.
+  - Enable `authenticateSessions()`.
+  - Identity providers that send `email_verified: false` now have those sign-ins refused. Opt
+    out with `BHERILA_AUTH_OAUTH_REFUSE_UNVERIFIED_EMAIL=false`.
+  - An application route at the same `POST {prefix}/auth/confirm-password` path takes
+    precedence; set `routes.confirm_password` false to keep only the application's route.
+  - Applications that added the same middleware from outside can remove it. No migration is
+    required. Republished configs keep the new defaults through the recursive merge.
+
 ## v0.29.0 - 2026-11-12
 
 ### Named OAuth admission and explicit identity realms

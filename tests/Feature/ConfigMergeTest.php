@@ -78,6 +78,14 @@ class ConfigMergeTest extends TestCase
         $this->assertFalse(config('bherila-auth.two_factor.allow_test_code'));
         $this->assertSame(['local', 'testing'], config('bherila-auth.two_factor.test_code_environments'));
         $this->assertSame('bherila_auth_2fa_user_id', config('bherila-auth.two_factor.session_user_key'));
+        // v0.30.0's protections reach an application that published its config before them.
+        $this->assertSame(5, config('bherila-auth.two_factor.max_wrong_codes'));
+        $this->assertTrue(config('bherila-auth.passkeys.require_password_confirmation'));
+        $this->assertTrue(config('bherila-auth.rate_limits.enabled'));
+        $this->assertSame([60, 1], config('bherila-auth.rate_limits.two_factor_verify.ip'));
+        $this->assertTrue(config('bherila-auth.sessions.end_other_sessions_on_password_change'));
+        $this->assertTrue(config('bherila-auth.oauth_login.refuse_unverified_email'));
+        $this->assertTrue(config('bherila-auth.routes.confirm_password'));
         $this->assertSame('preferred', config('bherila-auth.passkeys.user_verification'));
         $this->assertNull(config('bherila-auth.oauth_server.resource_required_scope'));
         $this->assertSame('resource_uri', config('bherila-auth.oauth_server.refresh_token_resource_column'));

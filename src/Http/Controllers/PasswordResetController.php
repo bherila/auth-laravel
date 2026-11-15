@@ -7,6 +7,7 @@ use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Contracts\AuthUserPolicy;
 use BWH\Auth\Mail\PasswordResetConfirmationMail;
 use BWH\Auth\Mail\PasswordResetNoticeMail;
+use BWH\Auth\Support\PasswordChangeSessions;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Auth\Events\PasswordResetLinkSent;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -79,6 +80,7 @@ class PasswordResetController extends Controller
 
         $resetUser = null;
         $refused = false;
+        $newPassword = $validated['password'];
         $status = Password::broker()->reset($this->brokerCredentials($validated), function ($user, string $password) use (&$resetUser, &$refused, $request): void {
             // A token issued before the account was bound to the provider (or before the
             // application started refusing local credentials) must not set a password now.
@@ -143,6 +145,10 @@ class PasswordResetController extends Controller
             } else {
                 $redirect = config('bherila-auth.two_factor.login_url', '/login');
             }
+
+            // The rotated remember token above already retired remember-me cookies; this ends
+            // the account's other sessions too (see PasswordChangeSessions).
+            PasswordChangeSessions::endOthers($request, $resetUser, $newPassword);
         }
 
         return response()->json([

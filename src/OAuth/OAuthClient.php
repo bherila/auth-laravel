@@ -540,7 +540,28 @@ final class OAuthClient
             authTime: $authTime,
             amr: $amr,
             acr: $acr,
+            emailVerified: self::emailVerified($identity),
         );
+    }
+
+    /**
+     * The provider's `email_verified` claim, read leniently: some providers send booleans as
+     * strings. Only true, or "true" in any case and spacing, means verified; any other value
+     * that is present (false, "false", "0", null, something unrecognised) means not verified.
+     * An absent claim is null, so an application can keep trusting a provider that never
+     * sends it.
+     *
+     * @param  array<array-key, mixed>  $identity
+     */
+    private static function emailVerified(array $identity): ?bool
+    {
+        if (! array_key_exists('email_verified', $identity)) {
+            return null;
+        }
+
+        $claim = $identity['email_verified'];
+
+        return $claim === true || (is_string($claim) && strtolower(trim($claim)) === 'true');
     }
 
     /**

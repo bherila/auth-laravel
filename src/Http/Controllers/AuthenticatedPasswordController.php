@@ -5,6 +5,7 @@ namespace BWH\Auth\Http\Controllers;
 use BWH\Auth\Contracts\AuthAuditLogger;
 use BWH\Auth\Contracts\LocalCredentialPolicy;
 use BWH\Auth\Mail\PasswordResetNoticeMail;
+use BWH\Auth\Support\PasswordChangeSessions;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -44,8 +45,10 @@ class AuthenticatedPasswordController extends Controller
             ], 422);
         }
 
+        // Retire remember-me cookies issued under the old password, wherever they are.
         $attributes = [
             'password' => Hash::make($validated['password']),
+            ...PasswordChangeSessions::rotatedRememberToken($user),
         ];
 
         $forceChangeAttribute = config('bherila-auth.users.force_change_password_attribute');
@@ -54,6 +57,9 @@ class AuthenticatedPasswordController extends Controller
         }
 
         $user->forceFill($attributes)->save();
+
+        // This session continues; the account's other sessions end (see PasswordChangeSessions).
+        PasswordChangeSessions::endOthers($request, $user, $validated['password']);
 
         $appName = config('app.name', 'Application');
         $emailAttribute = config('bherila-auth.users.email_attribute', 'email');

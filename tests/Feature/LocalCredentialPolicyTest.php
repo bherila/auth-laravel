@@ -169,6 +169,8 @@ final class LocalCredentialPolicyTest extends TestCase
 
         $this->actingAs($user)->postJson('/api/passkeys/register/options')->assertForbidden();
         $this->actingAs($user)->postJson('/api/passkeys/register', ['credential' => ['id' => 'x']])->assertForbidden();
+        // Nor can it confirm a password it may not use, so the refusal is not a 423 loop.
+        $this->actingAs($user)->postJson('/api/auth/confirm-password', ['password' => 'old-password-1'])->assertForbidden();
     }
 
     public function test_refuse_fails_a_two_factor_login_for_a_bound_account(): void
@@ -205,6 +207,8 @@ final class LocalCredentialPolicyTest extends TestCase
             'password_confirmation' => 'newer-password-5678',
         ])->assertOk();
 
+        $user = $user->fresh();
+        $this->actingAs($user)->postJson('/api/auth/confirm-password', ['password' => 'newer-password-5678'])->assertOk();
         $this->actingAs($user)->postJson('/api/passkeys/register/options')->assertOk();
 
         $this->app['auth']->guard()->logout();

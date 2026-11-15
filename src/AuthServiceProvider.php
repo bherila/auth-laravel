@@ -86,6 +86,9 @@ class AuthServiceProvider extends ServiceProvider
 
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'bherila-auth');
 
+        // Before the routes that name them. A limiter the application already defined is kept.
+        \BWH\Auth\Support\RateLimits::register();
+
         $this->publishes([
             __DIR__.'/../config/bherila-auth.php' => config_path('bherila-auth.php'),
         ], 'bherila-auth-config');
@@ -295,6 +298,7 @@ class AuthServiceProvider extends ServiceProvider
     {
         return config('bherila-auth.routes.password_resets', true)
             || config('bherila-auth.routes.change_password', true)
+            || config('bherila-auth.routes.confirm_password', true)
             || config('bherila-auth.routes.two_factor', true);
     }
 }
