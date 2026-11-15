@@ -42,7 +42,10 @@ class PasskeyRememberTest extends TestCase
         $details = openssl_pkey_get_details($privateKey);
         $this->assertIsArray($details);
         // COSE EC2 / ES256 / P-256: {1:2, 3:-7, -1:1, -2:x, -3:y}.
-        $publicKey = "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20".$details['ec']['x']."\x22\x58\x20".$details['ec']['y'];
+        // OpenSSL drops leading zero bytes; COSE needs both coordinates at their full 32 bytes.
+        $x = str_pad($details['ec']['x'], 32, "\0", STR_PAD_LEFT);
+        $y = str_pad($details['ec']['y'], 32, "\0", STR_PAD_LEFT);
+        $publicKey = "\xa5\x01\x02\x03\x26\x20\x01\x21\x58\x20".$x."\x22\x58\x20".$y;
         $credentialId = $this->base64Url(random_bytes(32));
         $key = PasskeyCredential::create([
             'user_id' => $user->id, 'credential_id' => $credentialId, 'public_key' => base64_encode($publicKey),
