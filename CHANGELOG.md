@@ -4,10 +4,10 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## Unreleased
+## v0.30.0 - 2026-11-15
 
-Planned as v0.30.0 (minor: new defaults that change what existing routes answer, and a
-migration the email 2FA links need).
+Minor release: new defaults change what existing routes answer, and email 2FA
+links require the migration described below.
 
 ### Security: the emailed 2FA confirm link no longer completes sign-in with the public token
 
