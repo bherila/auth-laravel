@@ -17,8 +17,9 @@ class TwoFactorLoginMail extends Mailable
     public function __construct(
         public Authenticatable $user,
         public TwoFactorAttempt $attempt,
-        public string $confirmUrl,
-        public string $reportUrl,
+        /** Null when the attempt has no link secret: the email then carries the code only. */
+        public ?string $confirmUrl,
+        public ?string $reportUrl,
         public string $appName,
     ) {}
 

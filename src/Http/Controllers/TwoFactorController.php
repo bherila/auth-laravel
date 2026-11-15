@@ -79,11 +79,20 @@ class TwoFactorController extends Controller
         ]);
     }
 
+    /**
+     * The emailed "this was me" page. Side-effect-free, so a mail scanner that follows the
+     * link consumes nothing.
+     *
+     * The token names the challenge; the link secret (`secret`, carried only by the email) is
+     * what authorizes finishing it. The token is returned to the browser that passed the
+     * password step, so it proves nothing about the mailbox.
+     */
     public function confirm(Request $request, string $token): JsonResponse|RedirectResponse|View
     {
         $attempt = TwoFactorAttempt::where('token', $token)->first();
+        $secret = $this->linkSecret($request);
 
-        if (! $attempt || ! $attempt->isValid()) {
+        if (! $attempt || ! $attempt->isValid() || ! $attempt->matchesLinkSecret($secret)) {
             return $this->failure($request, $attempt, 'Invalid or expired login link. Please log in again.', false);
         }
 
@@ -95,56 +104,77 @@ class TwoFactorController extends Controller
             'attempt' => $attempt,
             'token' => $token,
             'userEmail' => $this->maskEmail((string) data_get($attempt->user, config('bherila-auth.users.email_attribute', 'email'), '')),
-            'submitRoute' => route(TwoFactorRoutes::name('confirm.submit'), ['token' => $token]),
+            // The secret rides on the form's action rather than a field the view must know
+            // to render, so a view published before it existed keeps working.
+            'submitRoute' => route(TwoFactorRoutes::name('confirm.submit'), ['token' => $token, 'secret' => $secret]),
             'loginUrl' => config('bherila-auth.two_factor.login_url', '/login'),
         ]);
     }
 
+    /** Finish the sign-in from the emailed link: the token and its link secret, once. */
     public function confirmSubmit(Request $request, string $token): JsonResponse|RedirectResponse
     {
         $attempt = TwoFactorAttempt::where('token', $token)->first();
 
-        if (! $attempt || ! $attempt->isValid()) {
+        if (! $attempt || ! $attempt->isValid() || ! $attempt->matchesLinkSecret($this->linkSecret($request))) {
             return $this->failure($request, $attempt, 'Invalid or expired login link. Please log in again.');
         }
 
         return $this->completeLogin($request, $attempt);
     }
 
+    /**
+     * The emailed "this wasn't me" page. Side-effect-free; offers the report only to a request
+     * carrying the link secret.
+     */
     public function report(Request $request, string $token): JsonResponse|View
     {
         $attempt = TwoFactorAttempt::where('token', $token)->first();
+        $secret = $this->linkSecret($request);
+        $fromEmail = $attempt !== null && $attempt->matchesLinkSecret($secret);
 
         if ($request->expectsJson()) {
             return response()->json([
                 'success' => true,
-                'can_report' => (bool) ($attempt && ! $attempt->is_used),
+                'can_report' => $attempt !== null && $fromEmail && ! $attempt->is_used,
             ]);
         }
 
         return view('bherila-auth::two-factor-report', [
-            'attempt' => $attempt,
+            // A request without the secret sees the "already used or expired" state.
+            'attempt' => $fromEmail ? $attempt : null,
             'token' => $token,
-            'submitRoute' => route(TwoFactorRoutes::name('report.submit'), ['token' => $token]),
+            'submitRoute' => route(TwoFactorRoutes::name('report.submit'), ['token' => $token, 'secret' => $secret]),
             'loginUrl' => config('bherila-auth.two_factor.login_url', '/login'),
         ]);
     }
 
+    /**
+     * With the link secret, the mailbox owner reports the attempt: it is flagged suspicious,
+     * spent, and audited as reported. With the token alone (the browser that started the
+     * attempt, through a "this was not me" button) it is only withdrawn: spent, and audited as
+     * a failed sign-in. The token holder knows the password, so a report from it is no signal
+     * about the account, and it must not be able to write one into the account's history.
+     * Either way it is one conditional update, so it cannot race a completing sign-in.
+     */
     public function reportSubmit(Request $request, string $token): JsonResponse|View
     {
         $attempt = TwoFactorAttempt::where('token', $token)->first();
+        $fromEmail = $attempt !== null && $attempt->matchesLinkSecret($this->linkSecret($request));
+        $user = $attempt?->user;
 
-        if ($attempt && ! $attempt->is_used) {
-            $attempt->update(['is_suspicious' => true, 'is_used' => true]);
-            if ($attempt->user instanceof Authenticatable) {
-                $this->auditLogger->twoFactorReportedSuspicious($request, $attempt->user, $attempt);
+        if ($attempt && $fromEmail && $this->consume($attempt, ['is_suspicious' => true])) {
+            if ($user instanceof Authenticatable) {
+                $this->auditLogger->twoFactorReportedSuspicious($request, $user, $attempt);
             }
+        } elseif ($attempt && ! $fromEmail && $this->consume($attempt)) {
+            $this->auditLogger->twoFactorLoginFailed($request, $user instanceof Authenticatable ? $user : null, $attempt, 'Login attempt withdrawn.');
         }
 
         if ($request->expectsJson()) {
             return response()->json([
                 'success' => true,
-                'message' => 'This login attempt has been reported.',
+                'message' => $fromEmail ? 'This login attempt has been reported.' : 'This login attempt has been cancelled.',
             ]);
         }
 
@@ -213,17 +243,30 @@ class TwoFactorController extends Controller
         return redirect()->to($redirect);
     }
 
-    /** Mark the attempt used if nothing else has; whether this request was the one that did. */
-    private function consume(TwoFactorAttempt $attempt): bool
+    /**
+     * Mark the attempt used if nothing else has; whether this request was the one that did.
+     *
+     * @param  array<string, mixed>  $also  further columns written only by the request that wins
+     */
+    private function consume(TwoFactorAttempt $attempt, array $also = []): bool
     {
         $consumed = TwoFactorAttempt::query()
             ->whereKey($attempt->getKey())
             ->where('is_used', false)
-            ->update(['is_used' => true]) === 1;
+            ->update(['is_used' => true, ...$also]) === 1;
 
-        $attempt->forceFill(['is_used' => true])->syncOriginalAttribute('is_used');
+        $written = ['is_used' => true, ...($consumed ? $also : [])];
+        $attempt->forceFill($written)->syncOriginalAttributes(array_keys($written));
 
         return $consumed;
+    }
+
+    /** The emailed links' secret, from the query string or the body. */
+    private function linkSecret(Request $request): ?string
+    {
+        $secret = $request->input('secret');
+
+        return is_string($secret) && $secret !== '' ? $secret : null;
     }
 
     /**
