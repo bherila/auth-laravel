@@ -49,16 +49,36 @@ for an application that relies on the identity provider. It replaces the per-app
 In order:
 
 1. Exchange the code and fetch the identity.
-2. Resolve the local account (below).
-3. Refuse an account `AuthUserPolicy::canLogin()` rejects, with a 403.
-4. Log in on a regenerated session.
-5. Record the provider-session baseline (`ProviderSession::establish`). With
+2. Refuse an identity whose provider says its address is unverified (below), with a 403.
+3. Resolve the local account (below).
+4. Refuse an account `AuthUserPolicy::canLogin()` rejects, with a 403.
+5. Log in on a regenerated session.
+6. Record the provider-session baseline (`ProviderSession::establish`). With
    [enforcement](provider-session-verification.md) on, a sign-in that cannot be verified is
    undone and answered 503 with `Retry-After: 30`.
-6. Remember the provider's application list.
-7. Run `afterSignIn()`.
-8. Audit the sign-in, with method `oauth`.
-9. Redirect to the intended page or to `landingUrl()`.
+7. Remember the provider's application list.
+8. Run `afterSignIn()`.
+9. Audit the sign-in, with method `oauth`.
+10. Redirect to the intended page or to `landingUrl()`.
+
+## Unverified provider addresses
+
+`OAuthIdentity::$emailVerified` carries the identity response's `email_verified` claim: `true`
+when the provider sent `true` or the string `"true"` (any case, surrounding space ignored),
+`false` when it sent anything else (`false`, `"false"`, `"0"`, `null`, an unrecognised value),
+and `null` when it sent no claim at all.
+
+With `oauth_login.refuse_unverified_email` on (the default), a `false` claim is refused before
+anything is created, linked or updated, and before any session exists: the sign-in is audited as
+failed (`Identity email not verified by provider`) and answered by `unverifiedEmailResponse()`,
+a 403 by default. Override it to send the person to a page that explains how to verify the
+address at the provider. An identity without the claim is unaffected, so a provider that never
+sends it is trusted as before. Set `BHERILA_AUTH_OAUTH_REFUSE_UNVERIFIED_EMAIL=false` to accept
+unverified addresses; the claim is then still on the identity for `afterSignIn()` or a
+`RelyingPartyAccounts` override to use, for example to store `email_verified_at = null`.
+
+An application with its own callback reads `$identity->emailVerified` from
+`OAuthClient::identityFromCallback()` and decides for itself.
 
 ## Which account a sign-in reaches
 
@@ -96,6 +116,7 @@ array the application returns, so they need not be fillable.
 | --- | --- |
 | `landingUrl($request, $account)` | `/` |
 | `unknownIdentityResponse($request, $identity)` | 403. Only reached when `provisionsNewAccounts()` is false. |
+| `unverifiedEmailResponse($request, $identity)` | 403 asking the person to verify the address at the provider. Reached only when `oauth_login.refuse_unverified_email` is on and the claim is `false`; nothing has been written. |
 | `disabledAccountResponse($request, $account)` | 403 "This account is disabled." Override to send the person to a page that explains. |
 | `afterSignIn($request, $account, $identity)` | nothing. Runs only for a sign-in that completed. |
 | `signsOutLocallyOnly($request, $user)` | `false`. Return `true` for a session that never involved the provider (Google, a break-glass password), so signing out does not end the person's sessions in every sibling application. |
