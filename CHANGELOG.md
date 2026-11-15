@@ -6,7 +6,48 @@ the first entry here is in the git history.
 
 ## Unreleased
 
-Planned as v0.30.0 (minor: new defaults that change what existing routes answer).
+Planned as v0.30.0 (minor: new defaults that change what existing routes answer, and a
+migration the email 2FA links need).
+
+### Security: the emailed 2FA confirm link no longer completes sign-in with the public token
+
+- **Affected:** every release with email two-factor confirm links, v0.1.0 through v0.29.0. The
+  confirm and report links were built from the attempt token alone, and the same token is handed
+  to the browser that passed the password step: an application's login response returns it as
+  `attempt_token`, `POST /auth/two-factor/resend` returns the new one, and the confirm page's JSON
+  returns it. `POST /auth/two-factor/confirm/{token}` then completed the sign-in, so knowing the
+  password was enough to skip the emailed factor.
+- **Fix:** each attempt gets a distinct 64-character link secret, stored only as its SHA-256 in
+  the new nullable `link_secret_hash` column and never returned in a JSON response. Only the
+  emailed confirm and report URLs carry it (`?secret=`). The confirm page, confirm submit and the
+  report page compare it with `hash_equals` and refuse a missing or wrong one like an expired
+  attempt. The confirm `GET` is still side-effect-free. The pages put the secret on their form
+  action, so published `two-factor-confirm`/`two-factor-report` views keep working. Code and
+  link completion both spend the attempt with the one conditional update, so only one wins.
+- **Report:** with the secret, a report flags the attempt suspicious, spends it and audits the
+  report, as before. With the token alone (`TwoFactorForm`'s "This was not me" button) it only
+  withdraws the attempt, audited as a failed sign-in (`Login attempt withdrawn.`) and answering
+  "This login attempt has been cancelled.", so the person who typed the password cannot write a
+  suspicious report into the account's history. Reporting is now a conditional update too, so it
+  cannot race a completing sign-in. `GET .../report/{token}` answers `can_report: false` and shows
+  no form without the secret.
+- **API:** `TwoFactorAttempt::createForUser()` returns the only instance holding the secret
+  (`linkSecret()`; `matchesLinkSecret()`, `hashLinkSecret()`). `TwoFactorLoginMail::$confirmUrl`
+  and `$reportUrl` are now nullable: they are null, and the email has no buttons, when the
+  attempt has no secret.
+- **Adoption (required):** publish and run the migration
+  `2026_11_15_000000_add_link_secret_hash_to_two_factor_attempts`
+  (`php artisan vendor:publish --tag=bherila-auth-migrations`, then let the reviewed deployment
+  run it). Until it runs, challenges work by code only and the email carries no links; links in
+  emails sent before the upgrade stop working, and their codes still do.
+  - Tests or clients that post to the confirm link with the token alone must send the emailed
+    `secret`. Known consumer: vora's `tests/Feature/Auth/EmergencyAccessTest.php`
+    (`test_wrong_code_resend_and_confirmation_use_shared_mfa_without_bypassing_it`) confirms
+    with `$new->token` only and must read the secret from the sent `TwoFactorLoginMail`.
+  - An application that emails its own challenge builds the links from `linkSecret()`. One that
+    overrode the `two-factor-login` mail view should guard the buttons on a null URL.
+  - Login responses that return `attempt_token` (2025-website's `LoginController`, vora) need no
+    change: the token is safe to return now.
 
 ### Protections on the package's own routes, on by default
 
@@ -29,12 +70,25 @@ Planned as v0.30.0 (minor: new defaults that change what existing routes answer)
   `POST /api/auth/confirm-password` (`routes.confirm_password`) records Laravel's standard
   `auth.password_confirmed_at`, and `RequirePasswordConfirmation` checks it for
   `password_confirmation.timeout` seconds, or `auth.password_timeout` when that is null. A
-  provider authentication of the same account within the window also counts. The middleware
-  can guard application routes too.
+  provider authentication of the same account within the window also counts. So does a
+  user-verified assertion of one of the account's own passkeys, so an account that only uses
+  passkeys (random or unknown local password) is not locked out of adding a second one: the new
+  `POST /api/passkeys/confirm/options` and `/passkeys/confirm` (behind `auth`,
+  `RequireActiveUser` and the confirm-password limiter) run an assertion restricted to the
+  account's passkeys with user verification required, and sign nobody in; a passkey sign-in
+  that reported user verification counts too. It is recorded under
+  `RequirePasswordConfirmation::PASSKEY_SESSION_KEY`, bound to the account, and Laravel's
+  `password.confirm` does not read it. The middleware can guard application routes too.
 - **Password change and reset end other sessions** (`sessions.end_other_sessions_on_password_change`):
   change now rotates the remember token, as reset already did, and reissues the changing
-  device's cookie. Both delete the account's other rows with the `database` session driver.
-  Other drivers need Laravel's `authenticateSessions()`, which is now documented as required.
+  device's cookie. Both delete the account's other rows with the `database` session driver,
+  straight after the new password is saved and before the notice mail, audit, `PasswordReset`
+  event and post-reset sign-in, so an exception in any of those cannot leave the old sessions
+  alive. The device's cookie is reissued afterwards (for a reset, once it is signed in); change
+  deletes the sessions before that reissue, whose `OtherDeviceLogout` listeners can throw.
+  `PasswordChangeSessions::endOtherDatabaseSessions()` and `reissueRememberCookie()` are public
+  for application flows that need the same split. Other drivers need Laravel's
+  `authenticateSessions()`, which is now documented as required.
 - **`OAuthIdentity::$emailVerified`**: a new optional trailing constructor argument (default
   `null`), parsed from the identity response's `email_verified` claim. `true` or `"true"` means
   true, any other present value means false, and an absent claim means null.
@@ -42,7 +96,8 @@ Planned as v0.30.0 (minor: new defaults that change what existing routes answer)
   updated (`oauth_login.refuse_unverified_email`, default on), via the new overridable
   `unverifiedEmailResponse()` (403).
 - **Minor adoption:**
-  - Handle the passkey 423 in the enrollment UI: confirm, then retry. Or set
+  - Handle the passkey 423 in the enrollment UI: confirm with the password or with an existing
+    passkey (`/passkeys/confirm/options`, then `/passkeys/confirm`), then retry. Or set
     `BHERILA_AUTH_PASSKEYS_REQUIRE_PASSWORD_CONFIRMATION=false`.
   - Review the limits against shared-NAT traffic, and use a limiter cache store shared by every
     worker.
@@ -51,8 +106,9 @@ Planned as v0.30.0 (minor: new defaults that change what existing routes answer)
     out with `BHERILA_AUTH_OAUTH_REFUSE_UNVERIFIED_EMAIL=false`.
   - An application route at the same `POST {prefix}/auth/confirm-password` path takes
     precedence; set `routes.confirm_password` false to keep only the application's route.
-  - Applications that added the same middleware from outside can remove it. No migration is
-    required. Republished configs keep the new defaults through the recursive merge.
+  - Applications that added the same middleware from outside can remove it. The only migration
+    is the 2FA link secret above. Republished configs keep the new defaults through the
+    recursive merge.
 
 ## v0.29.0 - 2026-11-12
 

@@ -303,6 +303,8 @@ With the default prefix, the package registers:
 - `GET /api/passkeys`
 - `POST /api/passkeys/register/options`
 - `POST /api/passkeys/register`
+- `POST /api/passkeys/confirm/options`
+- `POST /api/passkeys/confirm`
 - `DELETE /api/passkeys/{id}`
 - `POST /api/passkeys/auth/options`
 - `POST /api/passkeys/auth`
@@ -324,7 +326,7 @@ separate bucket, and a request is refused with 429 when any one is exhausted:
 | `bherila-auth.forgot-password` | `POST /api/auth/forgot-password` | 5/min per IP; 5/hour per address |
 | `bherila-auth.reset-password` | `POST /api/auth/reset-password` | 10/min per IP; 10 per 15 min per address |
 | `bherila-auth.change-password` | `POST /api/change-password` | 30/min per IP; 6/min per account |
-| `bherila-auth.confirm-password` | `POST /api/auth/confirm-password` | 30/min per IP; 6/min per account |
+| `bherila-auth.confirm-password` | `POST /api/auth/confirm-password`, `POST /api/passkeys/confirm/options` and `POST /api/passkeys/confirm` | 30/min per IP; 6/min per account |
 | `bherila-auth.credentials` | issuing API tokens and OAuth apps (`oauth_server.credentials`) | 10/min per account |
 
 Tune them under `rate_limits` in the published config: each dimension is
@@ -384,6 +386,11 @@ change and the password reset end the account's other sessions:
   the old password stop working on every device. The device making the change keeps signing in:
   its cookie is reissued with the new token. An account with no token is not given one.
 - With the `database` session driver, the account's other rows in the sessions table are deleted.
+  This happens straight after the new password is saved, before the notice mail, audit,
+  `PasswordReset` event and post-reset sign-in, so a failure in any of those cannot leave the old
+  sessions alive. A flow of your own can do the same with
+  `PasswordChangeSessions::endOtherDatabaseSessions()` after its save and
+  `reissueRememberCookie()` once the device is signed in, or `endOthers()` for both at once.
 - **Any other session driver cannot be enumerated.** Enable Laravel's session authentication so
   those sessions end at their next request:
 
@@ -418,6 +425,23 @@ of the same account within the window (`AuthenticationContext`, recorded by
 [relying-party sign-in](docs/relying-party-login.md)) counts too: a provider-bound account holds
 only a random local password nobody knows. An account that may not use local credentials
 (`LocalCredentialPolicy`) is refused with `403` at the endpoint.
+
+So does a user-verified assertion of one of the account's own passkeys, so an account that only
+uses passkeys, whose local password is random or unknown, can still confirm:
+
+- `POST /api/passkeys/confirm/options` then `POST /api/passkeys/confirm` (`credential`; behind
+  `auth`, `RequireActiveUser` and the same limiter) run an assertion restricted to the signed-in
+  account's passkeys with `userVerification: "required"`, whatever `passkeys.user_verification`
+  says. The answer is `{"success": true, "expires_in": <seconds>}`, or `422` for an assertion
+  without user verification, by another account's passkey, or against options from any other
+  ceremony. It signs nobody in.
+- A passkey sign-in (`POST /api/passkeys/auth`) whose authenticator reported user verification
+  records the same confirmation. Presence alone does not.
+
+The passkey confirmation is kept in the session under
+`RequirePasswordConfirmation::PASSKEY_SESSION_KEY`, bound to the account. Laravel's
+`password.confirm` does not read it. On a 423, an enrollment UI can offer whichever the person
+can do: the password, or their existing passkey.
 
 Passkey enrollment (`POST /api/passkeys/register/options` and `POST /api/passkeys/register`)
 requires it by default (`passkeys.require_password_confirmation`), so a stolen session alone
@@ -460,6 +484,29 @@ export function TwoFactorPage({ token }: { token: string }) {
 `TwoFactorForm` posts to `/api/auth/two-factor/verify`, can resend via `/api/auth/two-factor/resend`, and can report suspicious attempts via `POST /api/auth/two-factor/report/{token}`.
 
 Email confirmation and report links are side-effect-free `GET` pages. The user must submit a CSRF-protected `POST` to complete login or report suspicious activity, which prevents common email security scanners from consuming one-shot login links.
+
+**The attempt token is not a credential.** It names the challenge, and the browser that passed
+the password step holds it (`attempt_token` above, the resend response, the confirm page's JSON).
+The emailed links also carry the attempt's link secret (`?secret=`): 64 random characters, stored
+only as its SHA-256 (`link_secret_hash`), never returned in any JSON response, and different
+from the token. Completing a sign-in from the link needs both:
+
+- `GET` and `POST /api/auth/two-factor/confirm/{token}` refuse a missing or wrong `secret` (query
+  string or body), as they refuse a used or expired attempt. The page puts the secret on its form
+  action, so a published `two-factor-confirm` view keeps working.
+- `POST /api/auth/two-factor/report/{token}` with the secret flags the attempt suspicious, spends
+  it and audits the report. With the token alone, as `TwoFactorForm`'s "This was not me" button
+  sends it, it only withdraws the attempt (spent, audited as a failed sign-in), so the person who
+  typed the password cannot write a suspicious report into the account's history. The report page
+  offers its form only with the secret.
+- Code and link completion, and the report, each spend the attempt with one conditional update,
+  so only one of them wins.
+
+The secret needs the `2026_11_15_000000_add_link_secret_hash_to_two_factor_attempts` migration
+(`php artisan vendor:publish --tag=bherila-auth-migrations`, then your reviewed deployment runs
+it). Until it has run, challenges still work by code and the email carries no links.
+`TwoFactorAttempt::createForUser()` returns the only instance that knows the secret
+(`linkSecret()`); an application that sends its own challenge email builds the links from it.
 
 A challenge is spent after `two_factor.max_wrong_codes` wrong codes (default `5`): the fifth wrong
 code answers `422` "Too many incorrect codes" and the person signs in again for a new code. The cap
