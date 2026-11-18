@@ -3,6 +3,7 @@
 namespace BWH\Auth\Http\Middleware;
 
 use BWH\Auth\OAuth\Session\ProviderBindingResolver;
+use BWH\Auth\OAuth\Session\ProviderIdentityEnforcement;
 use BWH\Auth\OAuth\Session\ProviderSession;
 use BWH\Auth\OAuth\Session\ProviderSessionExpired;
 use BWH\Auth\OAuth\Session\ProviderStatusUnavailable;
@@ -23,7 +24,8 @@ use Symfony\Component\HttpFoundation\Response;
  * Route::middleware(['auth', RequireActiveProviderSession::class])->group(...);
  * ```
  *
- * Off unless `bherila-auth.provider_identity.enabled`. Only session (stateful)
+ * Off unless `bherila-auth.provider_identity.enabled`, or the installation recorded its cutover
+ * (see ProviderIdentityEnforcement). Only session (stateful)
  * guards are checked here; bearer credentials have their own enforcement. An
  * account the binding resolver reports as unbound is left to the application's
  * login policy. Unsafe methods always check freshly. Application authorization
@@ -38,11 +40,12 @@ final readonly class RequireActiveProviderSession
         private AuthFactory $auth,
         private ProviderSession $session,
         private ProviderBindingResolver $bindings,
+        private ProviderIdentityEnforcement $enforcement,
     ) {}
 
     public function handle(Request $request, Closure $next, string ...$guards): Response
     {
-        if (! config('bherila-auth.provider_identity.enabled', false)) {
+        if (! $this->enforcement->enabled()) {
             return $next($request);
         }
         // Signing out must stay reachable while the provider or the shared store is down;

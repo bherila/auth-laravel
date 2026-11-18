@@ -6,6 +6,19 @@ the first entry here is in the git history.
 
 ## Unreleased
 
+### Added: a recorded cutover keeps provider identity enforcement on
+
+- `bherila-auth:provider-identity-cutover record` records the installation's cutover in its
+  database (new migration: `provider_identity_cutover`). While recorded, provider lifecycle
+  enforcement stays on even if `bherila-auth.provider_identity.enabled` is false, so a
+  configuration rollback or a redeploy of an older environment file cannot quietly let ended
+  sessions and tokens keep working. `status`, `check` (for deploys: fails when the setting or the
+  provider client disagrees with a recorded cutover) and a confirmed `withdraw` complete it.
+- `ProviderIdentityEnforcement` is now the one place that decides whether enforcement is on;
+  `RequireActiveProviderSession`, `ProviderSession::establish()` and `ProviderIdentityTokens`
+  ask it. Nothing changes for an installation that has not recorded a cutover. See
+  [locking enforcement after cutover](docs/provider-session-verification.md#locking-enforcement-after-cutover).
+
 ### Added: opt-in proof of the provider address
 
 - `oauth_login.require_verified_email` (`BHERILA_AUTH_OAUTH_REQUIRE_VERIFIED_EMAIL`, off by
