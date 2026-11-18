@@ -130,6 +130,10 @@ return [
         // true (OAuthIdentity::$emailVerified === false), before any account is created,
         // linked or updated. An identity without the claim is unaffected.
         'refuse_unverified_email' => (bool) env('BHERILA_AUTH_OAUTH_REFUSE_UNVERIFIED_EMAIL', true),
+        // Stricter: refuse unless the claim is true, so an absent claim is refused too. Turn it
+        // on only once the provider sends `email_verified: true` for every address it has proven.
+        // Off by default.
+        'require_verified_email' => (bool) env('BHERILA_AUTH_OAUTH_REQUIRE_VERIFIED_EMAIL', false),
     ],
 
     // Local credentials: passwords, password resets, passkeys and two-factor password sign-in.

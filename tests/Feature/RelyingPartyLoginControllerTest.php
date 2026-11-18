@@ -144,6 +144,75 @@ class RelyingPartyLoginControllerTest extends TestCase
         $this->assertFalse(TestLoginController::$identities[0]->emailVerified);
     }
 
+    /** @return array<string, array{array<string, mixed>}> identity claims => refused under strict proof */
+    public static function unprovenEmailClaims(): array
+    {
+        return [
+            'no claim' => [[]],
+            'boolean false' => [['email_verified' => false]],
+            'null' => [['email_verified' => null]],
+            'string false' => [['email_verified' => 'false']],
+            'one' => [['email_verified' => 1]],
+            'something unrecognised' => [['email_verified' => ['yes']]],
+        ];
+    }
+
+    /** @param  array<string, mixed>  $claims */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unprovenEmailClaims')]
+    public function test_required_proof_refuses_every_identity_without_a_true_claim_before_any_write(array $claims): void
+    {
+        config(['bherila-auth.oauth_login.require_verified_email' => true]);
+
+        $this->signIn('subject-ev7', 'Person', 'person@example.test', claims: $claims)->assertForbidden();
+
+        $this->assertGuest();
+        $this->assertSame(0, User::query()->count());
+        $this->assertSame([], TestLoginController::$afterSignIn);
+        $this->assertDatabaseHas('auth_audit_log', ['event' => AuthAuditLog::EVENT_LOGIN_FAILED, 'auth_method' => 'oauth']);
+    }
+
+    public function test_required_proof_applies_even_with_the_lenient_refusal_turned_off(): void
+    {
+        config([
+            'bherila-auth.oauth_login.refuse_unverified_email' => false,
+            'bherila-auth.oauth_login.require_verified_email' => true,
+        ]);
+
+        $this->signIn('subject-ev8', 'Person', 'person@example.test', claims: ['email_verified' => false])->assertForbidden();
+        $this->signIn('subject-ev8', 'Person', 'person@example.test')->assertForbidden();
+
+        $this->assertSame(0, User::query()->count());
+    }
+
+    public function test_required_proof_never_refreshes_a_returning_account_from_an_unproven_address(): void
+    {
+        config(['bherila-auth.oauth_login.require_verified_email' => true]);
+        $user = $this->account('Old Name', 'old@example.test', 'subject-ev9');
+
+        $this->signIn('subject-ev9', 'New Name', 'taken-over@example.test')->assertForbidden();
+
+        $this->assertGuest();
+        $user->refresh();
+        $this->assertSame('Old Name', $user->name);
+        $this->assertSame('old@example.test', $user->email);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('verifiedEmailClaims')]
+    public function test_required_proof_admits_a_true_claim(mixed $claim, bool $expected): void
+    {
+        config(['bherila-auth.oauth_login.require_verified_email' => true]);
+
+        $this->signIn('subject-ev10', 'Person', 'person@example.test', claims: ['email_verified' => $claim])->assertRedirect('/');
+
+        $this->assertAuthenticatedAs(User::query()->sole());
+        $this->assertTrue(TestLoginController::$identities[0]->emailVerified);
+    }
+
+    public function test_required_proof_is_off_by_default(): void
+    {
+        $this->assertFalse(config('bherila-auth.oauth_login.require_verified_email'));
+    }
+
     public function test_an_override_answers_an_unverified_email_refusal(): void
     {
         $this->signIn('subject-ev6', 'Person', 'person@example.test', controller: ExplainsRefusals::class, claims: ['email_verified' => 'false'])

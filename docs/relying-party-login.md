@@ -77,6 +77,21 @@ sends it is trusted as before. Set `BHERILA_AUTH_OAUTH_REFUSE_UNVERIFIED_EMAIL=f
 unverified addresses; the claim is then still on the identity for `afterSignIn()` or a
 `RelyingPartyAccounts` override to use, for example to store `email_verified_at = null`.
 
+### Requiring proof
+
+`oauth_login.require_verified_email` (`BHERILA_AUTH_OAUTH_REQUIRE_VERIFIED_EMAIL`, off by
+default) goes further: only an explicit `true` passes, so an absent claim is refused as well,
+in the same place, audited as `Identity email not proven by provider` and answered by the same
+`unverifiedEmailResponse()`. Turn it on when the application keys anything on the address
+(provisioning, invitation acceptance, email-domain rules, notifications) and its provider sends
+`email_verified: true` for every address it has proven. Auth Manager sends the claim only as
+`true`, and omits it for an address it has not proven, so with this on its unproven accounts
+are refused rather than trusted.
+
+With either setting, the default `RelyingPartyAccounts` still records `email_verified_at` as
+the sign-in time for an account it creates or refreshes. Under `require_verified_email` that
+is true by construction; without it, a provider that omits the claim is trusted as before.
+
 An application with its own callback reads `$identity->emailVerified` from
 `OAuthClient::identityFromCallback()` and decides for itself.
 
