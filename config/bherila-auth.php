@@ -153,7 +153,7 @@ return [
 
     'provider_identity' => [
         // Before cutover, the switch. Once `bherila-auth:provider-identity-cutover record` has run,
-        // enforcement stays on whatever this says; see docs/provider-session-verification.md.
+        // enforcement stays on whatever this says; see docs/provider-identity-cutover.md.
         'enabled' => (bool) env('BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED', false),
         // The connection holding the cutover record. Null uses the default connection.
         'cutover_connection' => env('BHERILA_AUTH_PROVIDER_IDENTITY_CUTOVER_CONNECTION'),

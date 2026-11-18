@@ -48,38 +48,17 @@ different responses can call `ProviderSession::assertActive()` themselves.
 
 ## Locking enforcement after cutover
 
-Before cutover, `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED` is an ordinary switch, so an
-application can adopt enforcement and back out. Once the application relies on the provider
-to end access (disable, delete, password reset, grant removal), turning that switch off would
-let sessions and tokens the provider has ended keep working here. A configuration rollback, a
-redeploy of an older environment file or a recovery that restores stale settings could do that
-silently.
-
-Record the cutover once enforcement is on and verified:
+Before cutover, `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED` is an ordinary switch. Once the
+application relies on the provider to end access, record the cutover so a configuration
+rollback or a stale environment file cannot turn enforcement off:
 
 ```bash
 php artisan bherila-auth:provider-identity-cutover record
 ```
 
-From then on, enforcement stays on even if the setting is false. The record lives in the
-application's database (`provider_identity_cutover`, from the package migrations;
-`provider_identity.cutover_connection` picks the connection), not in configuration.
-
-| Action | What it does |
-| --- | --- |
-| `status` (default) | Shows the setting, the recorded cutover and whether enforcement is on |
-| `record` | Records the cutover. Refused unless enforcement is already on and the identity provider client (`provider`, `base_url`, `client_id`, `client_secret`) is configured. Running it again keeps the first record |
-| `check` | Fails when a cutover is recorded but the setting is off or the client is unconfigured. Run it in deploys so a drifted configuration is fixed, not deployed |
-| `withdraw` | The one way back, for leaving the provider on purpose. Asks for confirmation (`--force` skips it). The row is kept, marked withdrawn |
-
-Enforcement that the lock keeps on without its other settings fails closed: protected requests
-are refused as unavailable (503), never let through. An outage is not a reason to withdraw:
-an unavailable provider already answers a retryable 503 and keeps sessions.
-
-Each process reads the record at most once a minute while the setting is off, so a cutover
-recorded or withdrawn elsewhere takes effect within a minute. With the setting on, the record
-is never read. Restoring the database from a backup taken before the cutover removes the
-record with it; record it again after such a restore.
+From then on enforcement stays on even if the setting is false, until a confirmed `withdraw`.
+Run the `check` action in deploys. Adoption, the command's actions, failure modes, withdrawal
+and testing are in [provider identity cutover](provider-identity-cutover.md).
 
 ## OAuth credentials (agent and personal tokens)
 

@@ -16,8 +16,9 @@ the first entry here is in the git history.
   provider client disagrees with a recorded cutover) and a confirmed `withdraw` complete it.
 - `ProviderIdentityEnforcement` is now the one place that decides whether enforcement is on;
   `RequireActiveProviderSession`, `ProviderSession::establish()` and `ProviderIdentityTokens`
-  ask it. Nothing changes for an installation that has not recorded a cutover. See
-  [locking enforcement after cutover](docs/provider-session-verification.md#locking-enforcement-after-cutover).
+  ask it. Nothing changes for an installation that has not recorded a cutover. Publish the new
+  migration with `vendor:publish --tag=bherila-auth-migrations`. See
+  [provider identity cutover](docs/provider-identity-cutover.md).
 
 ### Added: opt-in proof of the provider address
 
