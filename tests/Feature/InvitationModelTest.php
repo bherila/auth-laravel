@@ -5,6 +5,7 @@ namespace BWH\Auth\Tests\Feature;
 use BWH\Auth\Invitations\InvitationState;
 use BWH\Auth\Tests\Fixtures\Invitations\CustomInvitation;
 use BWH\Auth\Tests\Fixtures\Invitations\DefaultInvitation;
+use BWH\Auth\Tests\Fixtures\Invitations\PreciseInvitation;
 use BWH\Auth\Tests\Fixtures\Invitations\UncastInvitation;
 use BWH\Auth\Tests\TestCase;
 use Carbon\CarbonImmutable;
@@ -189,6 +190,56 @@ class InvitationModelTest extends TestCase
         $invitation->forceFill(['revoked_at' => now()])->save();
         $this->assertNull(DefaultInvitation::query()->whereInvitationSecret($secret->plaintext)->openInvitations()->first());
         $this->assertNotNull(DefaultInvitation::query()->whereInvitationSecret($secret->plaintext)->first(), 'Without the open scope the caller can still say why it is closed.');
+    }
+
+    public function test_a_digest_stored_as_a_blob_still_resolves(): void
+    {
+        $presented = 'issued-by-another-writer';
+        DB::insert(
+            "insert into custom_invitations (label, secret_digest, lapses_at) values ('blob', x'".hash('sha256', $presented)."', ?)",
+            [now()->addDay()->format('Y-m-d H:i:s')],
+        );
+        $this->assertSame('blob', DB::scalar('select typeof(secret_digest) from custom_invitations'), 'The row must hold a real BLOB for this test to mean anything.');
+
+        $this->assertSame('blob', CustomInvitation::query()->whereInvitationSecret($presented)->sole()->label);
+        $this->assertNull(CustomInvitation::query()->whereInvitationSecret('a-different-secret')->first());
+    }
+
+    public function test_the_open_scope_compares_instants_not_wall_clocks(): void
+    {
+        Date::setTestNow(CarbonImmutable::parse('2026-11-18 10:00:00', 'UTC'));
+        DefaultInvitation::query()->create(['label' => 'noon', 'expires_at' => CarbonImmutable::parse('2026-11-18 12:00:00', 'UTC')]);
+        $invitation = DefaultInvitation::query()->sole();
+
+        foreach ([
+            '2026-11-18 11:00:00-01:00' => false,
+            '2026-11-18 13:00:00+01:00' => false,
+            '2026-11-18 10:59:59-01:00' => true,
+            '2026-11-18 07:59:59-04:00' => true,
+            '2026-11-18 21:00:00+09:00' => false,
+        ] as $instant => $open) {
+            $at = CarbonImmutable::parse($instant);
+            $this->assertSame($open, $invitation->isOpenInvitation($at), "State at {$instant}");
+            $this->assertSame($open, DefaultInvitation::query()->openInvitations($at)->exists(), "Scope at {$instant}");
+        }
+    }
+
+    public function test_the_open_scope_keeps_fractional_seconds_a_model_stores(): void
+    {
+        Date::setTestNow(CarbonImmutable::parse('2026-11-18 10:00:00', 'UTC'));
+        PreciseInvitation::query()->create(['label' => 'precise', 'expires_at' => CarbonImmutable::parse('2026-11-18 12:00:00.500000', 'UTC')]);
+        $invitation = PreciseInvitation::query()->sole();
+        $this->assertSame('500000', $invitation->expires_at->format('u'), 'The fixture must round-trip microseconds.');
+
+        foreach ([
+            '2026-11-18 12:00:00.499999' => true,
+            '2026-11-18 12:00:00.500000' => false,
+            '2026-11-18 12:00:00.500001' => false,
+        ] as $instant => $open) {
+            $at = CarbonImmutable::parse($instant, 'UTC');
+            $this->assertSame($open, $invitation->isOpenInvitation($at), "State at {$instant}");
+            $this->assertSame($open, PreciseInvitation::query()->openInvitations($at)->exists(), "Scope at {$instant}");
+        }
     }
 
     public function test_an_uncast_timestamp_is_refused_rather_than_misread(): void

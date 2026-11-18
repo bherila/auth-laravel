@@ -59,9 +59,21 @@ trait HasInvitationSecret
             return $query->whereRaw('1 = 0');
         }
 
-        return $query->where(
-            $query->qualifyColumn($this->invitationSecretColumn()),
-            InvitationSecret::digestOf($presented, $this->invitationSecretDigest()),
-        );
+        $column = $query->qualifyColumn($this->invitationSecretColumn());
+        $encoding = $this->invitationSecretDigest();
+        $digest = InvitationSecret::digestOf($presented, $encoding);
+
+        if ($encoding === InvitationDigest::Binary && $query->getConnection()->getDriverName() === 'sqlite') {
+            // SQLite never equates a BLOB with TEXT holding the same bytes, and a bound string
+            // is TEXT. Rows written through PDO hold TEXT; rows written as BLOB literals or by
+            // other tools hold BLOB. Match either.
+            $wrapped = $query->getQuery()->getGrammar()->wrap($column);
+
+            return $query->where(fn (Builder $match): Builder => $match
+                ->where($column, $digest)
+                ->orWhereRaw("{$wrapped} = CAST(? AS BLOB)", [$digest]));
+        }
+
+        return $query->where($column, $digest);
     }
 }

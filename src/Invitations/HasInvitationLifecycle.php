@@ -2,6 +2,7 @@
 
 namespace BWH\Auth\Invitations;
 
+use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -75,11 +76,27 @@ trait HasInvitationLifecycle
 
         if ($columns['expires'] !== null) {
             $expires = $query->qualifyColumn($columns['expires']);
-            $at = $now ?? Date::now();
+            $at = $this->invitationLifecycleStoredInstant($now ?? Date::now());
             $query->where(fn (Builder $open): Builder => $open->whereNull($expires)->orWhere($expires, '>', $at));
         }
 
         return $query;
+    }
+
+    /**
+     * An instant as this model stores its timestamps, so SQL compares like {@see InvitationState}.
+     *
+     * A bound date is written as wall-clock text without converting its timezone, and in the
+     * query grammar's format, which drops fractional seconds. Stored timestamps are read back in
+     * the application timezone and in the model's own date format. So the instant is moved into
+     * that timezone and formatted with that format: `11:00-01:00` is compared as `12:00` UTC,
+     * and a model whose format keeps microseconds is compared with them.
+     */
+    private function invitationLifecycleStoredInstant(DateTimeInterface $instant): string
+    {
+        return (string) $this->fromDateTime(
+            CarbonImmutable::instance($instant)->setTimezone(date_default_timezone_get()),
+        );
     }
 
     private function invitationLifecycleMoment(?string $column): ?DateTimeInterface
