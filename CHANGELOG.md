@@ -4,6 +4,24 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+Patch release: additive only. Nothing changes until an application adopts it.
+
+### Added: invitation secrets and lifecycle
+
+- `BWH\Auth\Invitations\InvitationSecret` issues 256-bit link secrets as 64 hex characters.
+  Only their SHA-256 is stored, as hex or raw bytes (`InvitationDigest`). The plaintext is
+  redacted from dumps and marked `#[\SensitiveParameter]`.
+- `InvitationState` derives pending, accepted, declined, revoked or expired from timestamps
+  and the clock, with a fixed precedence: accepted, then revoked, then declined, then expired.
+  A null expiry never lapses.
+- Model traits `HasInvitationSecret` (issue a secret; the `whereInvitationSecret` scope) and
+  `HasInvitationLifecycle` (`invitationState()`, `isOpenInvitation()`; the `openInvitations`
+  scope) with overridable column names and digest encoding, so an existing table adopts them
+  without a migration and its links already sent keep working.
+- See [invitation secrets and lifecycle](docs/invitations.md).
+
 ## v0.30.0 - 2026-11-15
 
 Minor release: new defaults change what existing routes answer, and email 2FA
