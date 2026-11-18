@@ -14,6 +14,9 @@ final readonly class OAuthIdentity
      *   true (or the string "true"), false when it sent anything else, null when it sent nothing.
      *   An application decides what an absent claim means; the package's sign-in refuses only false
      *   (`oauth_login.refuse_unverified_email`).
+     * @param  bool  $emailVerifiedNative  true only when the claim was the JSON boolean `true`. The
+     *   lenient `$emailVerified` also reads the string "true"; strict proof
+     *   (`oauth_login.require_verified_email`) accepts only the native boolean.
      */
     public function __construct(
         public string $provider,
@@ -26,5 +29,6 @@ final readonly class OAuthIdentity
         public array $amr = [],
         public ?string $acr = null,
         public ?bool $emailVerified = null,
+        public bool $emailVerifiedNative = false,
     ) {}
 }

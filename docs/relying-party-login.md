@@ -80,7 +80,9 @@ unverified addresses; the claim is then still on the identity for `afterSignIn()
 ### Requiring proof
 
 `oauth_login.require_verified_email` (`BHERILA_AUTH_OAUTH_REQUIRE_VERIFIED_EMAIL`, off by
-default) goes further: only an explicit `true` passes, so an absent claim is refused as well,
+default) goes further: only the JSON boolean `true` passes, so an absent claim is refused as well,
+and so is the string `"true"` that the lenient reading accepts (`OAuthIdentity::$emailVerifiedNative`
+says which was sent),
 in the same place, audited as `Identity email not proven by provider` and answered by the same
 `unverifiedEmailResponse()`. Turn it on when the application keys anything on the address
 (provisioning, invitation acceptance, email-domain rules, notifications) and its provider sends

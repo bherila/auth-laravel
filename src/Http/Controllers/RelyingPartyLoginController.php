@@ -82,7 +82,9 @@ abstract class RelyingPartyLoginController extends Controller
             return $this->unverifiedEmailResponse($request, $identity);
         }
 
-        if ($identity->emailVerified !== true && (bool) config('bherila-auth.oauth_login.require_verified_email', false)) {
+        // Strict proof takes only the JSON boolean true: a string "true" is a provider's loose
+        // spelling, accepted above for compatibility but never as proof.
+        if (! $identity->emailVerifiedNative && (bool) config('bherila-auth.oauth_login.require_verified_email', false)) {
             $this->auditLoginFailed($request, null, null, 'Identity email not proven by provider', 'oauth');
 
             return $this->unverifiedEmailResponse($request, $identity);

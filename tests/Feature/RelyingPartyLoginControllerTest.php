@@ -149,6 +149,8 @@ class RelyingPartyLoginControllerTest extends TestCase
     {
         return [
             'no claim' => [[]],
+            'string true' => [['email_verified' => 'true']],
+            'string true in another case and spacing' => [['email_verified' => ' TRUE ']],
             'boolean false' => [['email_verified' => false]],
             'null' => [['email_verified' => null]],
             'string false' => [['email_verified' => 'false']],
@@ -197,15 +199,23 @@ class RelyingPartyLoginControllerTest extends TestCase
         $this->assertSame('old@example.test', $user->email);
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('verifiedEmailClaims')]
-    public function test_required_proof_admits_a_true_claim(mixed $claim, bool $expected): void
+    public function test_required_proof_admits_only_the_json_boolean_true(): void
     {
         config(['bherila-auth.oauth_login.require_verified_email' => true]);
 
-        $this->signIn('subject-ev10', 'Person', 'person@example.test', claims: ['email_verified' => $claim])->assertRedirect('/');
+        $this->signIn('subject-ev10', 'Person', 'person@example.test', claims: ['email_verified' => true])->assertRedirect('/');
 
         $this->assertAuthenticatedAs(User::query()->sole());
         $this->assertTrue(TestLoginController::$identities[0]->emailVerified);
+        $this->assertTrue(TestLoginController::$identities[0]->emailVerifiedNative);
+    }
+
+    public function test_a_string_true_claim_is_verified_but_not_native(): void
+    {
+        $this->signIn('subject-ev11', 'Person', 'person@example.test', claims: ['email_verified' => 'true'])->assertRedirect('/');
+
+        $this->assertTrue(TestLoginController::$identities[0]->emailVerified, 'The lenient reading is unchanged.');
+        $this->assertFalse(TestLoginController::$identities[0]->emailVerifiedNative);
     }
 
     public function test_required_proof_is_off_by_default(): void
