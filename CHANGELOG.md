@@ -4,6 +4,20 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## Unreleased
+
+### Added: opt-in proof of the provider address
+
+- `oauth_login.require_verified_email` (`BHERILA_AUTH_OAUTH_REQUIRE_VERIFIED_EMAIL`, off by
+  default) refuses a provider sign-in unless its `email_verified` claim is the JSON boolean
+  `true`, so an absent claim is refused as well as `false`, null, the string `"true"` or a
+  malformed value. `OAuthIdentity::$emailVerifiedNative` (new, default `false`) says whether the
+  claim was the native boolean. The refusal happens before
+  any account is created, linked or updated, is audited as `Identity email not proven by
+  provider`, and is answered by `unverifiedEmailResponse()`. Nothing changes until an
+  application turns it on. See
+  [requiring proof](docs/relying-party-login.md#requiring-proof).
+
 ## v0.30.1 - 2026-11-18
 
 Patch release: additive only. Nothing changes until an application adopts it.

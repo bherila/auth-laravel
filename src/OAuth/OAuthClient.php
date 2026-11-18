@@ -541,6 +541,7 @@ final class OAuthClient
             amr: $amr,
             acr: $acr,
             emailVerified: self::emailVerified($identity),
+            emailVerifiedNative: ($identity['email_verified'] ?? null) === true,
         );
     }
 

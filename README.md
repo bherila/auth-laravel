@@ -265,6 +265,7 @@ Published config lives at `config/bherila-auth.php`. Important settings:
 - `password_confirmation.timeout`: seconds a confirmation lasts. Defaults to `null`, which uses `auth.password_timeout` (Laravel's default, three hours).
 - `sessions.end_other_sessions_on_password_change`: the package's password change and reset end the account's other sessions. Defaults to `true` (see "Ending other sessions"). Enable Laravel's `authenticateSessions()` too.
 - `oauth_login.refuse_unverified_email`: refuse a provider sign-in whose `email_verified` claim is present and not true. Defaults to `true` (see [relying-party login](docs/relying-party-login.md#unverified-provider-addresses)).
+- `oauth_login.require_verified_email`: refuse a provider sign-in unless its `email_verified` claim is true, so an absent claim is refused too. Defaults to `false` (see [requiring proof](docs/relying-party-login.md#requiring-proof)).
 - `password_resets.reset_url`: reset-page URL generated into password reset emails. Defaults to `{APP_URL}/reset-password/{token}?email={email}`.
 - `password_resets.verify_email_on_reset`: optionally marks verified-email users verified after a successful reset.
 - `password_resets.redirect_after_reset`: JSON redirect returned after a successful reset.

@@ -74,9 +74,18 @@ abstract class RelyingPartyLoginController extends Controller
         $identity = $oauth->identityFromCallback($request);
 
         // Before anything is created, linked or updated from an address the provider itself
-        // says it has not verified. An identity without the claim is unaffected.
+        // says it has not verified. An identity without the claim is unaffected unless the
+        // application requires proof, when only an explicit true passes.
         if ($identity->emailVerified === false && (bool) config('bherila-auth.oauth_login.refuse_unverified_email', true)) {
             $this->auditLoginFailed($request, null, null, 'Identity email not verified by provider', 'oauth');
+
+            return $this->unverifiedEmailResponse($request, $identity);
+        }
+
+        // Strict proof takes only the JSON boolean true: a string "true" is a provider's loose
+        // spelling, accepted above for compatibility but never as proof.
+        if (! $identity->emailVerifiedNative && (bool) config('bherila-auth.oauth_login.require_verified_email', false)) {
+            $this->auditLoginFailed($request, null, null, 'Identity email not proven by provider', 'oauth');
 
             return $this->unverifiedEmailResponse($request, $identity);
         }
