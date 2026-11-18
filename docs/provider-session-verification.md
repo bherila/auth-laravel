@@ -33,6 +33,8 @@ must be deployed before enabling enforcement.
 4. Use a cache store shared by every web worker
    (`bherila-auth.provider_identity.cache_store`), then set
    `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED=true`.
+5. Once enforcement is verified, record the cutover so it cannot be switched off by
+   configuration alone: see [locking enforcement after cutover](#locking-enforcement-after-cutover).
 
 `establish()` remembers the login generation even while enforcement is off, so
 sessions started after deploying step 1 survive turning enforcement on. Sessions
@@ -43,6 +45,20 @@ logs out the guard, invalidates the session, regenerates the CSRF token and
 redirects (`expired_redirect_route`) or answers JSON 401; an unavailable provider
 answers 503 with `Retry-After` and keeps the session. Applications that need
 different responses can call `ProviderSession::assertActive()` themselves.
+
+## Locking enforcement after cutover
+
+Before cutover, `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED` is an ordinary switch. Once the
+application relies on the provider to end access, record the cutover so a configuration
+rollback or a stale environment file cannot turn enforcement off:
+
+```bash
+php artisan bherila-auth:provider-identity-cutover record
+```
+
+From then on enforcement stays on even if the setting is false, until a confirmed `withdraw`.
+Run the `check` action in deploys. Adoption, the command's actions, failure modes, withdrawal
+and testing are in [provider identity cutover](provider-identity-cutover.md).
 
 ## OAuth credentials (agent and personal tokens)
 

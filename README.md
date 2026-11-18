@@ -14,7 +14,8 @@ Includes:
   per-server callbacks, bound pending flows and RFC 9207 `iss` checked before the code exchange
 - [Shared identity-provider sign-in](docs/relying-party-login.md): the login controller, subject-bound account
   resolution, `oauth:bind-subject`, the binding-column migration and the opt-in local-credential policy
-- Opt-in [provider browser-session generation verification](docs/provider-session-verification.md)
+- Opt-in [provider browser-session generation verification](docs/provider-session-verification.md), with a
+  [recorded cutover](docs/provider-identity-cutover.md) that keeps enforcement on whatever the configuration says
 - Opt-in [identity tombstone consumption](docs/identity-tombstones.md): apply the identity provider's deletions
   through an application-bound handler and acknowledge each one after local deletion commits
 - [Application-requested admission invitations](docs/application-invitations.md): a client that asks the

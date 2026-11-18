@@ -3,6 +3,7 @@
 namespace BWH\Auth\OAuth\Server;
 
 use BWH\Auth\OAuth\Session\ProviderBindingResolver;
+use BWH\Auth\OAuth\Session\ProviderIdentityEnforcement;
 use BWH\Auth\OAuth\Session\ProviderIdentityPolicy;
 use BWH\Auth\OAuth\Session\ProviderSession;
 use BWH\Auth\OAuth\Session\ProviderSessionExpired;
@@ -56,7 +57,7 @@ final readonly class ProviderIdentityTokens
 
     public static function enabled(): bool
     {
-        return (bool) config('bherila-auth.provider_identity.enabled', false);
+        return app(ProviderIdentityEnforcement::class)->enabled();
     }
 
     /**

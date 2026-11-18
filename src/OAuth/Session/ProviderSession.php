@@ -31,7 +31,7 @@ final readonly class ProviderSession
         try {
             $this->remember($request, $identity);
         } catch (ProviderSessionExpired|ProviderStatusUnavailable $exception) {
-            if (! config('bherila-auth.provider_identity.enabled', false)) {
+            if (! app(ProviderIdentityEnforcement::class)->enabled()) {
                 // A regenerated session keeps its data, so an earlier login's baseline would
                 // otherwise stand in for this one once enforcement is enabled.
                 $request->session()->forget(self::KEY);

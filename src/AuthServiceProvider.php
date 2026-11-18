@@ -72,6 +72,8 @@ class AuthServiceProvider extends ServiceProvider
         $this->app->singletonIf(\BWH\Auth\OAuth\Invitations\ApplicationInvitations::class, \BWH\Auth\OAuth\Invitations\ApplicationInvitationClient::class);
 
         $this->app->singleton(\BWH\Auth\OAuth\Server\CredentialLineages::class);
+        // Caches the recorded cutover for a minute per process; see ProviderIdentityEnforcement.
+        $this->app->singleton(\BWH\Auth\OAuth\Session\ProviderIdentityEnforcement::class);
 
         $this->registerOAuthServerBindings();
     }
@@ -149,7 +151,7 @@ class AuthServiceProvider extends ServiceProvider
         // Registered whether or not a handler is bound, so a scheduled run without one
         // reports the missing handler rather than an unknown command.
         if ($this->app->runningInConsole()) {
-            $this->commands([\BWH\Auth\Console\ConsumeIdentityTombstonesCommand::class, \BWH\Auth\Console\BindOAuthSubjectCommand::class]);
+            $this->commands([\BWH\Auth\Console\ConsumeIdentityTombstonesCommand::class, \BWH\Auth\Console\BindOAuthSubjectCommand::class, \BWH\Auth\Console\ProviderIdentityCutoverCommand::class]);
         }
 
         // Opt-in: an application that manages trusted proxies itself, or has no
