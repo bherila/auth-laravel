@@ -4,6 +4,24 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.30.3 - 2026-11-22
+
+Patch release: one migration fix.
+
+### Fixed: the cutover migration stores its times as DATETIME
+
+- `2026_11_18_000000_create_provider_identity_cutover_table` declared `recorded_at` as a
+  required `TIMESTAMP`. On MySQL or MariaDB with `explicit_defaults_for_timestamp` off, the
+  server makes a table's first required `TIMESTAMP` column `ON UPDATE CURRENT_TIMESTAMP`, so
+  `bherila-auth:provider-identity-cutover withdraw` (an `UPDATE`) overwrote when the cutover was
+  recorded. Both `recorded_at` and `withdrawn_at` are now `DATETIME`. SQLite and PostgreSQL were
+  not affected.
+- If you published and ran the v0.30.2 migration on MySQL or MariaDB, check the column with
+  `SHOW CREATE TABLE provider_identity_cutover`. If `recorded_at` shows
+  `ON UPDATE current_timestamp()`, change both columns to `DATETIME` in a migration of your own.
+  The migration file name is unchanged, so publishing again does not replace a copy you already
+  ran.
+
 ## v0.30.2 - 2026-11-18
 
 Patch release: additive only. Nothing changes until an application adopts it.
