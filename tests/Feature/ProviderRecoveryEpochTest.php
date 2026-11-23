@@ -138,7 +138,7 @@ final class ProviderRecoveryEpochTest extends TestCase
     /** @return array<string, array{mixed}> */
     public static function invalidEpochs(): array
     {
-        return ['zero' => [0], 'negative' => [-1], 'a string' => ['3'], 'a float' => [3.0]];
+        return ['zero' => [0], 'negative' => [-1], 'a string' => ['3'], 'a fraction' => [3.5], 'a boolean' => [true]];
     }
 
     #[DataProvider('invalidEpochs')]
