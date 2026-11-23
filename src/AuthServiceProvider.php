@@ -74,6 +74,7 @@ class AuthServiceProvider extends ServiceProvider
         $this->app->singleton(\BWH\Auth\OAuth\Server\CredentialLineages::class);
         // Caches the recorded cutover for a minute per process; see ProviderIdentityEnforcement.
         $this->app->singleton(\BWH\Auth\OAuth\Session\ProviderIdentityEnforcement::class);
+        $this->app->singleton(\BWH\Auth\OAuth\Session\RememberedProviderLogins::class);
 
         $this->registerOAuthServerBindings();
     }

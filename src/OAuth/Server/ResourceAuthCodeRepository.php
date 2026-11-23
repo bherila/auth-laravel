@@ -93,7 +93,7 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
      * The authorizing session's provider generation, stored on the code so the token
      * minted from it inherits it rather than a freshly fetched one.
      *
-     * @return array<string, string|int>
+     * @return array<string, string|int|null>
      */
     final protected function providerIdentityStamp(Model $model, string|int|null $userId): array
     {
@@ -109,7 +109,8 @@ class ResourceAuthCodeRepository extends PassportAuthCodeRepository implements A
             return [];
         }
 
-        return ProviderIdentityTokens::attributes($stamp);
+        return ProviderIdentityTokens::attributes($stamp,
+            $this->hasColumn($model->getTable(), ProviderIdentityTokens::EPOCH_COLUMN));
     }
 
     final public function isAuthCodeRevoked(string $codeId): bool

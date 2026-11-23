@@ -37,10 +37,17 @@ final readonly class ProviderIdentityPolicy
      * differs from the baseline, and ProviderStatusUnavailable when no sufficiently
      * fresh answer can be obtained. Returns the time of the observation relied on,
      * which callers keep instead of "now" so a shared answer never extends freshness.
+     *
+     * `$epoch` is the provider's recovery epoch captured with the baseline, or null when none
+     * was (a provider that reports none, or a credential from before it did). A captured epoch
+     * must equal the provider's current one: a restored provider raises it, so everything
+     * captured before the restore ends, and an epoch the provider stops reporting ends it too.
+     * A null epoch is not compared: such sessions and credentials keep working until they end
+     * on their own.
      */
-    public function verify(string $subject, int $baseline, bool $fresh = false): int
+    public function verify(string $subject, int $baseline, bool $fresh = false, ?int $epoch = null): int
     {
-        if ($baseline < 0) {
+        if ($baseline < 0 || ($epoch !== null && $epoch < 1)) {
             throw new ProviderSessionExpired('The provider credential baseline is invalid.');
         }
 
@@ -49,6 +56,9 @@ final readonly class ProviderIdentityPolicy
 
         if ($observation['generation'] !== $baseline) {
             throw new ProviderSessionExpired('The provider identity is no longer active for this credential.');
+        }
+        if ($epoch !== null && $observation['epoch'] !== $epoch) {
+            throw new ProviderSessionExpired('The provider has been restored since this credential was issued.');
         }
 
         return $observation['checked_at'];
@@ -60,7 +70,7 @@ final readonly class ProviderIdentityPolicy
      * the identity is not active and ProviderStatusUnavailable when no answer can be had. The
      * answer is shared like any other observation.
      *
-     * @return array{generation: int, checked_at: int}
+     * @return array{generation: int, epoch: int|null, checked_at: int}
      */
     public function current(string $subject): array
     {
@@ -69,7 +79,8 @@ final readonly class ProviderIdentityPolicy
             throw new ProviderSessionExpired('The provider identity is not active.');
         }
 
-        return ['generation' => $observation['generation'], 'checked_at' => $observation['checked_at']];
+        return ['generation' => $observation['generation'], 'epoch' => $observation['epoch'],
+            'checked_at' => $observation['checked_at']];
     }
 
     /** Whether an observation made at this time is still fresh. Clock rollback is never fresh. */
@@ -88,7 +99,7 @@ final readonly class ProviderIdentityPolicy
      * the entry first, so a burst costs one request; a fresh check always asks, but still
      * in turn, so its newer answer is the one kept.
      *
-     * @return array{generation: int|null, checked_at: int}
+     * @return array{generation: int|null, epoch: int|null, checked_at: int}
      */
     private function refresh(string $subject, bool $fresh): array
     {
@@ -98,7 +109,8 @@ final readonly class ProviderIdentityPolicy
                 return $observation;
             }
             $status = $this->client->status($subject);
-            $observation = ['generation' => $status?->credentialVersion, 'checked_at' => Carbon::now()->getTimestamp()];
+            $observation = ['generation' => $status?->credentialVersion, 'epoch' => $status?->recoveryEpoch,
+                'checked_at' => Carbon::now()->getTimestamp()];
             // A store may report a failed write by returning false rather than throwing; an
             // observation nobody else can read would make every caller ask again. The
             // database store also returns false when its upsert rewrites an identical row,
@@ -151,17 +163,23 @@ final readonly class ProviderIdentityPolicy
         }
     }
 
-    /** @return array{generation: int|null, checked_at: int}|null */
+    /**
+     * A shared observation still fresh enough to rely on. One written by an earlier release
+     * carries no epoch entry, and counts as no observation at all rather than as "no epoch".
+     *
+     * @return array{generation: int|null, epoch: int|null, checked_at: int}|null
+     */
     private function cached(string $subject): ?array
     {
         $value = $this->cache(fn (Repository $store) => $store->get($this->key($subject)));
-        if (! is_array($value) || ! array_key_exists('generation', $value)
+        if (! is_array($value) || ! array_key_exists('generation', $value) || ! array_key_exists('epoch', $value)
             || ! (is_int($value['generation']) || $value['generation'] === null)
+            || ! (is_int($value['epoch']) || $value['epoch'] === null)
             || ! is_int($value['checked_at'] ?? null) || ! self::isFresh($value['checked_at'])) {
             return null;
         }
 
-        return ['generation' => $value['generation'], 'checked_at' => $value['checked_at']];
+        return ['generation' => $value['generation'], 'epoch' => $value['epoch'], 'checked_at' => $value['checked_at']];
     }
 
     private function key(string $subject): string

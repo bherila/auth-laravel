@@ -271,7 +271,8 @@ class ApplicationInvitationClientTest extends TestCase
         Http::fake();
 
         foreach ([
-            fn () => $this->invitations()->create('042', 'person@example.test'),
+            fn () => $this->invitations()->create('01-JD3Z8M7K', 'person@example.test'),
+            fn () => $this->invitations()->create(str_repeat('a', 65), 'person@example.test'),
             fn () => $this->invitations()->create('', 'person@example.test'),
             fn () => $this->invitations()->create('user@example.test', 'person@example.test'),
             fn () => $this->invitations()->resend('42', 0),

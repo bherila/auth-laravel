@@ -110,6 +110,32 @@ baselines exist before it is turned on. The baseline is the identity's current g
 is safe only because the sign-in is happening now. Never use it to fill in a login that happened
 earlier.
 
+## Recovery epoch
+
+Restoring the identity provider's database from a backup rolls its credential generations
+back. A session or token captured before a password reset or a disable could then match the
+restored answer and work again. To stop that, a provider reports a `recovery_epoch` in the
+sign-in identity and identity-status responses: a whole number kept outside its database and
+raised on every restore.
+
+- The epoch is captured with the generation:
+  - in the session baseline at sign-in, and in `establishObserved()`;
+  - on remembered logins;
+  - on authorization codes and access and refresh tokens (`provider_epoch`).
+
+  A token minted from a code or refresh token inherits its epoch.
+- Every check that compares the generation also compares a captured epoch. A raised epoch ends
+  the session or credential. So does a provider that stops reporting one: the sign-out is the
+  usual one, a bearer gets 401 and a refresh gets `invalid_grant`. Everyone signs in again
+  after a restore, against the restored data.
+- Anything captured with no epoch is not compared: credentials from before the provider sent
+  one, or from a provider that sends none. It keeps working until it ends on its own.
+- Run the migration `2026_11_24_000000_add_provider_epoch_columns`. Until it runs, credentials
+  and remembered logins are recorded without an epoch. Browser sessions need no migration.
+
+Provider subjects are opaque strings: an existing account's subject may be its decimal id,
+and a newer account's a random ULID. Never parse or compare a subject as a number.
+
 ## Locking enforcement after cutover
 
 Before cutover, `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED` is an ordinary switch. Once the

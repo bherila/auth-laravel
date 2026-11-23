@@ -4,6 +4,43 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.32.0 - Unreleased
+
+Minor release. Additive. Nothing changes until the identity provider sends a recovery epoch or
+an opaque subject.
+
+### Added: a provider recovery epoch ends what a restore would revive
+
+- A provider restored from a backup reports its old credential generations again, so a
+  session or token captured before a password reset could match once more. Providers now
+  report a `recovery_epoch` (a whole number they raise on every restore) in the sign-in
+  identity and identity-status responses. The field is additive within contract version 1.
+- The epoch is captured at sign-in with the generation. Captures include the browser
+  session baseline, remembered logins (`provider_remembered_logins.epoch`), and authorization
+  codes and access and refresh tokens (`provider_epoch`). A code or refresh token passes its
+  epoch on to the token minted from it.
+- A captured epoch must equal the provider's current one. A raised epoch, or a provider that
+  stops reporting one, ends the session (signed out), the token (401) and its renewal
+  (`invalid_grant`), at the check that already compares generations, so it costs no extra
+  request.
+- Anything captured before the provider reported an epoch has none and is not compared, so
+  it keeps working until it ends on its own.
+- A remembered login under a new epoch replaces the account's remember token, as a new
+  generation already does.
+- New migration: `2026_11_24_000000_add_provider_epoch_columns` (nullable columns, adds only
+  absent ones). Until it runs, credentials and remembered logins are recorded without an epoch.
+- `ProviderSession::prepareRememberedLogin()` takes the epoch as an optional last argument.
+  Pass `$observation->epoch` when preparing a sign-in observed through another method.
+  `ProviderObservation::$epoch` and `ProviderSession::epoch()` are new.
+- Observations cached by an earlier release carry no epoch. They are treated as absent and
+  asked again, never as "no epoch".
+
+### Changed: provider subjects may be opaque
+
+- `InvitationArguments` accepts any provider subject of 1 to 64 ASCII letters and digits, not
+  only a decimal id. Providers keep existing accounts' numeric subjects and may give new
+  accounts a random ULID. Bindings already store subjects as strings.
+
 ## v0.31.0 - 2026-11-23
 
 Minor release. It requires PHP 8.5, and a remembered sign-in through

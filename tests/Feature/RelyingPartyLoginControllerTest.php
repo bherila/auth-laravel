@@ -499,6 +499,27 @@ class RelyingPartyLoginControllerTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_the_provider_recovery_epoch_is_captured_with_the_sign_in_baseline(): void
+    {
+        $this->account('Person', 'person@example.test', 'subject-ep1');
+
+        $this->signIn('subject-ep1', 'Person', 'person@example.test',
+            claims: ['credential_version' => 4, 'recovery_epoch' => 2])->assertRedirect('/');
+
+        $this->assertSame(2, session('bherila_auth.provider_session.epoch'));
+        $this->assertSame(2, TestLoginController::$identities[0]->recoveryEpoch);
+    }
+
+    public function test_a_malformed_recovery_epoch_refuses_the_sign_in(): void
+    {
+        $this->account('Person', 'person@example.test', 'subject-ep2');
+
+        $this->signIn('subject-ep2', 'Person', 'person@example.test',
+            claims: ['credential_version' => 4, 'recovery_epoch' => 0])->assertStatus(502);
+
+        $this->assertGuest();
+    }
+
     public function test_a_remembered_sign_in_records_its_baseline_for_the_cookie(): void
     {
         $user = $this->account('Person', 'person@example.test', 'subject-rm1');

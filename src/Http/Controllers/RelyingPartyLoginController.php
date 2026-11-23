@@ -119,7 +119,7 @@ abstract class RelyingPartyLoginController extends Controller
             // an earlier login generation is replaced, so only this login's baseline is
             // recorded for it (ProviderSession::prepareRememberedLogin()).
             app(ProviderSession::class)->prepareRememberedLogin($request, $guard, $account,
-                $identity->provider, $identity->subject, $identity->credentialVersion);
+                $identity->provider, $identity->subject, $identity->credentialVersion, $identity->recoveryEpoch);
         }
         $guard->login($account, $this->remember);
         $request->session()->regenerate();

@@ -25,7 +25,8 @@ use RuntimeException;
  *
  * With enforcement enabled, a credential of a bound account is refused when its stamp
  * is missing (credentials issued before enforcement are retired, not upgraded), names
- * another subject, or no longer matches the provider's answer. An unavailable provider
+ * another subject, or no longer matches the provider's answer, including a recovery epoch the
+ * provider has since raised after a restore. An unavailable provider
  * raises ProviderStatusUnavailable, which renders a retryable 503 and leaves a refresh
  * token unconsumed. Unbound accounts and client-credential tokens are left to the
  * application.
@@ -35,6 +36,9 @@ final readonly class ProviderIdentityTokens
     public const SUBJECT_COLUMN = 'provider_subject';
 
     public const GENERATION_COLUMN = 'provider_generation';
+
+    /** The provider's recovery epoch at issue; null when it reported none. */
+    public const EPOCH_COLUMN = 'provider_epoch';
 
     /** On refresh tokens, which have no owner column of their own. */
     public const OWNER_COLUMN = 'provider_user_id';
@@ -69,7 +73,7 @@ final readonly class ProviderIdentityTokens
      * the stamp is still recorded when available so enabling enforcement later does not
      * retire credentials issued in the meantime.
      *
-     * @return array{subject: string, generation: int}|null
+     * @return array{subject: string, generation: int, epoch: int|null}|null
      */
     public function stampForIssue(?Request $request, string|int|null $userId): ?array
     {
@@ -78,7 +82,8 @@ final readonly class ProviderIdentityTokens
         }
         $carried = $request?->attributes->get(self::REQUEST_ATTRIBUTE);
         if (is_array($carried) && is_string($carried['subject'] ?? null) && is_int($carried['generation'] ?? null)) {
-            return ['subject' => $carried['subject'], 'generation' => $carried['generation']];
+            return ['subject' => $carried['subject'], 'generation' => $carried['generation'],
+                'epoch' => is_int($carried['epoch'] ?? null) ? $carried['epoch'] : null];
         }
 
         try {
@@ -99,17 +104,40 @@ final readonly class ProviderIdentityTokens
         $generation = $credential->getAttribute(self::GENERATION_COLUMN);
         $request?->attributes->remove(self::REQUEST_ATTRIBUTE);
         if (is_string($subject) && is_numeric($generation) && (int) $generation >= 0) {
-            $request?->attributes->set(self::REQUEST_ATTRIBUTE, ['subject' => $subject, 'generation' => (int) $generation]);
+            $request?->attributes->set(self::REQUEST_ATTRIBUTE, ['subject' => $subject, 'generation' => (int) $generation,
+                'epoch' => self::epochOf($credential)]);
         }
     }
 
-    /** @return array<string, string|int> the stamp's column values, empty when there is none */
-    public static function attributes(?array $stamp): array
+    /**
+     * The stamp's column values, empty when there is none. The epoch column is written only
+     * where the table has it (`withEpoch`), so an application that has not yet run the
+     * migration adding it keeps issuing credentials, without an epoch.
+     *
+     * @return array<string, string|int|null>
+     */
+    public static function attributes(?array $stamp, bool $withEpoch = false): array
     {
-        return $stamp === null ? [] : [
+        if ($stamp === null) {
+            return [];
+        }
+        $attributes = [
             self::SUBJECT_COLUMN => $stamp['subject'],
             self::GENERATION_COLUMN => $stamp['generation'],
         ];
+        if ($withEpoch) {
+            $attributes[self::EPOCH_COLUMN] = $stamp['epoch'] ?? null;
+        }
+
+        return $attributes;
+    }
+
+    /** The recovery epoch a stored credential was issued under; null when none is recorded. */
+    public static function epochOf(Model $credential): ?int
+    {
+        $epoch = $credential->getAttribute(self::EPOCH_COLUMN);
+
+        return is_numeric($epoch) && (int) $epoch >= 1 ? (int) $epoch : null;
     }
 
     /**
@@ -156,7 +184,7 @@ final readonly class ProviderIdentityTokens
             return false;
         }
         try {
-            $this->policy->verify($subject, (int) $generation, $fresh);
+            $this->policy->verify($subject, (int) $generation, $fresh, self::epochOf($credential));
         } catch (ProviderSessionExpired) {
             return true;
         }
@@ -178,7 +206,7 @@ final readonly class ProviderIdentityTokens
         return ! $this->revoked($token, $fresh);
     }
 
-    /** @return array{subject: string, generation: int}|null */
+    /** @return array{subject: string, generation: int, epoch: int|null}|null */
     private function stampFromSession(?Request $request, string|int $userId): ?array
     {
         $user = $request?->user();
@@ -200,7 +228,8 @@ final readonly class ProviderIdentityTokens
         if (! self::enabled()) {
             $generation = $this->session->baseline($request, $binding->provider, $binding->subject);
 
-            return $generation === null ? null : ['subject' => $binding->subject, 'generation' => $generation];
+            return $generation === null ? null : ['subject' => $binding->subject, 'generation' => $generation,
+                'epoch' => $this->session->epoch($request, $binding->provider, $binding->subject)];
         }
         // Issuing a credential is a privileged act: never rely on the session's freshness window.
         $identity = $this->session->assertActive($request, $binding->provider, $binding->subject, fresh: true);
@@ -208,13 +237,14 @@ final readonly class ProviderIdentityTokens
             throw new RuntimeException('Issuing a credential requires a verified provider session.');
         }
 
-        return ['subject' => $binding->subject, 'generation' => $identity->credentialVersion];
+        return ['subject' => $binding->subject, 'generation' => $identity->credentialVersion,
+            'epoch' => $identity->recoveryEpoch];
     }
 
-    /** @return array{subject: string, generation: int} */
+    /** @return array{subject: string, generation: int, epoch: null} */
     private static function unboundStamp(): array
     {
-        return ['subject' => self::UNBOUND_SUBJECT, 'generation' => 0];
+        return ['subject' => self::UNBOUND_SUBJECT, 'generation' => 0, 'epoch' => null];
     }
 
 }

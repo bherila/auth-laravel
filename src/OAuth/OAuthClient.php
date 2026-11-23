@@ -519,6 +519,10 @@ final class OAuthClient
         abort_unless($generation === null || (is_int($generation) && $generation >= 0),
             502, 'The identity provider returned an invalid credential generation.');
 
+        $epoch = $identity['recovery_epoch'] ?? null;
+        abort_unless($epoch === null || (is_int($epoch) && $epoch >= 1),
+            502, 'The identity provider returned an invalid recovery epoch.');
+
         $authTime = $identity['auth_time'] ?? null;
         $amr = $identity['amr'] ?? [];
         $acr = $identity['acr'] ?? null;
@@ -542,6 +546,7 @@ final class OAuthClient
             acr: $acr,
             emailVerified: self::emailVerified($identity),
             emailVerifiedNative: ($identity['email_verified'] ?? null) === true,
+            recoveryEpoch: $epoch,
         );
     }
 

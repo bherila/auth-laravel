@@ -46,8 +46,13 @@ final readonly class ProviderIdentityStatusClient
             || ! is_int($data['credential_version'] ?? null) || $data['credential_version'] < 0) {
             throw new ProviderStatusUnavailable('The provider status response is invalid.');
         }
+        // Additive within contract version 1: absent from a provider that has none.
+        $epoch = $data['recovery_epoch'] ?? null;
+        if ($epoch !== null && (! is_int($epoch) || $epoch < 1)) {
+            throw new ProviderStatusUnavailable('The provider status response is invalid.');
+        }
 
-        return new ProviderIdentityStatus($subject, $data['credential_version']);
+        return new ProviderIdentityStatus($subject, $data['credential_version'], $epoch);
     }
 
     /** Pin cached session verification to this configured provider and client. */

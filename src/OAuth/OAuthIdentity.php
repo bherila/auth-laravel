@@ -17,6 +17,9 @@ final readonly class OAuthIdentity
      * @param  bool  $emailVerifiedNative  true only when the claim was the JSON boolean `true`. The
      *   lenient `$emailVerified` also reads the string "true"; strict proof
      *   (`oauth_login.require_verified_email`) accepts only the native boolean.
+     * @param  int|null  $recoveryEpoch  the provider's recovery epoch at sign-in, when it reports
+     *   one. A provider raises it whenever it is restored from a backup; a session or credential
+     *   captured under another epoch is treated as ended. Null from a provider that sends none.
      */
     public function __construct(
         public string $provider,
@@ -30,5 +33,6 @@ final readonly class OAuthIdentity
         public ?string $acr = null,
         public ?bool $emailVerified = null,
         public bool $emailVerifiedNative = false,
+        public ?int $recoveryEpoch = null,
     ) {}
 }
