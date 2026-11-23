@@ -23,14 +23,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The floor the package advertises: composer.json requires PHP ^8.4 and
-          # Illuminate ^13.0, so the lowest supported runtime is tested on every run.
-          # A syntax-level feature newer than the floor (typed class constants, for
-          # example) fails here rather than in a consumer's install.
-          - php: '8.4'
+          # The floor the package advertises: composer.json requires PHP ^8.5 and
+          # Illuminate ^13.0, so the lowest supported runtime and the lowest
+          # dependency versions are tested on every run, as well as the current set.
+          - php: '8.5'
             dependencies: '--prefer-lowest'
-          - php: '8.4'
-            dependencies: ''
           - php: '8.5'
             dependencies: ''
     steps:

@@ -9,7 +9,7 @@
     "source": "https://github.com/bherila/auth-laravel"
   },
   "require": {
-    "php": "^8.4",
+    "php": "^8.5",
     "illuminate/auth": "^13.0",
     "illuminate/contracts": "^13.0",
     "illuminate/database": "^13.0",
