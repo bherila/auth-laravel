@@ -105,10 +105,10 @@ class RememberedProviderLoginTest extends TestCase
     /** The provider answers active, at whatever generation $current holds when asked. */
     private function fakeStatus(): void
     {
-        Http::fake(fn () => Http::response($this->status()));
+        Http::fake(fn () => Http::response($this->statusPayload()));
     }
 
-    private function status(): array
+    private function statusPayload(): array
     {
         return ['contract_version' => 1, 'active' => true, 'subject' => 'subject-example', 'credential_version' => $this->current];
     }
