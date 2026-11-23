@@ -4,10 +4,17 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## v0.31.0 - Unreleased
+## v0.31.0 - 2026-11-23
 
-Minor release. Additive, except that a remembered sign-in through `RelyingPartyLoginController`
-can now replace the account's remember token (below).
+Minor release. It requires PHP 8.5, and a remembered sign-in through
+`RelyingPartyLoginController` can now replace the account's remember token (below). Everything
+else is additive.
+
+### Changed: PHP 8.5 is the floor
+
+- `composer.json` requires PHP `^8.5`; PHP 8.4 is no longer supported or tested. CI runs PHP 8.5
+  with the current and the lowest dependency versions. An application whose `config.platform.php`
+  pins 8.4 must raise it to 8.5 before updating.
 
 ### Added: remembered sessions stay under provider lifecycle enforcement
 
