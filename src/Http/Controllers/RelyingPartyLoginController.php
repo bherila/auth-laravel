@@ -114,6 +114,13 @@ abstract class RelyingPartyLoginController extends Controller
         }
 
         $guard = $this->sessionGuard();
+        if ($this->remember) {
+            // Before login sets the cookie: a remember token shared with a cookie issued under
+            // an earlier login generation is replaced, so only this login's baseline is
+            // recorded for it (ProviderSession::prepareRememberedLogin()).
+            app(ProviderSession::class)->prepareRememberedLogin($request, $guard, $account,
+                $identity->provider, $identity->subject, $identity->credentialVersion);
+        }
         $guard->login($account, $this->remember);
         $request->session()->regenerate();
 

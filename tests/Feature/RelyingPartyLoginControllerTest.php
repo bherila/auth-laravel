@@ -499,6 +499,25 @@ class RelyingPartyLoginControllerTest extends TestCase
         $this->assertGuest();
     }
 
+    public function test_a_remembered_sign_in_records_its_baseline_for_the_cookie(): void
+    {
+        $user = $this->account('Person', 'person@example.test', 'subject-rm1');
+        $user->forceFill(['remember_token' => 'token-from-before'])->save();
+
+        $this->signIn('subject-rm1', 'Person', 'person@example.test', controller: RemembersSignIn::class,
+            claims: ['credential_version' => 4])->assertRedirect('/');
+
+        $token = (string) $user->fresh()->remember_token;
+        $this->assertNotSame('token-from-before', $token, 'A token never recorded under this baseline is replaced.');
+        $this->assertDatabaseHas('provider_remembered_logins', [
+            'user_id' => (string) $user->getKey(),
+            'provider' => self::PROVIDER,
+            'subject' => 'subject-rm1',
+            'generation' => 4,
+            'token_hash' => hash('sha256', $token),
+        ]);
+    }
+
     public function test_the_default_logout_response_is_unchanged_for_json_requests(): void
     {
         $user = $this->account('Person', 'person@example.test', 'subject-j0');
@@ -643,6 +662,11 @@ class JsonLogoutController extends TestLoginController
             ? response()->json(['redirect' => $redirect->getTargetUrl()])
             : parent::logoutResponse($request, $redirect);
     }
+}
+
+class RemembersSignIn extends TestLoginController
+{
+    protected bool $remember = true;
 }
 
 class LandsOnDashboard extends TestLoginController

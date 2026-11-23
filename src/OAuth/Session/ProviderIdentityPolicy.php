@@ -54,6 +54,24 @@ final readonly class ProviderIdentityPolicy
         return $observation['checked_at'];
     }
 
+    /**
+     * Ask the provider now for the identity's current generation, for a sign-in being made at
+     * this moment through a method other than the provider. Throws ProviderSessionExpired when
+     * the identity is not active and ProviderStatusUnavailable when no answer can be had. The
+     * answer is shared like any other observation.
+     *
+     * @return array{generation: int, checked_at: int}
+     */
+    public function current(string $subject): array
+    {
+        $observation = $this->refresh($subject, true);
+        if (! is_int($observation['generation'])) {
+            throw new ProviderSessionExpired('The provider identity is not active.');
+        }
+
+        return ['generation' => $observation['generation'], 'checked_at' => $observation['checked_at']];
+    }
+
     /** Whether an observation made at this time is still fresh. Clock rollback is never fresh. */
     public static function isFresh(int $checkedAt): bool
     {

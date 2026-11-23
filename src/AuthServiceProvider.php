@@ -91,6 +91,11 @@ class AuthServiceProvider extends ServiceProvider
         // Before the routes that name them. A limiter the application already defined is kept.
         \BWH\Auth\Support\RateLimits::register();
 
+        // A session restored from a remember-me cookie adopts the provider baseline recorded for
+        // its token, so provider lifecycle enforcement checks it rather than ending it at once.
+        \Illuminate\Support\Facades\Event::listen(\Illuminate\Auth\Events\Login::class,
+            \BWH\Auth\OAuth\Session\AdoptRememberedProviderLogin::class);
+
         $this->publishes([
             __DIR__.'/../config/bherila-auth.php' => config_path('bherila-auth.php'),
         ], 'bherila-auth-config');

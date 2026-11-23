@@ -4,6 +4,42 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.31.0 - Unreleased
+
+Minor release. Additive, except that a remembered sign-in through `RelyingPartyLoginController`
+can now replace the account's remember token (below).
+
+### Added: remembered sessions stay under provider lifecycle enforcement
+
+- A session restored from a remember-me cookie held no provider baseline, so with enforcement on
+  it was signed out on its first protected request: in practice remember-me stopped working. The
+  baseline of the login that set the cookie is now recorded per guard and account (new migration:
+  `provider_remembered_logins`, the token stored only as a SHA-256 hash), and a restored session
+  adopts it through a `Login` listener the package registers. The restored session is then checked
+  freshly, so a reset, disable or ungrant since that login still ends it.
+- Laravel shares one remember token among an account's devices.
+  `ProviderSession::prepareRememberedLogin()`, called before `$guard->login($user, true)`, replaces
+  the token unless it is already recorded under exactly the new login's baseline, so no cookie
+  issued under an earlier generation comes back under a newer one. `RelyingPartyLoginController`
+  calls it when `$remember` is on. **Behaviour change:** the first remembered sign-in of each
+  account after upgrading replaces its token, so its remember-me cookies on other devices stop
+  working once, whether or not enforcement is on. A remembered login made without
+  `prepareRememberedLogin()` records nothing, and its restored sessions are asked to sign in again
+  while enforcement is on.
+- Publish and run the new migration with `vendor:publish --tag=bherila-auth-migrations`. Until it
+  runs nothing is recorded and remembered sessions behave as before. Delete an account's rows with
+  `RememberedProviderLogins::forgetUser()` when deleting the account.
+
+### Added: sign-ins through another method can be baselined
+
+- `ProviderSession::observe($binding)` asks the provider now for a bound account signing in
+  through another method (a social login, say). With enforcement on, an ended identity throws
+  `ProviderSessionExpired` (refuse the sign-in) and an unavailable provider throws
+  `ProviderStatusUnavailable`. With it off both return null. `establishObserved()` then records
+  the current generation as the session's baseline, so the session is checked like a provider
+  sign-in. `ProviderIdentityPolicy::current()` is the fresh lookup underneath.
+- See [Remember-me and other sign-in methods](docs/provider-session-verification.md#remember-me-and-other-sign-in-methods).
+
 ## v0.30.3 - 2026-11-22
 
 Patch release: one migration fix.

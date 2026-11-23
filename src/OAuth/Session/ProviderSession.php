@@ -3,18 +3,25 @@
 namespace BWH\Auth\OAuth\Session;
 
 use BWH\Auth\OAuth\OAuthIdentity;
+use Illuminate\Auth\SessionGuard;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Auth\StatefulGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 /** Explicit consumer integration: never globally enables middleware or local login. */
 final readonly class ProviderSession
 {
     private const KEY = 'bherila_auth.provider_session';
 
+    /** Request attribute: the remember tokens prepareRememberedLogin() made safe to record. */
+    private const PREPARED = 'bherila_auth.provider_remember_prepared';
+
     public function __construct(
         private ProviderIdentityStatusClient $client,
         private ProviderIdentityPolicy $policy,
+        private RememberedProviderLogins $remembered,
     ) {}
 
     /**
@@ -43,6 +50,150 @@ final readonly class ProviderSession
             $request->session()->regenerateToken();
 
             throw new ProviderStatusUnavailable('Provider session verification is unavailable. Sign in again.', previous: $exception);
+        }
+
+        $this->recordRememberedLogin($request, $guard);
+    }
+
+    /**
+     * Call before `$guard->login($user, remember: true)` when the login sets a remember-me
+     * cookie, with the baseline the login is about to establish.
+     *
+     * Laravel keeps one remember token per account, shared by every device. Unless that token
+     * is already recorded under exactly this baseline, it is replaced here, so the cookie this
+     * login sets carries a new token and every older cookie, issued under some earlier login,
+     * stops working. Only a token prepared here is recorded by {@see establish()} or
+     * {@see establishObserved()}; any other remembered login records nothing, and its restored
+     * sessions are asked to sign in again once enforcement is on.
+     */
+    public function prepareRememberedLogin(Request $request, StatefulGuard $guard, Authenticatable $user,
+        string $provider, string $subject, ?int $generation): void
+    {
+        if (! $guard instanceof SessionGuard) {
+            return;
+        }
+
+        $token = $user->getRememberToken();
+        $row = is_string($token) && $token !== ''
+            ? $this->remembered->find($guard->getName(), (string) $user->getAuthIdentifier())
+            : null;
+        $matches = $row !== null && $generation !== null
+            && hash_equals((string) $row->token_hash, RememberedProviderLogins::tokenHash((string) $token))
+            && $row->provider === $provider && $row->subject === $subject
+            && (int) $row->generation === $generation;
+        if (! $matches) {
+            $token = Str::random(60);
+            $guard->getProvider()->updateRememberToken($user, $token);
+        }
+
+        $prepared = $request->attributes->get(self::PREPARED, []);
+        $prepared[$guard->getName()] = RememberedProviderLogins::tokenHash((string) $token);
+        $request->attributes->set(self::PREPARED, $prepared);
+    }
+
+    /**
+     * For a sign-in made now through a method other than this provider (a social login, say)
+     * of an account bound to it: the provider's current answer for that identity.
+     *
+     * A fresh status request, so a sign-in through another method cannot outlive the provider
+     * disabling, resetting or ungranting the person. With enforcement on, an ended identity
+     * throws ProviderSessionExpired (refuse the sign-in) and an unavailable provider throws
+     * ProviderStatusUnavailable (answer 503). With enforcement off, both return null and the
+     * sign-in proceeds without a baseline.
+     */
+    public function observe(ProviderBinding $binding): ?ProviderObservation
+    {
+        try {
+            if ($binding->provider !== config('bherila-auth.oauth_client.provider')) {
+                throw new ProviderSessionExpired('The provider session binding is invalid.');
+            }
+            $observation = $this->policy->current($binding->subject);
+
+            return new ProviderObservation($binding->provider, $binding->subject,
+                $observation['generation'], $observation['checked_at']);
+        } catch (ProviderSessionExpired|ProviderStatusUnavailable $exception) {
+            if (! app(ProviderIdentityEnforcement::class)->enabled()) {
+                return null;
+            }
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * After `$guard->login()` and `session()->regenerate()` for a sign-in observed by
+     * {@see observe()}: record its generation as this session's baseline, as {@see establish()}
+     * does for a provider sign-in. The generation is the identity's current one because the
+     * sign-in is happening now; a later reset, disable or ungrant ends the session.
+     */
+    public function establishObserved(Request $request, StatefulGuard $guard, ProviderObservation $observation,
+        string $name, string $email): void
+    {
+        $request->session()->put(self::KEY, [
+            'context' => $this->client->context(),
+            'provider' => $observation->provider,
+            'subject' => $observation->subject,
+            'generation' => $observation->generation,
+            'checked_at' => $observation->checkedAt,
+            'name' => $name,
+            'email' => $email,
+        ]);
+
+        $this->recordRememberedLogin($request, $guard);
+    }
+
+    /**
+     * A session the guard just restored from a remember-me cookie: adopt the baseline recorded
+     * for that cookie's token, if it was recorded for this binding. Called by the package's
+     * Login listener; the adopted baseline is checked freshly on the next protected request.
+     * A restored session no longer has the login-time name and email; the identity it reports
+     * carries empty strings for them.
+     */
+    public function restoreRemembered(SessionGuard $guard, Authenticatable $user, ProviderBinding $binding): void
+    {
+        $token = $user->getRememberToken();
+        if (! is_string($token) || $token === '' || $binding->provider !== config('bherila-auth.oauth_client.provider')) {
+            return;
+        }
+        $row = $this->remembered->find($guard->getName(), (string) $user->getAuthIdentifier());
+        if ($row === null || ! hash_equals((string) $row->token_hash, RememberedProviderLogins::tokenHash($token))
+            || $row->provider !== $binding->provider || $row->subject !== $binding->subject) {
+            return;
+        }
+
+        $guard->getSession()->put(self::KEY, [
+            'context' => $this->client->context(),
+            'provider' => $binding->provider,
+            'subject' => $binding->subject,
+            'generation' => (int) $row->generation,
+            // Never fresh: the restored session's first protected request checks the provider.
+            'checked_at' => 0,
+            'name' => '',
+            'email' => '',
+        ]);
+    }
+
+    /** Record this login's baseline for the remember token prepareRememberedLogin() made safe. */
+    private function recordRememberedLogin(Request $request, StatefulGuard $guard): void
+    {
+        if (! $guard instanceof SessionGuard || ! $guard->getCookieJar()->hasQueued($guard->getRecallerName())) {
+            return;
+        }
+        $prepared = $request->attributes->get(self::PREPARED, [])[$guard->getName()] ?? null;
+        $user = $guard->user();
+        $state = $request->session()->get(self::KEY);
+        $token = $user?->getRememberToken();
+        if (! is_string($prepared) || $user === null || ! is_array($state) || ! is_string($token)
+            || ! hash_equals($prepared, RememberedProviderLogins::tokenHash($token))) {
+            return;
+        }
+
+        try {
+            $this->remembered->put($guard->getName(), (string) $user->getAuthIdentifier(),
+                $state['provider'], $state['subject'], $state['generation'], $prepared);
+        } catch (\Throwable $exception) {
+            // Not recording only means this cookie's restored sessions sign in again later.
+            report($exception);
         }
     }
 
