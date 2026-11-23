@@ -46,6 +46,70 @@ redirects (`expired_redirect_route`) or answers JSON 401; an unavailable provide
 answers 503 with `Retry-After` and keeps the session. Applications that need
 different responses can call `ProviderSession::assertActive()` themselves.
 
+## Remember-me and other sign-in methods
+
+A session restored from a remember-me cookie, and a session started through a sign-in method
+other than this provider (a social login), carry no baseline from a provider sign-in. Without
+one, enforcement ends them on their first protected request.
+
+**Remember-me.** Call `prepareRememberedLogin()` before the login that sets the cookie, then
+`establish()` as usual. `RelyingPartyLoginController` does this when `$remember` is true.
+
+```php
+$session = app(ProviderSession::class);
+$session->prepareRememberedLogin($request, $guard, $account,
+    $identity->provider, $identity->subject, $identity->credentialVersion);
+$guard->login($account, remember: true);
+$request->session()->regenerate();
+$session->establish($request, $identity, $guard);
+```
+
+The baseline is recorded in `provider_remembered_logins`, one row per guard and account, with the
+token stored only as a SHA-256 hash. When the guard later restores a session from that cookie,
+the package's `Login` listener gives the restored session the recorded baseline. Its first
+protected request then checks the provider, so a reset, disable or ungrant since the login still
+ends it.
+
+- Laravel keeps one remember token per account, shared by every device.
+  `prepareRememberedLogin()` replaces that token unless it is already recorded under exactly this
+  login's baseline. A cookie issued under an earlier generation, before a password reset say, then
+  stops working rather than coming back under the new baseline. As a result, the first remembered
+  sign-in of each account after adopting this replaces its token, and that account's other
+  devices sign in again once.
+- A remembered login made without `prepareRememberedLogin()` records nothing. While enforcement
+  is on, its restored sessions are asked to sign in again. A restored session reports the identity
+  with empty name and email: the login-time projection is not kept.
+- Publish and run the migration (`2026_11_23_000000_create_provider_remembered_logins_table`).
+  Until it runs nothing is recorded and remember-me behaves as it did before this change. Call
+  `RememberedProviderLogins::forgetUser($id)` when deleting an account.
+
+**Other sign-in methods.** For an account bound to the provider that signs in some other way, ask
+the provider first:
+
+```php
+$session = app(ProviderSession::class);
+try {
+    $observation = $session->observe($binding);   // null while enforcement is off and the check fails
+} catch (ProviderSessionExpired) {
+    // The provider has ended this identity: refuse the sign-in.
+}
+// ProviderStatusUnavailable propagates as a retryable 503.
+if ($observation !== null && $remember) {
+    $session->prepareRememberedLogin($request, $guard, $user,
+        $observation->provider, $observation->subject, $observation->generation);
+}
+$guard->login($user, $remember);
+$request->session()->regenerate();
+if ($observation !== null) {
+    $session->establishObserved($request, $guard, $observation, $name, $email);
+}
+```
+
+`observe()` always makes a fresh status request, including while enforcement is off, so that
+baselines exist before it is turned on. The baseline is the identity's current generation. That
+is safe only because the sign-in is happening now. Never use it to fill in a login that happened
+earlier.
+
 ## Locking enforcement after cutover
 
 Before cutover, `BHERILA_AUTH_PROVIDER_IDENTITY_ENABLED` is an ordinary switch. Once the
