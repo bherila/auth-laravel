@@ -4,6 +4,18 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.32.1 - 2026-11-27
+
+Additive email-destination evidence for two-factor challenges. After publishing and applying
+`2026_11_27_000000_add_recipient_hash_to_two_factor_attempts.php`, a challenge sent by
+`TwoFactorService` records a hidden hash of the exact mail recipient. A successful-code
+consumer can call `wasMailedTo($currentEmail)` before recording address verification.
+Issuance and delivery share one captured address, including when model hooks change the
+account during issuance. This metadata never verifies an address by itself.
+
+Old attempts and installations without the new column continue accepting their codes and
+report no destination proof. Existing consumers need no policy change to upgrade.
+
 ## v0.32.0 - 2026-11-27
 
 Minor release. Additive. Nothing changes until the identity provider sends a recovery epoch or
@@ -187,13 +199,11 @@ links require the migration described below.
   run it). Until it runs, challenges work by code only and the email carries no links; links in
   emails sent before the upgrade stop working, and their codes still do.
   - Tests or clients that post to the confirm link with the token alone must send the emailed
-    `secret`. Known consumer: vora's `tests/Feature/Auth/EmergencyAccessTest.php`
-    (`test_wrong_code_resend_and_confirmation_use_shared_mfa_without_bypassing_it`) confirms
-    with `$new->token` only and must read the secret from the sent `TwoFactorLoginMail`.
+    `secret`. A harness confirming with `$new->token` only must read the secret from the sent
+    `TwoFactorLoginMail`.
   - An application that emails its own challenge builds the links from `linkSecret()`. One that
     overrode the `two-factor-login` mail view should guard the buttons on a null URL.
-  - Login responses that return `attempt_token` (2025-website's `LoginController`, vora) need no
-    change: the token is safe to return now.
+  - Login responses that return `attempt_token` need no change: the token is safe to return now.
 
 ### Protections on the package's own routes, on by default
 

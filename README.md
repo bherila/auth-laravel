@@ -24,7 +24,7 @@ Includes:
 - opt-in Passport authorization-server helpers for metadata, dynamic public-client registration,
   S256 PKCE, RFC 8707 resource binding, RFC 7662 backchannel introspection, and a shared consent experience
 - WebAuthn/passkey registration and login
-- email-code 2FA challenge service, API routes, mailables and [route-name namespaces](docs/two-factor-route-names.md)
+- email-code 2FA challenge service, API routes, mailables, [route-name namespaces](docs/two-factor-route-names.md) and [destination proof](docs/two-factor-destinations.md)
 - password reset request/reset/change API routes and mailables
 - passkey and 2FA database tables
 - login audit logging: an owned `auth_audit_log` table, a default database logger, binary IP storage, optional read endpoints, and opt-in retention (see "Login audit logging")
@@ -32,6 +32,7 @@ Includes:
 - [same-origin intended destinations](docs/intended-urls.md) with optional relative URLs and stricter decoded checks
 - [invitation secrets and lifecycle](docs/invitations.md): hashed link secrets and derived invitation state for an application's own invitation models
 - policy and audit contracts for app-specific behavior
+
 
 ## Upgrading to v0.12.0 (separate OAuth resource servers)
 

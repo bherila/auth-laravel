@@ -205,7 +205,7 @@ class RememberedProviderLoginTest extends TestCase
 
         $this->assertNotSame($oldToken, $user->fresh()->remember_token);
         $this->assertSame(8, (int) $this->row()->generation);
-        // The old cookie names a token the account no longer has: it authenticates nobody.
+        // The old cookie names a revoked credential: it authenticates nobody.
         $this->withCookie($this->recallerName(), $old)->get('/private')->assertOk();
         $this->assertGuest('web');
         $this->newBrowser();

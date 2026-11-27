@@ -21,10 +21,12 @@ class TwoFactorAttempt extends Model
         'user_agent',
         'expires_at',
         'link_secret_hash',
+        'recipient_hash',
     ];
 
     protected $hidden = [
         'link_secret_hash',
+        'recipient_hash',
     ];
 
     protected $casts = [
@@ -83,7 +85,16 @@ class TwoFactorAttempt extends Model
         return hash('sha256', $secret);
     }
 
-    public static function createForUser(Authenticatable $user, ?string $ipAddress = null, ?string $userAgent = null): self
+    /** The email destination recorded at issuance, never inferred from a later user lookup. */
+    public function wasMailedTo(string $email): bool
+    {
+        $hash = $this->getAttributes()['recipient_hash'] ?? null;
+
+        return is_string($hash) && $hash !== '' && $email !== ''
+            && hash_equals($hash, hash('sha256', $email));
+    }
+
+    public static function createForUser(Authenticatable $user, ?string $ipAddress = null, ?string $userAgent = null, ?string $recipient = null): self
     {
         $attributes = [
             'user_id' => $user->getAuthIdentifier(),
@@ -95,6 +106,11 @@ class TwoFactorAttempt extends Model
             'user_agent' => $userAgent,
             'expires_at' => now()->addMinutes((int) config('bherila-auth.two_factor.expires_minutes', 15)),
         ];
+
+        if ($recipient !== null && $recipient !== ''
+            && (new self)->getConnection()->getSchemaBuilder()->hasColumn((new self)->getTable(), 'recipient_hash')) {
+            $attributes['recipient_hash'] = hash('sha256', $recipient);
+        }
 
         // Distinct from the token, which the browser gets: only the email carries this.
         // Without the column (2026_11_15_000000 not yet run) the challenge still works by

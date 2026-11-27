@@ -16,12 +16,15 @@ class TwoFactorService
 
     public function startChallenge(Authenticatable $user, Request $request, bool $remember = false): TwoFactorAttempt
     {
-        $attempt = TwoFactorAttempt::createForUser($user, $request->ip(), $request->userAgent());
+        // Freeze the recipient before creating the attempt: model hooks or another
+        // writer may change the account while the challenge is being issued.
+        $email = data_get($user, config('bherila-auth.users.email_attribute', 'email'));
+        $attempt = TwoFactorAttempt::createForUser($user, $request->ip(), $request->userAgent(),
+            recipient: is_string($email) ? $email : null);
 
         $request->session()->put(config('bherila-auth.two_factor.session_user_key', 'bherila_auth_2fa_user_id'), $user->getAuthIdentifier());
         $request->session()->put(config('bherila-auth.two_factor.session_remember_key', 'bherila_auth_2fa_remember'), $remember);
 
-        $email = data_get($user, config('bherila-auth.users.email_attribute', 'email'));
         $appName = config('app.name', 'Application');
 
         // The links carry the attempt's link secret as well as its token. The token is also
