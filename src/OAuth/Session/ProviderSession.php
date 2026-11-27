@@ -67,7 +67,7 @@ final readonly class ProviderSession
      * sessions are asked to sign in again once enforcement is on.
      */
     public function prepareRememberedLogin(Request $request, StatefulGuard $guard, Authenticatable $user,
-        string $provider, string $subject, ?int $generation): void
+        string $provider, string $subject, ?int $generation, ?int $epoch = null): void
     {
         if (! $guard instanceof SessionGuard) {
             return;
@@ -80,7 +80,8 @@ final readonly class ProviderSession
         $matches = $row !== null && $generation !== null
             && hash_equals((string) $row->token_hash, RememberedProviderLogins::tokenHash((string) $token))
             && $row->provider === $provider && $row->subject === $subject
-            && (int) $row->generation === $generation;
+            && (int) $row->generation === $generation
+            && ($row->epoch === null ? null : (int) $row->epoch) === $epoch;
         if (! $matches) {
             $token = Str::random(60);
             $guard->getProvider()->updateRememberToken($user, $token);
@@ -110,7 +111,7 @@ final readonly class ProviderSession
             $observation = $this->policy->current($binding->subject);
 
             return new ProviderObservation($binding->provider, $binding->subject,
-                $observation['generation'], $observation['checked_at']);
+                $observation['generation'], $observation['checked_at'], $observation['epoch']);
         } catch (ProviderSessionExpired|ProviderStatusUnavailable $exception) {
             if (! app(ProviderIdentityEnforcement::class)->enabled()) {
                 return null;
@@ -134,6 +135,7 @@ final readonly class ProviderSession
             'provider' => $observation->provider,
             'subject' => $observation->subject,
             'generation' => $observation->generation,
+            'epoch' => $observation->epoch,
             'checked_at' => $observation->checkedAt,
             'name' => $name,
             'email' => $email,
@@ -166,6 +168,7 @@ final readonly class ProviderSession
             'provider' => $binding->provider,
             'subject' => $binding->subject,
             'generation' => (int) $row->generation,
+            'epoch' => $row->epoch === null ? null : (int) $row->epoch,
             // Never fresh: the restored session's first protected request checks the provider.
             'checked_at' => 0,
             'name' => '',
@@ -190,7 +193,7 @@ final readonly class ProviderSession
 
         try {
             $this->remembered->put($guard->getName(), (string) $user->getAuthIdentifier(),
-                $state['provider'], $state['subject'], $state['generation'], $prepared);
+                $state['provider'], $state['subject'], $state['generation'], $prepared, $state['epoch'] ?? null);
         } catch (\Throwable $exception) {
             // Not recording only means this cookie's restored sessions sign in again later.
             report($exception);
@@ -212,6 +215,7 @@ final readonly class ProviderSession
             'provider' => $identity->provider,
             'subject' => $identity->subject,
             'generation' => $identity->credentialVersion,
+            'epoch' => $identity->recoveryEpoch,
             'checked_at' => Carbon::now()->getTimestamp(),
             'name' => $identity->name,
             'email' => $identity->email,
@@ -235,29 +239,33 @@ final readonly class ProviderSession
             || ($state['provider'] ?? null) !== $provider || ($state['subject'] ?? null) !== $subject
             || ! is_int($state['generation'] ?? null) || $state['generation'] < 0
             || ! is_int($state['checked_at'] ?? null)
-            || ! is_string($state['name'] ?? null) || ! is_string($state['email'] ?? null)) {
+            || ! is_string($state['name'] ?? null) || ! is_string($state['email'] ?? null)
+            || ! self::validEpoch($state['epoch'] ?? null)) {
             $this->expire($request);
         }
+        // A session from before the provider reported an epoch has none, and is not compared.
+        $epoch = $state['epoch'] ?? null;
 
         if (! $fresh && ProviderIdentityPolicy::isFresh($state['checked_at'])) {
             return new OAuthIdentity($provider, $subject, $state['name'], $state['email'],
-                credentialVersion: $state['generation']);
+                credentialVersion: $state['generation'], recoveryEpoch: $epoch);
         }
 
         try {
             // May be answered by an observation another credential of this person made;
             // keeping its time, not now, stops a shared answer from extending freshness.
-            $checkedAt = $this->policy->verify($subject, $state['generation'], $fresh);
+            $checkedAt = $this->policy->verify($subject, $state['generation'], $fresh, $epoch);
         } catch (ProviderSessionExpired) {
             $this->expire($request);
         }
 
-        // Keep the login generation immutable. A newer generation ends the old session.
+        // Keep the login generation and epoch immutable. A newer generation, or an epoch a
+        // restored provider raised, ends the old session.
         $state['checked_at'] = $checkedAt;
         $request->session()->put(self::KEY, $state);
 
         return new OAuthIdentity($provider, $subject, $state['name'], $state['email'],
-            credentialVersion: $state['generation']);
+            credentialVersion: $state['generation'], recoveryEpoch: $epoch);
     }
 
     /**
@@ -274,6 +282,26 @@ final readonly class ProviderSession
         }
 
         return $state['generation'];
+    }
+
+    /**
+     * The provider recovery epoch remembered with this binding's baseline, without checking
+     * the provider. Null when the session has none. For recording on credentials, like
+     * baseline(); never an authorization.
+     */
+    public function epoch(Request $request, string $provider, string $subject): ?int
+    {
+        if ($this->baseline($request, $provider, $subject) === null) {
+            return null;
+        }
+        $epoch = $request->session()->get(self::KEY)['epoch'] ?? null;
+
+        return is_int($epoch) && $epoch >= 1 ? $epoch : null;
+    }
+
+    private static function validEpoch(mixed $epoch): bool
+    {
+        return $epoch === null || (is_int($epoch) && $epoch >= 1);
     }
 
     private function expire(Request $request): never

@@ -71,7 +71,7 @@ final readonly class ApplicationActorAssertionVerifier
             if (($claims['iss'] ?? null) !== $clientId
                 || ! in_array($claims['aud'] ?? null, [$audience, [$audience]], true)
                 || ($claims['method'] ?? null) !== 'POST'
-                || ! is_string($claims['sub'] ?? null) || preg_match('/^[1-9][0-9]{0,19}$/D', $claims['sub']) !== 1
+                || ! is_string($claims['sub'] ?? null) || preg_match('/^[0-9A-Za-z]{1,64}$/D', $claims['sub']) !== 1
                 || ! is_string($claims['jti'] ?? null) || preg_match('/^[a-f0-9]{64}$/D', $claims['jti']) !== 1
                 || ! is_int($claims['iat'] ?? null) || ! is_int($claims['exp'] ?? null)
                 || $claims['iat'] < 0 || $claims['iat'] > $now + 5

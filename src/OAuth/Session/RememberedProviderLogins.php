@@ -23,32 +23,46 @@ use Illuminate\Support\Carbon;
  * under an earlier generation (before a password reset, say) never comes back under the new
  * one. A token is stored only as its SHA-256 hash.
  *
- * Reads and writes never query the schema catalog. Before the migration runs there is no
- * row, so remembered sessions are asked to sign in again, as without this class.
+ * Reads never query the schema catalog. A write asks once per process whether the `epoch`
+ * column exists yet (added after the table), so an application that has not run that
+ * migration keeps recording baselines without one. Before the table's own migration runs
+ * there is no row, so remembered sessions are asked to sign in again, as without this class.
  */
-final readonly class RememberedProviderLogins
+final class RememberedProviderLogins
 {
     public const TABLE = 'provider_remembered_logins';
 
-    public function __construct(private DatabaseManager $db) {}
+    /** Whether the table has its `epoch` column yet; learnt once per process. */
+    private ?bool $epochColumn = null;
+
+    public function __construct(private readonly DatabaseManager $db) {}
 
     public static function tokenHash(string $token): string
     {
         return hash('sha256', $token);
     }
 
-    /** @return object{provider: string, subject: string, generation: int|string, token_hash: string}|null */
+    /**
+     * The row for one guard and account. `epoch` is null when none was recorded, including
+     * before the migration that adds the column.
+     *
+     * @return object{provider: string, subject: string, generation: int|string, epoch: int|string|null, token_hash: string}|null
+     */
     public function find(string $guard, string $userId): ?object
     {
-        return $this->guarded(fn (ConnectionInterface $connection): ?object => $connection->table(self::TABLE)
-            ->where('guard', $guard)->where('user_id', $userId)
-            ->first(['provider', 'subject', 'generation', 'token_hash']));
+        $row = $this->guarded(fn (ConnectionInterface $connection): ?object => $connection->table(self::TABLE)
+            ->where('guard', $guard)->where('user_id', $userId)->first());
+        if ($row !== null) {
+            $row->epoch ??= null;
+        }
+
+        return $row;
     }
 
-    public function put(string $guard, string $userId, string $provider, string $subject, int $generation, string $tokenHash): void
+    public function put(string $guard, string $userId, string $provider, string $subject, int $generation, string $tokenHash, ?int $epoch = null): void
     {
-        $this->guarded(function (ConnectionInterface $connection) use ($guard, $userId, $provider, $subject, $generation, $tokenHash): null {
-            $connection->table(self::TABLE)->upsert([[
+        $this->guarded(function (ConnectionInterface $connection) use ($guard, $userId, $provider, $subject, $generation, $tokenHash, $epoch): null {
+            $values = [
                 'guard' => $guard,
                 'user_id' => $userId,
                 'provider' => $provider,
@@ -56,7 +70,14 @@ final readonly class RememberedProviderLogins
                 'generation' => $generation,
                 'token_hash' => $tokenHash,
                 'recorded_at' => Carbon::now(),
-            ]], ['guard', 'user_id'], ['provider', 'subject', 'generation', 'token_hash', 'recorded_at']);
+            ];
+            $update = ['provider', 'subject', 'generation', 'token_hash', 'recorded_at'];
+            $this->epochColumn ??= $connection->getSchemaBuilder()->hasColumn(self::TABLE, 'epoch');
+            if ($this->epochColumn) {
+                $values['epoch'] = $epoch;
+                $update[] = 'epoch';
+            }
+            $connection->table(self::TABLE)->upsert([$values], ['guard', 'user_id'], $update);
 
             return null;
         });

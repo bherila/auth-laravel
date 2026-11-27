@@ -10,5 +10,7 @@ final readonly class ProviderObservation
         public string $subject,
         public int $generation,
         public int $checkedAt,
+        /** The provider's recovery epoch, or null when it reports none. */
+        public ?int $epoch = null,
     ) {}
 }

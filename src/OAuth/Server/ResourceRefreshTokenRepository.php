@@ -185,11 +185,16 @@ class ResourceRefreshTokenRepository extends PassportRefreshTokenRepository impl
             return [];
         }
 
-        return [
+        $stamp = [
             ProviderIdentityTokens::OWNER_COLUMN => (string) $accessToken->getAttribute('user_id'),
             ProviderIdentityTokens::SUBJECT_COLUMN => $accessToken->getAttribute(ProviderIdentityTokens::SUBJECT_COLUMN),
             ProviderIdentityTokens::GENERATION_COLUMN => $accessToken->getAttribute(ProviderIdentityTokens::GENERATION_COLUMN),
         ];
+        if ($schema->hasColumn($model->getTable(), ProviderIdentityTokens::EPOCH_COLUMN)) {
+            $stamp[ProviderIdentityTokens::EPOCH_COLUMN] = ProviderIdentityTokens::epochOf($accessToken);
+        }
+
+        return $stamp;
     }
 
     /** Application-owned account, grant, or credential-version revocation policy. */

@@ -12,8 +12,11 @@ use SensitiveParameter;
  */
 final class InvitationArguments
 {
-    /** The provider's subject form: a decimal string with no leading zeros. */
-    private const SUBJECT = '/^[1-9][0-9]{0,19}$/D';
+    /**
+     * The provider's subject form: 1 to 64 ASCII letters and digits. Accounts created before
+     * opaque subjects keep their decimal id as subject; newer ones carry a random ULID.
+     */
+    private const SUBJECT = '/^[0-9A-Za-z]{1,64}$/D';
 
     public const MAX_EMAIL_LENGTH = 255;
 
@@ -21,7 +24,7 @@ final class InvitationArguments
     public static function subject(string $subject): void
     {
         if (preg_match(self::SUBJECT, $subject) !== 1) {
-            throw new \InvalidArgumentException('The actor subject must be a provider subject: a decimal string with no leading zeros.');
+            throw new \InvalidArgumentException('The actor subject must be a provider subject: 1 to 64 letters and digits.');
         }
     }
 

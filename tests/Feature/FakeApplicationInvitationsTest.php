@@ -111,7 +111,7 @@ class FakeApplicationInvitationsTest extends TestCase
         $this->assertNull($local->status);
 
         $this->expectException(\InvalidArgumentException::class);
-        $this->invitations()->create('042', 'person@example.test');
+        $this->invitations()->create('04-2', 'person@example.test');
     }
 
     public function test_refusals_are_scripted_per_operation_with_the_client_exception(): void

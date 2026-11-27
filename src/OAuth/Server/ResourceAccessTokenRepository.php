@@ -173,7 +173,7 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
      * The provider generation this token inherits: from the code or refresh token it was
      * exchanged for, or from the authorizing session for a personal token.
      *
-     * @return array<string, string|int>
+     * @return array<string, string|int|null>
      */
     final protected function providerIdentityStamp(Model $model, string|int|null $userId): array
     {
@@ -189,7 +189,8 @@ class ResourceAccessTokenRepository extends PassportAccessTokenRepository implem
             return [];
         }
 
-        return ProviderIdentityTokens::attributes($stamp);
+        return ProviderIdentityTokens::attributes($stamp,
+            $this->hasColumn($model->getTable(), ProviderIdentityTokens::EPOCH_COLUMN));
     }
 
     final public function revokeAccessToken(string $tokenId): void

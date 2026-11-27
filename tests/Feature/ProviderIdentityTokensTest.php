@@ -94,7 +94,7 @@ final class ProviderIdentityTokensTest extends TestCase
         ]);
     }
 
-    private function sessionState(int $generation = 7, string $subject = 'subject-example'): array
+    private function sessionState(int $generation = 7, string $subject = 'subject-example', ?int $epoch = null): array
     {
         return ['bherila_auth.provider_session' => [
             'context' => app(ProviderIdentityStatusClient::class)->context(),
@@ -104,12 +104,13 @@ final class ProviderIdentityTokensTest extends TestCase
             'checked_at' => Carbon::now()->getTimestamp(),
             'name' => 'Example User',
             'email' => 'user@example.test',
-        ]];
+        ] + ($epoch === null ? [] : ['epoch' => $epoch])];
     }
 
-    private function activeStatus(int $generation = 7, string $subject = 'subject-example'): array
+    private function activeStatus(int $generation = 7, string $subject = 'subject-example', ?int $epoch = null): array
     {
-        return ['contract_version' => 1, 'active' => true, 'subject' => $subject, 'credential_version' => $generation];
+        return ['contract_version' => 1, 'active' => true, 'subject' => $subject, 'credential_version' => $generation]
+            + ($epoch === null ? [] : ['recovery_epoch' => $epoch]);
     }
 
     private function client(): string
@@ -125,10 +126,10 @@ final class ProviderIdentityTokensTest extends TestCase
     }
 
     /** @return array{0: string, 1: array<string, mixed>} client id and token response */
-    private function connect(User $user, int $generation = 7): array
+    private function connect(User $user, int $generation = 7, ?int $epoch = null): array
     {
         $client = $this->client();
-        $this->withSession($this->sessionState($generation, (string) $user->oauth_subject));
+        $this->withSession($this->sessionState($generation, (string) $user->oauth_subject, $epoch));
         $tokens = $this->agentOAuthCodeFlow($user, $client, 'items:read', self::REDIRECT)->assertOk()->json();
         $this->app['auth']->forgetGuards();
         $this->flushSession();
@@ -168,6 +169,55 @@ final class ProviderIdentityTokensTest extends TestCase
 
         $this->assertSame([7, 7], Passport::token()->newQuery()->pluck('provider_generation')->map(fn ($g) => (int) $g)->all());
         Http::assertSentCount(1 + 1, 'One shared check for use, one fresh check for renewal');
+    }
+
+    public function test_credentials_carry_the_recovery_epoch_and_a_restored_provider_ends_them(): void
+    {
+        // Issuing checks freshly (epoch 3), use shares that answer, and after the window both
+        // the next use and the renewal ask again (epoch 4).
+        Http::fake(['*' => Http::sequence()->push($this->activeStatus(epoch: 3))
+            ->push($this->activeStatus(epoch: 4))->push($this->activeStatus(epoch: 4))]);
+        [$client, $tokens] = $this->connect($this->user(), epoch: 3);
+
+        $this->assertSame(3, (int) Passport::authCode()->newQuery()->sole()->provider_epoch);
+        $this->assertSame(3, (int) Passport::token()->newQuery()->sole()->provider_epoch);
+        $this->assertSame(3, (int) Passport::refreshToken()->newQuery()->sole()->provider_epoch);
+        $this->useToken($tokens['access_token'])->assertOk();
+
+        // The provider is restored from a backup and raises its epoch: same generation, but
+        // nothing issued before the restore is honoured.
+        $this->travel(300)->seconds();
+        $this->useToken($tokens['access_token'])->assertUnauthorized();
+        $this->refresh($client, $tokens['refresh_token'])->assertStatus(400)->assertJsonPath('error', 'invalid_grant');
+    }
+
+    public function test_a_refreshed_token_inherits_the_epoch_it_was_minted_from(): void
+    {
+        Http::fake(fn () => Http::response($this->activeStatus(epoch: 3)));
+        [$client, $tokens] = $this->connect($this->user(), epoch: 3);
+
+        $this->refresh($client, $tokens['refresh_token'])->assertOk();
+
+        $this->assertSame([3, 3], Passport::token()->newQuery()->pluck('provider_epoch')->map(fn ($e) => (int) $e)->all());
+    }
+
+    public function test_credentials_from_before_the_provider_reported_an_epoch_keep_working(): void
+    {
+        Http::fake(fn () => Http::response($this->activeStatus(epoch: 3)));
+        [$client, $tokens] = $this->connect($this->user());
+
+        $this->assertNull(Passport::token()->newQuery()->sole()->provider_epoch);
+        $this->useToken($tokens['access_token'])->assertOk();
+        $this->refresh($client, $tokens['refresh_token'])->assertOk();
+    }
+
+    public function test_a_credential_with_an_epoch_ends_when_the_provider_stops_reporting_one(): void
+    {
+        Http::fake(['*' => Http::sequence()->push($this->activeStatus(epoch: 3))->push($this->activeStatus())]);
+        [, $tokens] = $this->connect($this->user(), epoch: 3);
+
+        $this->travel(300)->seconds();
+        $this->useToken($tokens['access_token'])->assertUnauthorized();
     }
 
     public function test_a_refresh_token_stays_checkable_after_its_access_token_is_purged(): void
