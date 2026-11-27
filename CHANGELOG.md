@@ -4,7 +4,7 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
-## v0.32.0 - Unreleased
+## v0.32.0 - 2026-11-27
 
 Minor release. Additive. Nothing changes until the identity provider sends a recovery epoch or
 an opaque subject.
