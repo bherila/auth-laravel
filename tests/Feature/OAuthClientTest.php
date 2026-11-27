@@ -3,10 +3,12 @@
 namespace BWH\Auth\Tests\Feature;
 
 use BWH\Auth\OAuth\OAuthClient;
+use BWH\Auth\Tests\TestCase;
+use Illuminate\Auth\GenericUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
-use BWH\Auth\Tests\TestCase;
+use Illuminate\Testing\TestResponse;
 
 class OAuthClientTest extends TestCase
 {
@@ -72,7 +74,7 @@ class OAuthClientTest extends TestCase
             'https://identity.example.test/api/oauth/user' => Http::response([
                 'sub' => 'subject-123',
                 'name' => ' Synthetic User ',
-                'email' => 'SYNTHETIC@EXAMPLE.TEST',
+                'email' => 'SYNTHETIC@EXAMPLE.TEST', // sensitive-scan-ignore: reserved test address deliberately exercises case normalization.
             ]),
         ]);
 
@@ -106,6 +108,7 @@ class OAuthClientTest extends TestCase
 
         Http::assertNothingSent();
     }
+
     /**
      * @return array<string, mixed>
      */
@@ -119,7 +122,7 @@ class OAuthClientTest extends TestCase
         ], static fn (mixed $value): bool => $value !== null);
     }
 
-    private function completeCallback(mixed $apps): \Illuminate\Testing\TestResponse
+    private function completeCallback(mixed $apps): TestResponse
     {
         Http::fake([
             'identity.example.test/oauth/token' => Http::response(['access_token' => 'token']),
@@ -273,7 +276,7 @@ class OAuthClientTest extends TestCase
         $this->fakeProvider();
         $query = $this->start();
 
-        $this->actingAs(new \Illuminate\Auth\GenericUser(['id' => 9]));
+        $this->actingAs(new GenericUser(['id' => 9]));
         $this->get('/oauth/callback-test?'.http_build_query(['code' => 'code', 'state' => $query['state']]))
             ->assertForbidden();
 
