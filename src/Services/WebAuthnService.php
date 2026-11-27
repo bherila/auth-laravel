@@ -9,6 +9,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use RuntimeException;
 use Symfony\Component\Serializer\SerializerInterface;
 use Symfony\Component\Uid\Uuid;
@@ -175,7 +176,7 @@ class WebAuthnService
 
         $options = PublicKeyCredentialRequestOptions::create(
             challenge: random_bytes(32),
-            rpId: $this->getRpId($request),
+            rpId: $this->assertionRpId($request, $request->input('rp_id')),
             allowCredentials: $allowCredentials,
             userVerification: $userVerification,
             timeout: (int) config('bherila-auth.passkeys.timeout', 60000),
@@ -197,11 +198,16 @@ class WebAuthnService
         }
 
         $options = $this->decodeOptions($serializedOptions);
+        $rpId = $this->assertionRpId($request, $options->rpId);
         $credential = $this->deserializeCredential($credentialData);
         $storedCredential = $this->findStoredCredential($this->encodeCredentialId($credential->rawId));
 
         if (! $storedCredential) {
             throw new RuntimeException('Credential not found.');
+        }
+
+        if ($storedCredential->rp_id !== null && $storedCredential->rp_id !== $rpId) {
+            throw new RuntimeException('The passkey belongs to a different relying party.');
         }
 
         $user = $storedCredential->user;
@@ -211,11 +217,11 @@ class WebAuthnService
 
         /** @var AuthenticatorAssertionResponse $response */
         $response = $credential->response;
-        $updatedSource = $this->createAssertionValidator($request)->check(
+        $updatedSource = $this->createAssertionValidator($request, $rpId)->check(
             $this->credentialToSource($storedCredential, $user),
             $response,
             $options,
-            $this->getRpId($request),
+            $rpId,
             (string) $user->getAuthIdentifier(),
         );
 
@@ -224,6 +230,7 @@ class WebAuthnService
         $storedCredential->update([
             'counter' => $updatedSource->counter,
             'last_used_at' => now(),
+            'rp_id' => $rpId,
         ]);
 
         return [$user, $storedCredential, $response->authenticatorData->isUserVerified()];
@@ -353,6 +360,26 @@ class WebAuthnService
         return $host;
     }
 
+    /** Related Origin Requests retain the original RP; registration never uses this override. */
+    private function assertionRpId(Request $request, mixed $requested): string
+    {
+        $default = $this->getRpId($request);
+        if ($requested === null || $requested === $default) {
+            return $default;
+        }
+
+        $related = config('bherila-auth.passkeys.related_origins', []);
+        $origins = is_array($related) && is_string($requested) ? ($related[$requested] ?? null) : null;
+        if (is_string($requested) && $requested !== ''
+            && filter_var($requested, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)
+            && $request->isSecure() && is_array($origins)
+            && in_array($request->getSchemeAndHttpHost(), $origins, true)) {
+            return $requested;
+        }
+
+        throw ValidationException::withMessages(['rp_id' => 'This relying party is not enabled for this origin.']);
+    }
+
     private function createSerializer(): SerializerInterface
     {
         $attestationManager = new AttestationStatementSupportManager([
@@ -367,12 +394,12 @@ class WebAuthnService
         return AuthenticatorAttestationResponseValidator::create($this->ceremonyFactory($request)->creationCeremony());
     }
 
-    private function createAssertionValidator(Request $request): AuthenticatorAssertionResponseValidator
+    private function createAssertionValidator(Request $request, string $rpId): AuthenticatorAssertionResponseValidator
     {
-        return AuthenticatorAssertionResponseValidator::create($this->ceremonyFactory($request)->requestCeremony());
+        return AuthenticatorAssertionResponseValidator::create($this->ceremonyFactory($request, $rpId)->requestCeremony());
     }
 
-    private function ceremonyFactory(Request $request): CeremonyStepManagerFactory
+    private function ceremonyFactory(Request $request, ?string $assertionRpId = null): CeremonyStepManagerFactory
     {
         $factory = new CeremonyStepManagerFactory;
         $origins = array_values(array_unique(array_filter([
@@ -381,7 +408,10 @@ class WebAuthnService
             ...config('bherila-auth.passkeys.allowed_origins', []),
         ])));
 
-        $factory->setAllowedOrigins($origins);
+        // Related requests authorize only the exact requesting origin, never the
+        // cross-product of all the application's normal allowed origins.
+        $factory->setAllowedOrigins($assertionRpId !== null && $assertionRpId !== $this->getRpId($request)
+            ? [$request->getSchemeAndHttpHost()] : $origins);
 
         return $factory;
     }

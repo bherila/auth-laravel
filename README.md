@@ -279,6 +279,26 @@ Published config lives at `config/bherila-auth.php`. Important settings:
 - `BHERILA_AUTH_TWO_FACTOR_MAIL_SUBJECT`: optional email 2FA subject override.
 - `passkeys.user_verification`: WebAuthn user verification requirement. Defaults to `preferred`; set to `required` for passkeys used as a stronger security factor.
 - `passkeys.resident_key`: WebAuthn resident key requirement. Defaults to `preferred`.
+- `passkeys.related_origins`: optional map from an existing RP ID to exact HTTPS origins
+  allowed to request assertions for it. Defaults to `[]`. This enables WebAuthn Related
+  Origin Requests without changing the RP of existing credentials; registration always
+  uses the normal configured RP. The original RP must separately serve a public
+  `https://<rp-id>/.well-known/webauthn` JSON document with an `origins` array containing
+  the new login origin. This browser authorization is necessary in addition to the server
+  configuration, and the browser must support Related Origin Requests.
+
+  For example, an operator can configure
+  `['app.example.test' => ['https://id.example.test']]`, publish
+  `{"origins":["https://id.example.test"]}` at the original RP, and request
+  `POST /api/passkeys/auth/options` with `rp_id: "app.example.test"`. Confirmation options
+  accept the same optional field. The verification request cannot change the RP: it is
+  fixed by the session's issued challenge, checked against the current operator mapping,
+  the exact calling origin, and the signed authenticator RP hash. A stored RP must match;
+  a historical null RP is recorded only after a valid assertion. Copy credential IDs,
+  public keys, counters, backup flags and original user handles exactly when migrating
+  storage; never replace an old RP with the new registration RP. Keep password/recovery
+  available for browsers without this feature. See the
+  [WebAuthn specification](https://www.w3.org/TR/webauthn-3/#sctn-related-origins).
 - `throttle.enabled`: enables audit-log-backed password-login lockout. Defaults to `false`.
 - `throttle.max_attempts`: failed attempts allowed for the same key before lockout. Defaults to `5`.
 - `throttle.decay_minutes`: lockout/window length. Defaults to `15`.

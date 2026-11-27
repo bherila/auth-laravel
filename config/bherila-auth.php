@@ -462,6 +462,9 @@ return [
         // Leave unset in local development to derive it from the request host.
         'rp_id' => env('WEBAUTHN_RP_ID'),
         'allowed_origins' => array_filter(array_map('trim', explode(',', env('WEBAUTHN_ALLOWED_ORIGINS', '')))),
+        // Optional assertion-only RP => exact HTTPS calling origins. The original RP
+        // must separately publish those origins at /.well-known/webauthn.
+        'related_origins' => [],
         'timeout' => 60000,
         'resident_key' => env('WEBAUTHN_RESIDENT_KEY', 'preferred'),
         'user_verification' => env('WEBAUTHN_USER_VERIFICATION', 'preferred'),

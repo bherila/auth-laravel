@@ -4,6 +4,18 @@ Notable changes per release. Versions follow the tags published to
 [Packagist](https://packagist.org/packages/bherila/auth-laravel); anything older than
 the first entry here is in the git history.
 
+## v0.32.2 - 2026-11-27
+
+Optional assertion-only WebAuthn Related Origin Requests: `passkeys.related_origins`
+maps an existing RP ID to exact HTTPS calling origins. Authentication and confirmation
+options accept `rp_id` only for a configured pair; registration keeps its normal RP.
+The original RP must also publish the browser's `/.well-known/webauthn` authorization.
+Verification uses the server-issued challenge's RP and current configuration, never an
+override from the verification request. A credential's recorded RP cannot change; a
+historical null RP is filled only after a valid signed assertion. No new migration is
+needed beyond the existing required `rp_id` column. Defaults and existing integrations
+remain unchanged. See the README's passkey configuration for deployment prerequisites.
+
 ## v0.32.1 - 2026-11-27
 
 Additive email-destination evidence for two-factor challenges. After publishing and applying
